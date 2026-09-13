@@ -2,19 +2,28 @@
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
-import { client, formatMoney, risks, workpapers } from '../data'
+import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { client, formatMoney, risks, workpapers, workflowGuides } from '../data'
 
 const activeTab = ref('Planning')
 const selectedRisk = ref(risks[0])
 const tabs = ['Planning', 'Fieldwork', 'Populations & samples']
 const showEvidence = ref(false)
+const toast = ref('')
 
 const highRisks = computed(() => risks.filter((risk) => risk.rating === 'High').length)
+
+function addWorkpaper() {
+  toast.value = 'Working-paper draft opened. Choose the procedure, exact source snapshot, evidence links, reviewer, and conclusion owner.'
+  window.setTimeout(() => { toast.value = '' }, 4000)
+}
 </script>
 
 <template>
   <div class="page">
-    <PageHeader eyebrow="Audit execution" title="Audit & fieldwork" description="Move from approved materiality and risk responses to populations, selected items, evidence and supported conclusions. The platform records the chain; professionals evaluate it." action-label="Add workpaper" />
+    <PageHeader eyebrow="Audit execution" title="Audit & fieldwork" description="Move from approved materiality and risk responses to populations, selected items, evidence and supported conclusions. The platform records the chain; professionals evaluate it." action-label="Add workpaper" @action="addWorkpaper" />
+    <WorkflowGuide :guide="workflowGuides.audit" />
+    <div v-if="toast" class="toast" role="status" aria-live="polite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>{{ toast }}</div>
 
     <section class="audit-hero panel"><div><span class="eyebrow">ENG-2026-0018 · {{ client.name }}</span><h2>Risk-based audit plan</h2><p>Audit plan revision 3 · approved 05 Sep 2026 · preliminary information pinned to TB v03</p></div><div class="audit-hero-meta"><StatusPill label="Plan approved" tone="good" /><span>{{ highRisks }} significant risks · 4 areas in scope</span></div></section>
 

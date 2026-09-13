@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
-import { client, formatMoney, practiceJournals, reconciliationAreas, tbRows } from '../data'
+import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { client, formatMoney, practiceJournals, reconciliationAreas, tbRows, workflowGuides } from '../data'
 
 const activeTab = ref('Data intake')
 const tabs = ['Data intake', 'Mappings & reconciliations', 'Financial statements']
@@ -20,11 +21,17 @@ function markJournal(index) {
   toast.value = 'AJ-002 is staged for management authorization in this prototype.'
   window.setTimeout(() => { toast.value = '' }, 3500)
 }
+
+function importDataset() {
+  toast.value = 'Import wizard opened. Preserve the raw receipt first, then validate entity, period, currency, control totals, and mappings.'
+  window.setTimeout(() => { toast.value = '' }, 4000)
+}
 </script>
 
 <template>
   <div class="page">
-    <PageHeader eyebrow="Accounting production" title="Accounting & TB" description="Follow the preserved raw receipt through validation, mapping, reconciliations, controlled journals and the versioned financial-statement package." action-label="Import dataset" />
+    <PageHeader eyebrow="Accounting production" title="Accounting & TB" description="Follow the preserved raw receipt through validation, mapping, reconciliations, controlled journals and the versioned financial-statement package." action-label="Import dataset" @action="importDataset" />
+    <WorkflowGuide :guide="workflowGuides.accounting" />
 
     <div v-if="toast" class="toast" role="status" aria-live="polite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>{{ toast }}</div>
 

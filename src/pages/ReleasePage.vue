@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
-import { archiveItems, client, formatMoney } from '../data'
+import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { archiveItems, client, formatMoney, workflowGuides } from '../data'
 
 const releaseSteps = [
   ['Draft candidate', 'Candidate RC-026 created'],
@@ -28,11 +29,18 @@ function advanceRelease() {
   toast.value = `${releaseSteps[releaseIndex.value][0]} recorded in the prototype.`
   window.setTimeout(() => { toast.value = '' }, 3500)
 }
+
+function createReleaseCandidate() {
+  releaseIndex.value = 0
+  toast.value = 'Release candidate RC-026 is ready to inspect. Confirm matching FS, TB, report, approvals, recipients, and hashes before advancing.'
+  window.setTimeout(() => { toast.value = '' }, 4000)
+}
 </script>
 
 <template>
   <div class="page">
-    <PageHeader eyebrow="Controlled finalization" title="Release & archive" description="A signed package is a durable, version-bound business event. Release, delivery, records protection and amendments are shown as separate controls." action-label="Create release candidate" />
+    <PageHeader eyebrow="Controlled finalization" title="Release & archive" description="A signed package is a durable, version-bound business event. Release, delivery, records protection and amendments are shown as separate controls." action-label="Create release candidate" @action="createReleaseCandidate" />
+    <WorkflowGuide :guide="workflowGuides.release" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>{{ toast }}</div>
 
     <section class="release-hero panel"><div><span class="eyebrow">Release candidate RC-026 · {{ client.name }}</span><h2>FS v05 + Auditor report v1</h2><p>Report period {{ client.period }} · QAR · manifest digest <code>sha256:5db3…f8aa</code></p></div><div class="release-hero-meta"><StatusPill :label="releaseStatus" :tone="releaseIndex >= 9 ? 'good' : releaseIndex >= 4 ? 'warn' : 'danger'" /><strong>{{ formatMoney(745000) }}</strong><span>total assets in selected FS package</span></div></section>

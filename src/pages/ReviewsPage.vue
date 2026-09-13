@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
-import { approvals, formatMoney, reviewPoints } from '../data'
+import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { approvals, formatMoney, reviewPoints, workflowGuides } from '../data'
 
 const points = ref(reviewPoints.map((point) => ({ ...point })))
 const toast = ref('')
@@ -19,11 +20,17 @@ function clearPoint(point) {
   toast.value = `${point.id} marked cleared for this prototype.`
   window.setTimeout(() => { toast.value = '' }, 3500)
 }
+
+function createReviewPoint() {
+  toast.value = 'Review-point draft opened. Link the exact version, evidence conflict, response owner, due date, and blocking impact.'
+  window.setTimeout(() => { toast.value = '' }, 4000)
+}
 </script>
 
 <template>
   <div class="page">
-    <PageHeader eyebrow="Professional control" title="Reviews & approvals" description="Review points, applicability and signatures are separate records. A changed dependency keeps the historical approval intact but makes it stale for the current package." action-label="Create review point" />
+    <PageHeader eyebrow="Professional control" title="Reviews & approvals" description="Review points, applicability and signatures are separate records. A changed dependency keeps the historical approval intact but makes it stale for the current package." action-label="Create review point" @action="createReviewPoint" />
+    <WorkflowGuide :guide="workflowGuides.reviews" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>{{ toast }}</div>
 
     <section class="stats-strip compact"><div><span>Open review points</span><strong>{{ openCount }}</strong><small>2 currently block a gate</small></div><div><span>Stale approvals</span><strong>3</strong><small>Created after FS v05 changed</small></div><div><span>Reviewer queue</span><strong>6</strong><small>Across all active engagements</small></div><div><span>Dependency health</span><strong>92%</strong><small>Last graph check 09:42</small></div></section>

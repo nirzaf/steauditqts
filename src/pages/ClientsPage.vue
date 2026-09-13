@@ -2,12 +2,14 @@
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
-import { client, formatMoney, portfolioClients } from '../data'
+import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { client, formatMoney, portfolioClients, workflowGuides } from '../data'
 
 const emit = defineEmits(['navigate'])
 const search = ref('')
 const filter = ref('All clients')
 const selected = ref(null)
+const toast = ref('')
 const filters = ['All clients', 'Needs decision', 'In delivery', 'Low risk']
 
 const filteredClients = computed(() => portfolioClients.filter((item) => {
@@ -23,11 +25,18 @@ const filteredClients = computed(() => portfolioClients.filter((item) => {
 function openEngagement() {
   emit('navigate', 'engagements')
 }
+
+function addClient() {
+  toast.value = 'New client draft opened. Add the relationship first, then start a separate acceptance assessment.'
+  window.setTimeout(() => { toast.value = '' }, 4000)
+}
 </script>
 
 <template>
   <div class="page">
-    <PageHeader eyebrow="Relationships and decisions" title="Clients & acceptance" description="Keep the commercial relationship separate from the professional acceptance decision. Every service and reporting period gets its own assessment." action-label="Add client" />
+    <PageHeader eyebrow="Relationships and decisions" title="Clients & acceptance" description="Keep the commercial relationship separate from the professional acceptance decision. Every service and reporting period gets its own assessment." action-label="Add client" @action="addClient" />
+    <WorkflowGuide :guide="workflowGuides.clients" />
+    <div v-if="toast" class="toast" role="status" aria-live="polite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>{{ toast }}</div>
 
     <section class="stats-strip">
       <div><span>Active clients</span><strong>18</strong><small>Across 24 service-period engagements</small></div>
@@ -36,7 +45,7 @@ function openEngagement() {
       <div><span>Question bank</span><strong>62 + 30</strong><small>Acceptance and annual review</small></div>
     </section>
 
-    <section class="panel">
+    <section class="panel client-register-panel">
       <div class="panel-heading"><div><span class="eyebrow">Practice client register</span><h2>Professional relationships</h2></div><button type="button" class="text-button" @click="filter = 'Needs decision'">Show decisions <span aria-hidden="true">→</span></button></div>
       <div class="toolbar"><label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><span class="sr-only">Search clients</span><input v-model="search" type="search" placeholder="Search by name, ID or service" /></label><div class="filter-row" aria-label="Client filters"><button v-for="item in filters" :key="item" type="button" :class="{ active: filter === item }" @click="filter = item">{{ item }}</button></div></div>
       <div class="table-wrap responsive-table">

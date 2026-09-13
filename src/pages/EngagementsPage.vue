@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
-import { client, gateMeta, gateStatuses, timeline } from '../data'
+import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { client, gateMeta, gateStatuses, timeline, workflowGuides } from '../data'
 
 const emit = defineEmits(['navigate'])
 const activeTab = ref('Summary')
@@ -18,6 +19,7 @@ function navigate(route) { emit('navigate', route) }
 <template>
   <div class="page">
     <PageHeader eyebrow="Engagement workspace · ENG-2026-0018" title="Northstar Trading W.L.L." description="Recurring financial-statement audit with a separately scoped accounting-package handoff. Planning and PBC work can continue in parallel." action-label="Open client portal" @action="navigate('pbc')" />
+    <WorkflowGuide :guide="workflowGuides.engagements" />
 
     <section class="engagement-hero panel">
       <div class="engagement-identity"><div class="large-avatar">NT</div><div><div class="title-line"><h2>Year ended 31 Dec 2026</h2><StatusPill label="Fieldwork in progress" tone="warn" /></div><p>Financial-statement audit · QAR · Qatar · Medium client risk</p><div class="tag-row"><span class="tag">Independent auditor route</span><span class="tag">EQR required</span><span class="tag">SharePoint repository ready</span></div></div></div>

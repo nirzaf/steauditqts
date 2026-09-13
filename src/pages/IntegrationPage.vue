@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
-import { integrationOperations } from '../data'
+import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { integrationOperations, workflowGuides } from '../data'
 
 const operations = ref(integrationOperations.map((item) => ({ ...item })))
 const running = ref(false)
@@ -27,6 +28,7 @@ function reconcile() {
 <template>
   <div class="page">
     <PageHeader eyebrow="Operations and observability" title="Integration health" description="Monitor the boundaries between Frappe, Microsoft Graph, SharePoint, Entra and Purview. Reconciliation is the baseline control; notifications are acceleration only." action-label="Run reconciliation" @action="reconcile" />
+    <WorkflowGuide :guide="workflowGuides.integration" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>{{ toast }}</div>
 
     <section class="health-grid"><article class="health-card healthy"><div class="health-card-top"><span class="health-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.5 17 19 7"/><circle cx="12" cy="12" r="9"/></svg></span><StatusPill label="Healthy" tone="good" /></div><h2>Microsoft Graph</h2><p>Selected-resource permissions and credential check</p><strong>Last checked {{ lastRun }}</strong></article><article class="health-card healthy"><div class="health-card-top"><span class="health-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z"/><path d="M8 9h8M8 13h5"/></svg></span><StatusPill label="Healthy" tone="good" /></div><h2>SharePoint</h2><p>Repository binding, versioning and item reconciliation</p><strong>41 items in latest delta</strong></article><article class="health-card warn"><div class="health-card-top"><span class="health-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.8 19h18.4L12 3Z"/><path d="M12 9v4M12 16.5v.5"/></svg></span><StatusPill label="Action needed" tone="warn" /></div><h2>Purview</h2><p>Retention label observation is awaiting records admin</p><strong>1 pending verification</strong></article><article class="health-card healthy"><div class="health-card-top"><span class="health-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7 7 0 0 0-7 7v3l-2 3h18l-2-3v-3a7 7 0 0 0-7-7ZM9 20h6"/></svg></span><StatusPill label="Healthy" tone="good" /></div><h2>Entra ID</h2><p>Staff and portal identity mappings</p><strong>16 active identities</strong></article></section>

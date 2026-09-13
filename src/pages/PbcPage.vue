@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
-import { client, formatMoney, pbcRequests } from '../data'
+import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { client, formatMoney, pbcRequests, workflowGuides } from '../data'
 
 const requests = ref(pbcRequests.map((item) => ({ ...item })))
 const selectedId = ref('PBC-019')
@@ -21,11 +22,17 @@ function markReceived() {
   toast.value = `${request.id} receipt logged for firm review.`
   window.setTimeout(() => { toast.value = '' }, 3500)
 }
+
+function createRequest() {
+  toast.value = 'New request draft opened. Define the entity, period, acceptance criteria, owner, and due date before sending.'
+  window.setTimeout(() => { toast.value = '' }, 4000)
+}
 </script>
 
 <template>
   <div class="page">
-    <PageHeader eyebrow="Restricted client surface" title="PBC portal" description="Track requests, bounded uploads, clarifications and accepted evidence without exposing internal review notes or unrestricted SharePoint access." action-label="New request" />
+    <PageHeader eyebrow="Restricted client surface" title="PBC portal" description="Track requests, bounded uploads, clarifications and accepted evidence without exposing internal review notes or unrestricted SharePoint access." action-label="New request" @action="createRequest" />
+    <WorkflowGuide :guide="workflowGuides.pbc" />
 
     <div v-if="toast" class="toast" role="status" aria-live="polite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>{{ toast }}</div>
 

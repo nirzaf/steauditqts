@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
-import { client, formatMoney, gateMeta, gateStatuses, pbcRequests, portfolioClients, timeline } from '../data'
+import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { client, formatMoney, gateMeta, gateStatuses, pbcRequests, portfolioClients, timeline, workflowGuides } from '../data'
 
 const emit = defineEmits(['navigate'])
 const range = ref('This period')
@@ -26,6 +27,7 @@ function navigate(route) {
       action-label="New engagement"
       @action="navigate('clients')"
     />
+    <WorkflowGuide :guide="workflowGuides.dashboard" />
 
     <div class="page-context-row">
       <div class="context-chip"><span class="context-dot"></span><strong>Demo workspace</strong><span>Northstar Trading W.L.L.</span></div>

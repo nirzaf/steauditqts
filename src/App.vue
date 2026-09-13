@@ -1,5 +1,5 @@
 <script setup>
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { client, navItems } from './data'
 
 const routes = {
@@ -32,6 +32,9 @@ const iconPaths = {
 const currentRoute = ref(getRouteFromHash())
 const mobileNavOpen = ref(false)
 const search = ref('')
+const helpOpen = ref(false)
+const helpButton = ref(null)
+const helpCloseButton = ref(null)
 
 const current = computed(() => routes[currentRoute.value] || routes.dashboard)
 const activeNav = computed(() => navItems.find((item) => item.key === currentRoute.value) || navItems[0])
@@ -77,6 +80,17 @@ function submitSearch() {
   if (search.value.trim()) navigate('clients')
 }
 
+async function openHelp() {
+  helpOpen.value = true
+  await nextTick()
+  helpCloseButton.value?.focus()
+}
+
+function closeHelp() {
+  helpOpen.value = false
+  nextTick(() => helpButton.value?.focus())
+}
+
 onMounted(() => {
   window.addEventListener('hashchange', syncRoute)
   setDocumentTitle()
@@ -86,10 +100,11 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncRoute))
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" @keydown.esc.window="closeHelp">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <button v-if="mobileNavOpen" type="button" class="mobile-scrim" aria-label="Close navigation" @click="mobileNavOpen = false"></button>
 
-    <aside class="sidebar" :class="{ open: mobileNavOpen }" aria-label="Primary navigation">
+    <aside id="primary-navigation" class="sidebar" :class="{ open: mobileNavOpen }" aria-label="Primary navigation">
       <div class="sidebar-brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM8 9h8M8 13h5M8 17h8"/></svg></span><span><strong>AuditFlow</strong><small>Practice platform</small></span></div>
       <div class="workspace-switcher"><span class="workspace-avatar">Q</span><span><strong>Quadrate Audit</strong><small>Demo workspace</small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg></div>
 
@@ -97,13 +112,22 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncRoute))
         <div v-for="group in navGroups" :key="group.name" class="nav-group"><span class="nav-group-label">{{ group.name }}</span><button v-for="item in group.items" :key="item.key" type="button" class="nav-item" :class="{ active: currentRoute === item.key }" :aria-current="currentRoute === item.key ? 'page' : undefined" @click="navigate(item.key)"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-for="path in iconPaths[item.icon]" :key="path" :d="path"/></svg><span>{{ item.label }}</span><em v-if="item.badge">{{ item.badge }}</em></button></div>
       </nav>
 
-      <div class="sidebar-bottom"><div class="sidebar-health"><span class="health-pulse"></span><span><strong>All systems healthy</strong><small>Reconciled 09:42</small></span></div><div class="sidebar-foot"><span>v0.8 prototype</span><button type="button" aria-label="Open help"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.3 2.3 0 1 1 3.9 1.6c-1 .8-1.7 1.1-1.7 2.4M12 16.5v.5"/></svg></button></div></div>
+      <div class="sidebar-bottom"><div class="sidebar-health"><span class="health-pulse"></span><span><strong>All systems healthy</strong><small>Reconciled 09:42</small></span></div><div class="sidebar-foot"><span>v0.8 prototype</span><button ref="helpButton" type="button" aria-label="Open help" @click="openHelp"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.3 2.3 0 1 1 3.9 1.6c-1 .8-1.7 1.1-1.7 2.4M12 16.5v.5"/></svg></button></div></div>
     </aside>
 
     <div class="app-main">
-      <header class="topbar"><div class="topbar-left"><button type="button" class="mobile-menu" aria-label="Open navigation" @click="mobileNavOpen = true"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-for="path in iconPaths.menu" :key="path" :d="path"/></svg></button><div class="breadcrumbs"><span>Workspace</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg><strong>{{ activeNav.label }}</strong></div></div><div class="topbar-actions"><form class="top-search" role="search" @submit.prevent="submitSearch"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-for="path in iconPaths.search" :key="path" :d="path"/></svg><input v-model="search" type="search" aria-label="Search clients, engagements and IDs" placeholder="Search anything" /></form><button type="button" class="top-icon-button" aria-label="Notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-for="path in iconPaths.bell" :key="path" :d="path"/></svg><span>3</span></button><div class="top-user"><span class="avatar avatar-navy">MR</span><span><strong>Maya Rahman</strong><small>Partner</small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg></div></div></header>
+      <header class="topbar"><div class="topbar-left"><button type="button" class="mobile-menu" aria-label="Open navigation" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = true"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-for="path in iconPaths.menu" :key="path" :d="path"/></svg></button><div class="breadcrumbs"><span>Workspace</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg><strong>{{ activeNav.label }}</strong></div></div><div class="topbar-actions"><form class="top-search" role="search" @submit.prevent="submitSearch"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-for="path in iconPaths.search" :key="path" :d="path"/></svg><input v-model="search" type="search" aria-label="Search clients, engagements and IDs" placeholder="Search anything" /></form><button type="button" class="top-icon-button" aria-label="Notifications, 3 items"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-for="path in iconPaths.bell" :key="path" :d="path"/></svg><span aria-hidden="true">3</span></button><div class="top-user"><span class="avatar avatar-navy">MR</span><span><strong>Maya Rahman</strong><small>Partner</small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg></div></div></header>
       <div class="system-strip"><span><i></i> Demo data · no production decisions</span><span>Northstar Trading W.L.L. · {{ client.period }}</span></div>
       <main id="main-content" class="main-content" tabindex="-1"><component :is="current.component" @navigate="navigate" /></main>
+    </div>
+
+    <div v-if="helpOpen" class="help-backdrop" role="presentation" @click.self="closeHelp">
+      <section class="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <div class="help-dialog-header"><div><span class="eyebrow">Prototype orientation</span><h2 id="help-title">How to read AuditFlow</h2></div><button ref="helpCloseButton" type="button" class="icon-button" aria-label="Close help" @click="closeHelp"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+        <p>Each page is a safe, fictional walkthrough of one practice control. Use the blue guide at the top of the page, then follow the page’s primary action or linked next step.</p>
+        <ol class="help-list"><li><strong>Orient</strong><span>Overview shows the queue, owners, and current gate pressure.</span></li><li><strong>Decide</strong><span>Clients and engagement pages separate acceptance from delivery work.</span></li><li><strong>Evidence</strong><span>PBC, Accounting, and Audit pages show the source-to-conclusion chain.</span></li><li><strong>Control</strong><span>Reviews, Release, and Integration show approvals, versions, retries, and archive evidence.</span></li></ol>
+        <div class="help-dialog-note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6M12 7.5v.5"/></svg><span><strong>Demo boundary</strong> Values are illustrative. Qualified people own professional decisions, approvals, conclusions, and records actions.</span></div>
+      </section>
     </div>
   </div>
 </template>
