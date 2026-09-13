@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "steaudit-api",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-13",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "ste.quadrate.lk/api/*",
+      "zone_name": "quadrate.lk"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "quadrate-db",
+      "database_id": "4a85e0dd-dddf-4ef5-9230-593d6878ada8"
+    }
+  ],
+  "vars": {
+    "ALLOW_DEMO_WRITES": "true"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1,
+      "persist": true
+    }
+  }
+}

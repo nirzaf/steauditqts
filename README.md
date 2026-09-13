@@ -24,3 +24,32 @@ npm run dev
 ```
 
 Create a production build with `npm run build`. The static output is in `dist/` and is deployed to Cloudflare Pages for `ste.quadrate.lk`.
+
+## Client comments and optional steps
+
+Every workflow guide includes a client-comment composer and a step setting. A client can add a note to the current guide step, then mark that step as required or optional for this walkthrough. The page keeps the setting visible and explains that optional status does not bypass a real approval, independence check, or audit requirement.
+
+The UI first uses the same-origin API at `/api`. If the API is temporarily unavailable, it falls back to browser storage and labels that state clearly. In production, the API is the `steaudit-api` Cloudflare Worker on the `ste.quadrate.lk/api/*` route and persists records in two additive tables (`auditflow_comments` and `auditflow_step_preferences`) in the existing `quadrate-db` D1 database.
+
+Run the API locally in a second terminal with:
+
+```bash
+npm run api:dev
+```
+
+Apply the isolated schema locally or remotely only when needed:
+
+```bash
+npm run db:migrate:local
+npm run db:migrate:remote
+```
+
+Deploy the API and Pages bundle with:
+
+```bash
+npx wrangler deploy --config wrangler.jsonc --minify
+npm run build
+npx wrangler pages deploy dist --project-name ste-quadrate-lk --branch main
+```
+
+The Worker is intentionally a demo API: inputs are length- and key-validated, writes are scoped to the selected engagement and step, and the interface keeps fictional data and professional decision boundaries visible.

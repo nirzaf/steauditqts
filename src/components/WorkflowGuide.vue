@@ -1,16 +1,93 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { addWorkflowComment, DEMO_ENGAGEMENT_ID, loadWorkflowState, saveWorkflowPreference } from '../api'
 
 const props = defineProps({
   guide: { type: Object, required: true },
+  engagementId: { type: String, default: DEMO_ENGAGEMENT_ID },
 })
 
 const expanded = ref(true)
 const guideId = computed(() => `workflow-guide-${props.guide.id}`)
+const feedbackId = computed(() => `${guideId.value}-feedback`)
+const comments = ref([])
+const authorName = ref('Client contact')
+const commentBody = ref('')
+const stepOptional = ref(false)
+const loadingState = ref(true)
+const savingComment = ref(false)
+const savingPreference = ref(false)
+const source = ref('d1')
+const statusMessage = ref('')
+
+const sourceLabel = computed(() => source.value === 'd1' ? 'Shared demo record' : 'Browser-only fallback')
+const sourceHint = computed(() => source.value === 'd1'
+  ? 'Comments and step preferences are saved in the shared Quadrate D1 demo database.'
+  : 'The API is unavailable, so this browser is keeping a temporary copy until it reconnects.')
+const commentCountLabel = computed(() => `${comments.value.length} ${comments.value.length === 1 ? 'comment' : 'comments'}`)
 
 function toggle() {
   expanded.value = !expanded.value
 }
+
+function formatCommentDate(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-QA', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+async function loadState() {
+  loadingState.value = true
+  const state = await loadWorkflowState({ engagementId: props.engagementId, pageKey: props.guide.id })
+  comments.value = state.comments
+  source.value = state.source
+  const preference = state.preferences.find((item) => item.stepKey === props.guide.id)
+  stepOptional.value = Boolean(preference?.isOptional)
+  loadingState.value = false
+}
+
+async function addComment() {
+  const body = commentBody.value.trim()
+  const name = authorName.value.trim()
+  if (!body || !name || savingComment.value) return
+  savingComment.value = true
+  statusMessage.value = ''
+  const result = await addWorkflowComment({
+    engagementId: props.engagementId,
+    pageKey: props.guide.id,
+    stepKey: props.guide.id,
+    authorName: name,
+    authorRole: 'Client contact',
+    body,
+  })
+  comments.value = [result.comment, ...comments.value]
+  source.value = result.source
+  commentBody.value = ''
+  statusMessage.value = result.source === 'd1' ? 'Comment saved to the shared demo record.' : 'Comment saved in this browser while the API is offline.'
+  savingComment.value = false
+}
+
+async function updateOptional(event) {
+  const nextValue = Boolean(event.target.checked)
+  if (savingPreference.value) return
+  stepOptional.value = nextValue
+  savingPreference.value = true
+  statusMessage.value = ''
+  const result = await saveWorkflowPreference({
+    engagementId: props.engagementId,
+    stepKey: props.guide.id,
+    isOptional: nextValue,
+    updatedBy: authorName.value.trim() || 'Client contact',
+  })
+  source.value = result.source
+  statusMessage.value = result.source === 'd1'
+    ? `${nextValue ? 'Optional' : 'Required'} status saved for this step.`
+    : `${nextValue ? 'Optional' : 'Required'} status saved in this browser while the API is offline.`
+  savingPreference.value = false
+}
+
+onMounted(loadState)
+watch(() => props.guide.id, loadState)
 </script>
 
 <template>
@@ -48,6 +125,42 @@ function toggle() {
           <span id="guide-next-title" class="guide-label">Next step</span>
           <strong>{{ guide.next }}</strong>
           <p>{{ guide.nextHint }}</p>
+        </section>
+      </div>
+
+      <div :id="feedbackId" class="guide-feedback-grid">
+        <section class="guide-feedback-card" :aria-labelledby="`${feedbackId}-title`">
+          <div class="guide-feedback-heading">
+            <div>
+              <span class="guide-label">Client input</span>
+              <h3 :id="`${feedbackId}-title`">Add context for this step</h3>
+            </div>
+            <span class="guide-source" :class="{ local: source === 'local' }">{{ sourceLabel }}</span>
+          </div>
+          <p class="guide-feedback-copy">Leave a concise note for the engagement team. It is attached to <strong>{{ guide.title }}</strong> and remains separate from the professional conclusion.</p>
+          <form class="guide-comment-form" @submit.prevent="addComment">
+            <label>Display name<input v-model="authorName" maxlength="80" autocomplete="name" placeholder="e.g. Nadia Faris" /></label>
+            <label class="guide-comment-field">Comment<textarea v-model="commentBody" maxlength="1200" rows="3" placeholder="What should the team know before continuing?" required></textarea></label>
+            <div class="guide-form-footer"><span class="guide-character-count">{{ commentBody.length }}/1,200</span><button type="submit" class="button primary" :disabled="savingComment || !authorName.trim() || !commentBody.trim()">{{ savingComment ? 'Saving…' : 'Add comment' }}</button></div>
+          </form>
+          <div class="guide-persistence-note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6M12 7.5v.5"/></svg><span>{{ sourceHint }}</span></div>
+        </section>
+
+        <section class="guide-comments-card" :aria-labelledby="`${feedbackId}-comments-title`">
+          <div class="guide-feedback-heading"><div><span class="guide-label">Decision aid</span><h3 :id="`${feedbackId}-comments-title`">Step setting &amp; comments</h3></div><span class="guide-comment-count">{{ commentCountLabel }}</span></div>
+          <label class="guide-optional-control"><input type="checkbox" :checked="stepOptional" :disabled="savingPreference || loadingState" @change="updateOptional" /><span><strong>{{ stepOptional ? 'Optional in this walkthrough' : 'Required in this walkthrough' }}</strong><small>{{ stepOptional ? 'You can continue without this step, but keep the reason visible.' : 'Use this when the engagement needs this control before handoff.' }}</small></span></label>
+          <p class="guide-optional-warning">Optional status changes the demo path only. It never bypasses a real approval, independence check, or audit requirement.</p>
+          <div class="guide-comment-list" aria-live="polite">
+            <p v-if="loadingState" class="guide-empty-state">Loading comments…</p>
+            <p v-else-if="!comments.length" class="guide-empty-state">No client comments yet. Add the first piece of context above.</p>
+            <template v-else>
+              <article v-for="comment in comments" :key="comment.id" class="guide-comment-item">
+                <div class="guide-comment-meta"><strong>{{ comment.authorName }}</strong><span>{{ comment.authorRole }}</span><time :datetime="comment.createdAt">{{ formatCommentDate(comment.createdAt) }}</time></div>
+                <p>{{ comment.body }}</p>
+              </article>
+            </template>
+          </div>
+          <p v-if="statusMessage" class="guide-status-message" role="status" aria-live="polite">{{ statusMessage }}</p>
         </section>
       </div>
     </div>
