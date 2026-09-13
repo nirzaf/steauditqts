@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Interactive accounting and audit workflow demonstration with versioned controls and sample QAR data.">
+    <meta name="theme-color" content="#1e3a5f">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
+    <title>AuditFlow — Workflow Demonstrator</title>
+    <style>
+      :root {
+        --navy: #1e3a5f;
+        --blue: #2563eb;
+        --green: #15803d;
+        --green-pale: #e9f8ed;
+        --amber: #b45309;
+        --amber-pale: #fff7e6;
+        --red: #b91c1c;
+        --red-pale: #fff0f0;
+        --ink: #0f172a;
+        --muted: #475569;
+        --subtle: #64748b;
+        --line: #cbd5e1;
+        --canvas: #f8fafc;
+        --card: #ffffff;
+        --soft-navy: #eef4fa;
+        --radius: 16px;
+        --shadow: 0 8px 28px rgba(15, 23, 42, .08);
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: var(--canvas);
+        font-family: "Open Sans", Arial, sans-serif;
+        line-height: 1.5;
+      }
+      button, input { font: inherit; }
+      button { cursor: pointer; }
+      button:focus-visible, a:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; }
+      .shell { width: min(1400px, calc(100% - 40px)); margin: 0 auto; }
+      .topbar { background: var(--navy); color: white; border-bottom: 4px solid #16a34a; }
+      .topbar-inner { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+      .brand { display: flex; align-items: center; gap: 12px; font-family: Poppins, sans-serif; font-weight: 700; letter-spacing: -.02em; }
+      .brand-mark { width: 37px; height: 37px; border: 2px solid rgba(255,255,255,.8); border-radius: 10px; position: relative; }
+      .brand-mark::before, .brand-mark::after { content: ""; position: absolute; left: 8px; height: 3px; background: white; border-radius: 2px; }
+      .brand-mark::before { width: 18px; top: 10px; box-shadow: 0 7px 0 white, 0 14px 0 white; }
+      .brand-mark::after { width: 7px; height: 7px; border-radius: 50%; background: #46d273; right: 4px; left: auto; bottom: 3px; }
+      .brand span { color: #d9e8f6; font-weight: 500; }
+      .top-note { display: flex; align-items: center; gap: 8px; color: #d9e8f6; font-size: .875rem; }
+      .top-note i { width: 8px; height: 8px; display: inline-block; background: #46d273; border-radius: 50%; }
+
+      main { padding: 30px 0 56px; }
+      .eyebrow { color: var(--blue); font-size: .79rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; margin: 0 0 6px; }
+      h1, h2, h3 { font-family: Poppins, sans-serif; line-height: 1.18; margin: 0; }
+      h1 { font-size: clamp(1.7rem, 4vw, 2.45rem); letter-spacing: -.035em; }
+      h2 { font-size: 1.22rem; letter-spacing: -.02em; }
+      h3 { font-size: 1rem; }
+      p { margin: 0; }
+      .intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 23px; }
+      .intro-copy { max-width: 800px; }
+      .intro-copy > p:last-child { color: var(--muted); max-width: 760px; margin-top: 9px; }
+      .scenario-pill { flex: 0 0 auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px; box-shadow: 0 3px 12px rgba(15,23,42,.04); }
+      .scenario-pill strong { display: block; font-size: .9rem; }
+      .scenario-pill span { color: var(--muted); font-size: .8rem; }
+
+      .notice { display: flex; gap: 11px; align-items: flex-start; padding: 12px 14px; color: #443405; background: #fff9e8; border-left: 4px solid #d97706; margin-bottom: 23px; font-size: .9rem; }
+      .notice b { white-space: nowrap; }
+      .workspace { background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); }
+      .workspace-header { padding: 19px 22px 16px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 18px; }
+      .workspace-header p { color: var(--muted); font-size: .9rem; margin-top: 4px; }
+      .step-readout { text-align: right; flex: 0 0 auto; }
+      .step-readout strong { display: block; color: var(--navy); font-family: Poppins, sans-serif; font-size: 1.05rem; }
+      .step-readout span { color: var(--muted); font-size: .8rem; }
+      .progress { width: 146px; height: 7px; background: #e5edf5; overflow: hidden; border-radius: 99px; margin: 6px 0 0 auto; }
+      .progress > span { height: 100%; display: block; background: linear-gradient(90deg, var(--blue), #16a34a); border-radius: inherit; transition: width .28s ease; }
+
+      .journey { padding: 22px; overflow-x: auto; }
+      .journey-row { min-width: 900px; display: grid; grid-template-columns: repeat(8, 1fr); position: relative; gap: 0; }
+      .journey-row::before { content: ""; position: absolute; left: 5.8%; right: 5.8%; top: 21px; height: 2px; background: #d8e2ee; }
+      .journey-step { border: 0; background: transparent; padding: 0 7px; position: relative; text-align: center; color: var(--muted); transition: transform .2s ease; }
+      .journey-step:hover { transform: translateY(-2px); }
+      .journey-dot { width: 44px; height: 44px; margin: 0 auto 10px; display: grid; place-items: center; border-radius: 50%; position: relative; z-index: 1; background: white; border: 2px solid #b7c8da; color: var(--muted); font-family: Poppins, sans-serif; font-weight: 700; font-size: .9rem; }
+      .journey-step.done .journey-dot { background: var(--green); border-color: var(--green); color: white; }
+      .journey-step.active .journey-dot { background: var(--navy); border-color: var(--navy); color: white; box-shadow: 0 0 0 5px #dbeafe; }
+      .journey-step.attention .journey-dot { color: #92400e; background: #fff7e7; border-color: #d97706; }
+      .journey-step .time { display: block; font-size: .73rem; color: var(--subtle); margin-bottom: 2px; }
+      .journey-step .name { display: block; font-size: .84rem; line-height: 1.3; font-weight: 700; }
+      .journey-step.active .name { color: var(--navy); }
+
+      .content-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(295px, .85fr); border-top: 1px solid var(--line); }
+      .content-main { padding: 23px; min-width: 0; }
+      .side { padding: 23px; border-left: 1px solid var(--line); background: #fbfdff; }
+      .scene-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+      .scene-heading p { margin-top: 5px; color: var(--muted); max-width: 620px; font-size: .94rem; }
+      .status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 99px; font-size: .76rem; font-weight: 700; white-space: nowrap; }
+      .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+      .status.pass { color: #166534; background: var(--green-pale); }
+      .status.review { color: #92400e; background: var(--amber-pale); }
+      .status.block { color: #991b1b; background: var(--red-pale); }
+      .status.info { color: #1d4ed8; background: #eff6ff; }
+
+      .story-card { border: 1px solid #d9e4f0; background: #f8fbff; padding: 17px; border-radius: 12px; margin-bottom: 18px; }
+      .story-card h3 { color: var(--navy); margin-bottom: 5px; }
+      .story-card p { color: var(--muted); font-size: .9rem; }
+      .control-strip { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid #dce7f2; margin-top: 14px; padding-top: 14px; gap: 12px; }
+      .control-strip strong { display: block; font-family: Poppins, sans-serif; color: var(--navy); font-size: 1rem; }
+      .control-strip span { color: var(--muted); display: block; font-size: .76rem; }
+
+      .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
+      .metric { padding: 13px; border: 1px solid var(--line); background: white; }
+      .metric label { display: block; color: var(--muted); font-size: .77rem; margin-bottom: 5px; }
+      .metric strong { display: block; font-family: Poppins, sans-serif; font-size: 1.25rem; color: var(--navy); letter-spacing: -.025em; }
+      .metric em { color: var(--green); display: block; font-size: .77rem; font-style: normal; margin-top: 3px; }
+      .metric em.alert { color: var(--amber); }
+
+      .chart-block { margin-bottom: 19px; }
+      .chart-block > header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 8px; }
+      .chart-block > header span { color: var(--muted); font-size: .8rem; }
+      .balance-rail { border-left: 1px solid #ccd7e4; border-bottom: 1px solid #ccd7e4; min-height: 136px; display: flex; align-items: flex-end; gap: clamp(20px, 7vw, 65px); padding: 10px 20px 0; }
+      .bar-group { width: 92px; text-align: center; color: var(--ink); font-size: .77rem; }
+      .bar { min-height: 6px; background: var(--blue); width: 62px; margin: 0 auto 7px; transition: height .35s ease; }
+      .bar.equity { background: var(--green); }
+      .bar.liability { background: #64748b; }
+      .bar-value { font-family: Poppins, sans-serif; font-weight: 700; color: var(--navy); font-size: .8rem; display: block; margin-bottom: 3px; }
+      .chart-caption { color: var(--muted); font-size: .78rem; margin-top: 8px; }
+
+      .table-wrap { overflow-x: auto; border: 1px solid var(--line); }
+      table { border-collapse: collapse; width: 100%; min-width: 585px; font-size: .83rem; }
+      th { text-align: left; color: var(--muted); background: #f5f8fb; font-weight: 700; }
+      th, td { padding: 9px 11px; border-bottom: 1px solid #e5edf5; }
+      tbody tr:last-child td { border-bottom: 0; }
+      td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+      tr.changed td { background: #f0fdf4; }
+      .delta { color: var(--green); font-weight: 700; }
+
+      .panel-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 18px; }
+      .panel-tabs button { border: 1px solid var(--line); background: white; color: var(--muted); padding: 8px 10px; font-size: .82rem; font-weight: 700; }
+      .panel-tabs button[aria-pressed="true"] { background: var(--navy); color: white; border-color: var(--navy); }
+      .path { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+      .path-item { flex: 1 1 118px; border-left: 3px solid var(--blue); background: white; padding: 10px; min-height: 73px; }
+      .path-item strong { display: block; color: var(--navy); font-size: .8rem; }
+      .path-item span { display: block; color: var(--muted); font-size: .76rem; margin-top: 3px; }
+      .path-arrow { align-self: center; color: #7a8ba0; font-size: 1.15rem; }
+
+      .gate-list { list-style: none; margin: 15px 0 22px; padding: 0; border-top: 1px solid var(--line); }
+      .gate { display: grid; grid-template-columns: 31px 1fr auto; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+      .gate-id { color: var(--navy); font-family: Poppins, sans-serif; font-weight: 700; font-size: .82rem; }
+      .gate strong { display: block; font-size: .84rem; }
+      .gate small { display: block; color: var(--muted); font-size: .74rem; margin-top: 1px; }
+      .evidence { padding: 15px; border-left: 4px solid var(--blue); background: #eff6ff; }
+      .evidence h3 { margin-bottom: 7px; color: var(--navy); }
+      .evidence ul { padding-left: 19px; margin: 0; color: var(--muted); font-size: .83rem; }
+      .evidence li + li { margin-top: 4px; }
+
+      .nav-actions { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding: 16px 22px; background: #fbfdff; }
+      .button { border: 1px solid var(--line); background: white; color: var(--navy); font-weight: 700; padding: 10px 13px; border-radius: 8px; min-height: 42px; transition: background .2s ease, border-color .2s ease, transform .2s ease; }
+      .button:hover:not(:disabled) { background: #eef4fa; border-color: #94a9bf; transform: translateY(-1px); }
+      .button.primary { background: var(--navy); border-color: var(--navy); color: white; }
+      .button.primary:hover:not(:disabled) { background: #274a77; }
+      .button:disabled { opacity: .45; cursor: not-allowed; }
+      .source-line { color: var(--subtle); font-size: .78rem; margin-top: 22px; }
+      .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+      @media (max-width: 940px) {
+        .content-grid { grid-template-columns: 1fr; }
+        .side { border-left: 0; border-top: 1px solid var(--line); }
+      }
+      @media (max-width: 650px) {
+        .shell { width: min(100% - 26px, 1400px); }
+        .topbar-inner { min-height: 68px; }
+        .top-note { display: none; }
+        main { padding-top: 22px; }
+        .intro, .workspace-header, .scene-heading { align-items: flex-start; flex-direction: column; }
+        .step-readout { text-align: left; }
+        .progress { margin-left: 0; }
+        .journey, .content-main, .side { padding: 16px; }
+        .metrics, .control-strip { grid-template-columns: 1fr; }
+        .workspace-header { padding: 16px; }
+        .nav-actions { padding: 13px 16px; }
+        .button { flex: 1; }
+        .notice { font-size: .82rem; }
+      }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="shell topbar-inner">
+        <div class="brand" aria-label="AuditFlow Demonstrator"><span class="brand-mark" aria-hidden="true"></span>AuditFlow <span>Demonstrator</span></div>
+        <div class="top-note"><i aria-hidden="true"></i> Illustrative data only — professional decisions remain human-owned</div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="intro" aria-labelledby="page-title">
+        <div class="intro-copy">
+          <p class="eyebrow">End-to-end accounting &amp; audit workflow</p>
+          <h1 id="page-title">Follow one engagement from continuance to archive.</h1>
+          <p>Step through a recurring-client scenario to see the separate accounting and audit tracks, the QAR control totals behind them, and the approval gates that prevent a release when evidence or versions are not ready.</p>
+        </div>
+        <div class="scenario-pill" aria-label="Current scenario">
+          <strong>Demo entity: Northstar Trading W.L.L.</strong>
+          <span>Recurring audit • Year ended 31 Dec 2026 • QAR</span>
+        </div>
+      </section>
+
+      <aside class="notice" aria-label="Important demonstration note">
+        <b>How to read this demo</b>
+        <span>These figures are the fictional balanced trial-balance fixture from the source workflow. Statuses demonstrate proposed controls; they are not an audit opinion, legal advice, or a production approval.</span>
+      </aside>
+
+      <section class="workspace" aria-labelledby="journey-title">
+        <header class="workspace-header">
+          <div>
+            <h2 id="journey-title">Guided engagement journey</h2>
+            <p>Select any milestone to inspect its data, decisions, and safeguards.</p>
+          </div>
+          <div class="step-readout" aria-live="polite">
+            <strong id="stepLabel">Milestone 4 of 8</strong>
+            <span id="stepContext">Revised accounting data</span>
+            <div class="progress" aria-label="Scenario progress" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="4"><span id="progressFill" style="width:50%"></span></div>
+          </div>
+        </header>
+
+        <nav class="journey" aria-label="Scenario milestones">
+          <div class="journey-row" id="journeyRow"></div>
+        </nav>
+
+        <div class="content-grid">
+          <section class="content-main" aria-labelledby="sceneTitle">
+            <div class="scene-heading">
+              <div>
+                <p class="eyebrow" id="sceneKicker">Accounting package</p>
+                <h2 id="sceneTitle">Revised source is reconciled without double counting.</h2>
+                <p id="sceneNarrative">The accountant's replacement TB already includes AJ-001. The application records the bridge, marks the adjustment reflected in source, and keeps the pre-adjustment import intact.</p>
+              </div>
+              <span class="status pass" id="sceneStatus">Control passed</span>
+            </div>
+
+            <div class="panel-tabs" aria-label="View the selected milestone by track">
+              <button type="button" data-panel="overview" aria-pressed="true">Overview</button>
+              <button type="button" data-panel="accounting" aria-pressed="false">Accounting data</button>
+              <button type="button" data-panel="audit" aria-pressed="false">Audit trail</button>
+              <button type="button" data-panel="completion" aria-pressed="false">Completion</button>
+            </div>
+            <div id="panelContent"></div>
+          </section>
+
+          <aside class="side" aria-labelledby="gatesHeading">
+            <p class="eyebrow">Gate evaluation</p>
+            <h2 id="gatesHeading">What must be true next</h2>
+            <ul class="gate-list" id="gateList"></ul>
+            <div class="evidence">
+              <h3>Version-aware control</h3>
+              <ul id="evidenceList"></ul>
+            </div>
+          </aside>
+        </div>
+
+        <footer class="nav-actions">
+          <button class="button" type="button" id="previousButton">Previous milestone</button>
+          <button class="button primary" type="button" id="nextButton">Next milestone</button>
+        </footer>
+      </section>
+      <p class="source-line">Modelled from “Accounting &amp; Audit Firm — Consolidated End-to-End Workflow”, v2.0. The workflow requires local technical, ethics, and compliance approval before operational adoption.</p>
+    </main>
+
+    <script>
+      const money = value => new Intl.NumberFormat('en-QA', { style: 'currency', currency: 'QAR', maximumFractionDigits: 0 }).format(value);
+      const milestones = [
+        {
+          short: 'Continuance', time: 'Step 1', name: 'Renewal opens', state: 'done', kicker: 'Annual revalidation', status: 'review', statusText: 'Review in progress',
+          title: 'Current facts are refreshed; last year is a reference, not an approval.',
+          narrative: 'A new shareholder and a new accounting system trigger fresh verification. Prior late bank reconciliations remain active risk inputs.',
+          overview: { heading: 'The relationship can be reviewed, but work has not started.', copy: 'The platform opens a new assessment with 30 annual revalidation questions. It carries forward reference facts and open actions only; it does not copy samples, conclusions, or signatures.', metrics: [['30', 'annual questions', 'Current-year answers required'], ['2', 'changed facts', 'Shareholder and accounting system'], ['1', 'prior issue', 'Late bank reconciliations']], path: [['Prior file', 'Reference only'], ['Change review', 'New evidence'], ['Partner decision', 'Required'], ['Terms', 'Before work starts']] },
+          evidence: ['RV-002 ownership change requires new verification', 'RV-011 system change updates audit data-risk assessment', 'No current-year sign-off has been inherited'], gates: { G1: 'review', G2: 'block', G3: 'block', G4: 'block', G5: 'block', G6: 'block', G7: 'block', G8: 'block', G9: 'block' }
+        },
+        {
+          short: 'Authorization', time: 'Step 5', name: 'Terms authorize work', state: 'done', kicker: 'Engagement authorization', status: 'pass', statusText: 'Work activated',
+          title: 'Acceptance, independence, capacity, and current terms now align.',
+          narrative: 'The engagement partner records continuance and the authorized terms activate the work. Planning can begin while accounting data is still being requested.',
+          overview: { heading: 'The service route is explicit.', copy: 'This scenario uses an independent audit firm. The accountant prepares the accounting package; the auditor controls the audit file and its conclusions.', metrics: [['G1', 'continuance', 'Partner approved'], ['G2', 'terms & team', 'Authorized'], ['2', 'parallel tracks', 'Accounting and audit']], path: [['Clearances', 'Independence & capacity'], ['Terms', 'Current period'], ['Workspace', 'Roles & scope'], ['Kickoff', 'Owners & dates']] },
+          evidence: ['Accounting preparation and audit responsibility remain separate', 'PBC owners, deadlines, and escalation route are defined', 'Audit planning is allowed before the final FS package'], gates: { G1: 'pass', G2: 'pass', G3: 'review', G4: 'block', G5: 'review', G6: 'block', G7: 'block', G8: 'block', G9: 'block' }
+        },
+        {
+          short: 'Data intake', time: 'Step 8', name: 'TB v02 validated', state: 'done', kicker: 'Accounting data', status: 'pass', statusText: 'Data usable',
+          title: 'A reconciled replacement trial balance passes the data gate.',
+          narrative: 'The first upload held an unexplained opening-equity difference. The corrected TB v02 is retained as a new raw version, linked to the prior upload and validated before use.',
+          overview: { heading: 'A balanced TB is a data control, not an audit conclusion.', copy: 'The example fixture has 14 accounts. Debit and credit control totals both equal QAR 1,820,000; the signed balance is zero.', metrics: [['14', 'accounts', 'Leading-zero codes preserved'], [money(1820000), 'debits / credits', 'Control total'], ['0', 'signed-balance sum', 'No balancing plug']], path: [['Original upload', 'Preserved'], ['Schema checks', 'Passed'], ['Balance control', 'Passed'], ['TB v02', 'Processing-ready']] },
+          evidence: ['Original file and source context remain unchanged', 'Preliminary versus final status is explicit', 'Rejected v01 cannot become the release base'], gates: { G1: 'pass', G2: 'pass', G3: 'pass', G4: 'review', G5: 'review', G6: 'block', G7: 'block', G8: 'block', G9: 'block' }
+        },
+        {
+          short: 'Adjustment', time: 'Step 11', name: 'Source reflects AJ-001', state: 'active', kicker: 'Accounting package', status: 'pass', statusText: 'Control passed',
+          title: 'Revised source is reconciled without double counting.',
+          narrative: 'The accountant’s replacement TB already includes AJ-001. The application records the bridge, marks the adjustment reflected in source, and keeps the pre-adjustment import intact.',
+          overview: { heading: 'AJ-001 changes depreciation once — not twice.', copy: 'AJ-001 debits depreciation expense and credits accumulated depreciation by QAR 5,000. The updated TB proves the entry is already reflected in source.', metrics: [[money(175000), 'current profit', 'After AJ-001'], [money(745000), 'total assets', 'After AJ-001'], [money(475000), 'total equity', 'Assets = liabilities + equity']], path: [['TB v02', 'Raw source'], ['AJ-001', 'QAR 5,000'], ['Source bridge', 'Entry reflected'], ['TB v03', 'Adjusted package']] },
+          evidence: ['AJ-001 has an idempotent application key', 'Raw TB v02 and revised TB v03 are both retained', 'Prior approvals would become stale if signed against v02'], gates: { G1: 'pass', G2: 'pass', G3: 'pass', G4: 'pass', G5: 'pass', G6: 'review', G7: 'block', G8: 'block', G9: 'block' }
+        },
+        {
+          short: 'Fieldwork', time: 'Step 15', name: 'Evidence conflict', state: 'attention', kicker: 'Audit execution', status: 'review', statusText: 'Further work required',
+          title: 'One receivables sample item has contradictory evidence.',
+          narrative: 'The exception is retained and assigned for follow-up. The item cannot be silently replaced with an easier selection, and PBC receipt is not treated as sufficient audit evidence.',
+          overview: { heading: 'Evidence is assessed, not just uploaded.', copy: 'The receivables population reconciles to TB v03. Sample item AR-019 has a disputed balance after year end, so the team performs additional work and records the conclusion.', metrics: [['AR-019', 'selected item', 'Evidence conflict'], [money(300000), 'AR population', 'Reconciled to TB v03'], ['1', 'open exception', 'Blocks area conclusion']], path: [['Receivables risk', 'Valuation'], ['Population', 'Reconciled'], ['Sample AR-019', 'Selected'], ['Exception', 'Follow-up required']] },
+          evidence: ['Sample plan is linked to materiality and population version', 'Original selection is preserved', 'Exception requires alternative work or a supported conclusion'], gates: { G1: 'pass', G2: 'pass', G3: 'pass', G4: 'pass', G5: 'pass', G6: 'review', G7: 'block', G8: 'block', G9: 'block' }
+        },
+        {
+          short: 'Re-review', time: 'Step 17', name: 'Approvals go stale', state: 'attention', kicker: 'Version control', status: 'review', statusText: 'Re-approval required',
+          title: 'A final impairment correction creates a new package and re-review.',
+          narrative: 'When management accepts the auditor’s proposed correction, the system produces a new TB and FS version. Existing approvals remain historical, but cannot authorize the new release.',
+          overview: { heading: 'No release can borrow approval from an earlier version.', copy: 'A version graph links the final package to its raw source, mappings, adjustment set, disclosures, evidence, and signatures. Changed dependencies automatically create impact-review tasks.', metrics: [['TB v04', 'new source package', 'Revised after correction'], ['FS v05', 'financial statements', 'Needs management approval'], ['3', 'stale approvals', 'Impact review created']], path: [['New journal', 'Accepted'], ['New TB / FS', 'Generated'], ['Affected approvals', 'Marked stale'], ['Re-review', 'Required']] },
+          evidence: ['Approvals bind object, version, scope, role, and dependencies', 'Release verifies dependency state atomically', 'Prior approved FS version is preserved as history'], gates: { G1: 'pass', G2: 'pass', G3: 'pass', G4: 'pass', G5: 'pass', G6: 'pass', G7: 'review', G8: 'block', G9: 'block' }
+        },
+        {
+          short: 'Completion', time: 'Step 22', name: 'EQR completes', state: 'done', kicker: 'Report-dating gate', status: 'pass', statusText: 'Ready for release',
+          title: 'The final package is complete for its exact version.',
+          narrative: 'Management responsibility, representations, partner completion, and the required engagement quality review are all recorded for the same final package.',
+          overview: { heading: 'A report date is a conclusion gate, not a progress label.', copy: 'The partner confirms evidence, risks, misstatements, final FS, required communications, signatory authority, and EQR completion. A modified opinion remains possible where the supported conclusion requires it.', metrics: [['FS v05', 'final statements', 'Management approved'], ['EQR', 'quality review', 'Completed before dating'], ['0', 'stale approvals', 'Release dependency check']], path: [['Final FS', 'Exact version'], ['Representations', 'Current'], ['Partner review', 'Complete'], ['EQR', 'Complete']] },
+          evidence: ['EQR is independent of the engagement team', 'No unresolved substantive issuance blocker remains', 'Report references, entity, period, and attachment match FS v05'], gates: { G1: 'pass', G2: 'pass', G3: 'pass', G4: 'pass', G5: 'pass', G6: 'pass', G7: 'pass', G8: 'review', G9: 'block' }
+        },
+        {
+          short: 'Release & archive', time: 'Step 24', name: 'Package locked', state: 'done', kicker: 'Release and records', status: 'pass', statusText: 'Issued & archived',
+          title: 'The matched report and final statements are released, then locked.',
+          narrative: 'The authorized signatory releases the exact report/FS package to approved recipients. The file is then assembled, indexed, locked, and retained with a controlled amendment path.',
+          overview: { heading: 'Release and archive are separate controls.', copy: 'Issuance freezes the deliverable. Assembly completes the archive manifest and retention profile; it does not permit missing substantive work or silent replacement of the issued report.', metrics: [['REL-026', 'release event', 'Recipients checked'], ['9', 'archive sections', 'Indexed'], ['LOCKED', 'file state', 'Controlled amendments only']], path: [['Release', 'Matched package'], ['Delivery log', 'Recipients'], ['Assembly', 'Manifest'], ['Archive', 'Locked']] },
+          evidence: ['Issued package hashes and delivery event are retained', 'Client export excludes internal working papers by default', 'Next-year continuance is scheduled, not automatically approved'], gates: { G1: 'pass', G2: 'pass', G3: 'pass', G4: 'pass', G5: 'pass', G6: 'pass', G7: 'pass', G8: 'pass', G9: 'pass' }
+        }
+      ];
+      const gateInfo = {
+        G1: ['Client/service accepted', 'Partner decision & required clearances'],
+        G2: ['Engagement authorized', 'Terms, team, access, and dates'],
+        G3: ['Accounting data usable', 'Validated source and mapping controls'],
+        G4: ['Draft package reviewed', 'Statements, reconciliations, and journals'],
+        G5: ['Audit plan approved', 'Risks, materiality, and procedures'],
+        G6: ['Audit conclusions complete', 'Evidence, exceptions, and evaluation'],
+        G7: ['Final package approved', 'Management, partner, and EQR where required'],
+        G8: ['Release authorized', 'Matched report, package, and recipients'],
+        G9: ['Archive complete', 'Index, lock, retention, and manifest']
+      };
+      let current = 3;
+      let panel = 'overview';
+      const $ = id => document.getElementById(id);
+
+      function classFor(state) { return state === 'pass' ? 'pass' : state === 'review' ? 'review' : 'block'; }
+      function labelFor(state) { return state === 'pass' ? 'Satisfied' : state === 'review' ? 'In review' : 'Blocked'; }
+      function accountRows(isAdjusted) {
+        const depreciation = isAdjusted ? 25000 : 20000;
+        const accumDep = isAdjusted ? -55000 : -50000;
+        return [
+          ['100101', 'Bank', 150000, 150000], ['110100', 'Trade receivables', 300000, 300000], ['120100', 'Inventory', 200000, 200000], ['150100', 'PPE cost', 150000, 150000], ['159100', 'Accumulated depreciation', -50000, accumDep], ['400100', 'Revenue', -1200000, -1200000], ['500100', 'Cost of sales', 800000, 800000], ['510100', 'Payroll expense', 190000, 190000], ['520100', 'Depreciation expense', 20000, depreciation], ['530100', 'Finance costs', 10000, 10000]
+        ].map(row => `<tr class="${row[2] !== row[3] ? 'changed' : ''}"><td><code>${row[0]}</code></td><td>${row[1]}</td><td class="num">${money(row[2])}</td><td class="num">${money(row[3])}</td><td class="num ${row[2] !== row[3] ? 'delta' : ''}">${row[2] !== row[3] ? money(row[3] - row[2]) : '—'}</td></tr>`).join('');
+      }
+      function financialPanel(scene) {
+        const adjusted = current >= 3;
+        const assets = adjusted ? 745000 : 750000;
+        const equity = adjusted ? 475000 : 480000;
+        const profit = adjusted ? 175000 : 180000;
+        return `
+          <div class="metrics" aria-label="Financial control values">
+            <div class="metric"><label>Total assets</label><strong>${money(assets)}</strong><em>Current package</em></div>
+            <div class="metric"><label>Liabilities + equity</label><strong>${money(assets)}</strong><em>Reconciles to assets</em></div>
+            <div class="metric"><label>Current profit</label><strong>${money(profit)}</strong><em class="${adjusted ? '' : 'alert'}">${adjusted ? 'After AJ-001' : 'Before AJ-001'}</em></div>
+          </div>
+          <div class="chart-block" aria-labelledby="balanceChartTitle">
+            <header><h3 id="balanceChartTitle">Statement-of-financial-position control</h3><span>QAR • final package amounts at this milestone</span></header>
+            <div class="balance-rail" role="img" aria-label="Assets of ${money(assets)} equal liabilities of QAR 270,000 plus equity of ${money(equity)}">
+              <div class="bar-group"><span class="bar-value">${money(assets)}</span><div class="bar" style="height:${assets / 7000}px"></div><span>Assets</span></div>
+              <div class="bar-group"><span class="bar-value">${money(270000)}</span><div class="bar liability" style="height:39px"></div><span>Liabilities</span></div>
+              <div class="bar-group"><span class="bar-value">${money(equity)}</span><div class="bar equity" style="height:${equity / 7000}px"></div><span>Equity</span></div>
+            </div>
+            <p class="chart-caption">The QAR 5,000 depreciation adjustment reduces profit, net PPE, assets, and equity together. It is only applied when not already reflected in the selected raw source.</p>
+          </div>
+          <div class="chart-block"><header><h3>Selected TB source bridge</h3><span>Debit balances shown positive; credits shown negative</span></header>
+            <div class="table-wrap"><table><thead><tr><th>Account</th><th>Name</th><th class="num">TB v02</th><th class="num">Current package</th><th class="num">Movement</th></tr></thead><tbody>${accountRows(adjusted)}</tbody></table></div>
+          </div>`;
+      }
+      function overviewPanel(scene) {
+        const o = scene.overview;
+        return `<article class="story-card"><h3>${o.heading}</h3><p>${o.copy}</p><div class="control-strip">${o.metrics.map(m => `<div><strong>${m[0]}</strong><span>${m[1]}</span><span>${m[2]}</span></div>`).join('')}</div></article>
+          <div class="chart-block"><header><h3>Control path</h3><span>Each handoff leaves a traceable record</span></header><div class="path">${o.path.map((item, i) => `<div class="path-item"><strong>${item[0]}</strong><span>${item[1]}</span></div>${i < o.path.length - 1 ? '<span class="path-arrow" aria-hidden="true">→</span>' : ''}`).join('')}</div></div>`;
+      }
+      function auditPanel(scene) {
+        const isException = current === 4;
+        const isComplete = current >= 6;
+        return `<article class="story-card"><h3>Receivables: evidence-to-conclusion chain</h3><p>The system exposes the relationships a reviewer must evaluate. It cannot decide evidence sufficiency or a professional conclusion by itself.</p><div class="path"><div class="path-item"><strong>Risk</strong><span>Receivables not recoverable</span></div><span class="path-arrow" aria-hidden="true">→</span><div class="path-item"><strong>Assertion</strong><span>Valuation</span></div><span class="path-arrow" aria-hidden="true">→</span><div class="path-item"><strong>Procedure</strong><span>Aging, receipts, dispute evidence</span></div><span class="path-arrow" aria-hidden="true">→</span><div class="path-item"><strong>Conclusion</strong><span>${isComplete ? 'Reviewed against final package' : isException ? 'Further work open for AR-019' : 'Planning / fieldwork status'}</span></div></div></article>
+          <div class="metrics"><div class="metric"><label>Materiality status</label><strong>Approved</strong><em>Relevant version linked</em></div><div class="metric"><label>Population</label><strong>${money(300000)}</strong><em>Reconciled to TB</em></div><div class="metric"><label>Sample exception</label><strong>${isException ? 'Open' : isComplete ? 'Concluded' : 'Tracked'}</strong><em class="${isException ? 'alert' : ''}">${isException ? 'AR-019 requires follow-up' : 'Selection history preserved'}</em></div></div>
+          <div class="story-card"><h3>What the workflow stops</h3><p>A selected item with missing or contradictory evidence cannot be replaced silently. The original selection, evidence versions, alternative work, exception, reviewer response, and reporting effect remain linked to the exact procedure.</p></div>`;
+      }
+      function completionPanel(scene) {
+        const ready = current >= 6;
+        const released = current === 7;
+        const items = [
+          ['Final FS / TB / report versions match', current >= 6 ? 'pass' : 'block'],
+          ['Management responsibility for exact FS version', current >= 6 ? 'pass' : 'block'],
+          ['Partner conclusion and required EQR', current >= 6 ? 'pass' : 'review'],
+          ['Approved recipients and delivery record', released ? 'pass' : 'block'],
+          ['Archive manifest and locked file', released ? 'pass' : 'block']
+        ];
+        return `<article class="story-card"><h3>Completion is checked from current records.</h3><p>“Ready to issue” is derived from dependencies, evidence and signatures. A dashboard label or an earlier approval cannot release a changed file.</p></article><div class="table-wrap"><table><thead><tr><th>Release condition</th><th>Scenario status</th></tr></thead><tbody>${items.map(i => `<tr><td>${i[0]}</td><td><span class="status ${classFor(i[1])}">${labelFor(i[1])}</span></td></tr>`).join('')}</tbody></table></div><div class="story-card" style="margin-top:18px"><h3>${released ? 'Issued documents are immutable.' : ready ? 'The next action is authorized release.' : 'The package is not releasable yet.'}</h3><p>${released ? 'A controlled archive amendment is a new authorized record; it cannot silently replace the issued report.' : ready ? 'The signatory checks the exact report, financial statements, recipients, delivery method, and package hashes before issuing.' : 'The workflow surfaces the specific blocker so work returns to the appropriate owner without disguising a professional judgment as automation.'}</p></div>`;
+      }
+      function renderPanel(scene) {
+        const content = panel === 'overview' ? overviewPanel(scene) : panel === 'accounting' ? financialPanel(scene) : panel === 'audit' ? auditPanel(scene) : completionPanel(scene);
+        $('panelContent').innerHTML = content;
+      }
+      function renderJourney() {
+        $('journeyRow').innerHTML = milestones.map((m, index) => `<button class="journey-step ${index < current ? 'done' : index === current ? m.state === 'attention' ? 'attention active' : 'active' : ''}" type="button" data-index="${index}" aria-current="${index === current ? 'step' : 'false'}"><span class="journey-dot">${index < current ? '✓' : index + 1}</span><span class="time">${m.time}</span><span class="name">${m.name}</span></button>`).join('');
+        document.querySelectorAll('.journey-step').forEach(btn => btn.addEventListener('click', () => { current = Number(btn.dataset.index); render(); }));
+      }
+      function renderGates(scene) {
+        $('gateList').innerHTML = Object.entries(gateInfo).map(([id, info]) => { const state = scene.gates[id]; return `<li class="gate"><span class="gate-id">${id}</span><span><strong>${info[0]}</strong><small>${info[1]}</small></span><span class="status ${classFor(state)}">${labelFor(state)}</span></li>`; }).join('');
+        $('evidenceList').innerHTML = scene.evidence.map(item => `<li>${item}</li>`).join('');
+      }
+      function render() {
+        const scene = milestones[current];
+        $('sceneKicker').textContent = scene.kicker;
+        $('sceneTitle').textContent = scene.title;
+        $('sceneNarrative').textContent = scene.narrative;
+        $('sceneStatus').className = `status ${scene.status}`;
+        $('sceneStatus').textContent = scene.statusText;
+        $('stepLabel').textContent = `Milestone ${current + 1} of ${milestones.length}`;
+        $('stepContext').textContent = scene.name;
+        $('progressFill').style.width = `${((current + 1) / milestones.length) * 100}%`;
+        document.querySelector('.progress').setAttribute('aria-valuenow', String(current + 1));
+        $('previousButton').disabled = current === 0;
+        $('nextButton').disabled = current === milestones.length - 1;
+        $('nextButton').textContent = current === milestones.length - 1 ? 'End of scenario' : 'Next milestone';
+        document.querySelectorAll('.panel-tabs button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.panel === panel)));
+        renderJourney(); renderPanel(scene); renderGates(scene);
+      }
+      document.querySelectorAll('.panel-tabs button').forEach(button => button.addEventListener('click', () => { panel = button.dataset.panel; render(); }));
+      $('previousButton').addEventListener('click', () => { if (current > 0) { current--; render(); } });
+      $('nextButton').addEventListener('click', () => { if (current < milestones.length - 1) { current++; render(); } });
+      render();
+    </script>
+  </body>
+</html>
