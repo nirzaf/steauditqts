@@ -17,7 +17,7 @@ export const DEMO_ENGAGEMENT_ID = DEFAULT_ENGAGEMENT_ID
 const buildEnv = import.meta.env || {}
 const apiBase = String(buildEnv.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 const sharedApiEnabled = String(buildEnv.VITE_SHARED_DEMO_ENABLED || '').toLowerCase() === 'true'
-  && buildEnv.VITE_SHARED_DEMO_IDENTITY === 'cloudflare-access-verified'
+  && ['cloudflare-access-verified', 'public-synthetic'].includes(buildEnv.VITE_SHARED_DEMO_IDENTITY)
   && buildEnv.VITE_SHARED_DEMO_BINDING === 'isolated-non-production'
 
 export const demoStorageMode = sharedApiEnabled ? 'SHARED_DEMO_OPT_IN' : 'LOCAL_ONLY'
@@ -179,6 +179,7 @@ async function request(path, options = {}) {
     response = await fetch(`${apiBase}${path}`, {
       ...options,
       ...(controller ? { signal: controller.signal } : {}),
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         'X-AuditFlow-Request-Id': requestId,

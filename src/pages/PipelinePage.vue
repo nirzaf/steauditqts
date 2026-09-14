@@ -4,6 +4,9 @@ import Icon from '../components/Icon.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
+import SharedPipelineStatus from '../components/SharedPipelineStatus.vue'
+import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
+import { SHARED_ENGAGEMENT_ID } from '../sharedDemo.js'
 import { loadDemoSession } from '../auth'
 import { workflowGuides } from '../data'
 import { pipelineLanes, pipelineStages } from '../pipelineData'
@@ -166,6 +169,7 @@ onBeforeUnmount(() => {
     />
 
     <WorkflowGuide :guide="workflowGuides.pipeline" />
+    <SharedPipelineStatus v-if="sharedDemoEnabled" :engagement-id="SHARED_ENGAGEMENT_ID" @navigate="emit('navigate', $event)" />
 
     <section class="panel pipeline-intro" aria-labelledby="pipeline-intro-title">
       <div class="pipeline-intro-copy">

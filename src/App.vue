@@ -5,6 +5,8 @@ import Icon from './components/Icon.vue'
 import AsyncPageError from './components/AsyncPageError.vue'
 import AsyncPageLoading from './components/AsyncPageLoading.vue'
 import { clearDemoSession, loadDemoSession, saveDemoSession } from './auth'
+import { resetDemoData } from './demoReset.js'
+import { createDemoSession, isSharedDemoEnabled } from './sharedDemo.js'
 import { client, navItems } from './data'
 import { roleRouteSets } from './roleWorkspaces.js'
 import { setActivePersona } from './domain/scenario.js'
@@ -42,6 +44,7 @@ const routes = {
   blueprint: { label: 'V5 operating model', title: 'V5 operating model', roles: ['admin', 'finance'], component: asyncPage(() => import('./pages/V5BlueprintPage.vue'), 'V5 operating model') },
   cycle: { label: 'Complete cycle', title: 'Complete synthetic cycle', roles: ['admin'], component: asyncPage(() => import('./pages/CyclePage.vue'), 'Complete synthetic cycle') },
   pipeline: { label: 'Pipeline visualizer', title: 'Audit portal pipeline', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'client', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'finance', 'eqr', 'records', 'system-admin', 'compliance'], component: asyncPage(() => import('./pages/PipelinePage.vue'), 'Audit portal pipeline') },
+  'shared-demo': { label: 'Shared demo control room', title: 'Shared demo control room', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'client', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'finance', 'eqr', 'records', 'system-admin', 'compliance'], component: asyncPage(() => import('./pages/SharedDemoPage.vue'), 'Shared demo control room') },
   'accountant-architecture': { label: 'Accountant architecture', title: 'Accountant architecture', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer'], component: asyncPage(() => import('./pages/AccountantArchitecturePage.vue'), 'Accountant architecture') },
   'client-architecture': { label: 'Client architecture', title: 'Client architecture', roles: ['admin', 'client', 'client-management'], component: asyncPage(() => import('./pages/ClientArchitecturePage.vue'), 'Client architecture') },
   readiness: { label: 'Phase 0 readiness', title: 'Phase 0 readiness', roles: ['admin'], component: asyncPage(() => import('./pages/ReadinessPage.vue'), 'Phase 0 readiness') },
@@ -63,6 +66,7 @@ const search = ref('')
 const helpOpen = ref(false)
 const accountMenuOpen = ref(false)
 const permissionNotice = ref('')
+const pendingDeepLink = ref('')
 const helpButton = ref(null)
 const helpCloseButton = ref(null)
 
@@ -96,6 +100,7 @@ const visibleNavItems = computed(() => {
       { key: 'client-communications', label: 'Communications', icon: 'message', section: 'Client portal', badge: '2' },
       { key: 'artifacts', label: 'Published outputs', icon: 'file', section: 'Client portal' },
       { key: 'pipeline', label: 'Pipeline visualizer', icon: 'workflow', section: 'Client portal' },
+      { key: 'shared-demo', label: 'Shared demo control room', icon: 'workflow', section: 'Client portal' },
       { key: 'client-architecture', label: 'How the platform works', icon: 'workflow', section: 'Client portal' },
     ]
   }
@@ -111,7 +116,7 @@ const visibleNavItems = computed(() => {
     { key: 'admin-console', label: 'Admin console', icon: 'shield', section: 'Administration' },
   ]
   const keys = roleRouteSets[currentUser.value.role] || ['role-workspace', 'pipeline']
-  const icons = { 'role-workspace': 'grid', clients: 'users', engagements: 'briefcase', pbc: 'inbox', accounting: 'calculator', audit: 'clipboard', reviews: 'check-circle', release: 'lock', integration: 'pulse', architecture: 'workflow', blueprint: 'layers', cycle: 'workflow', pipeline: 'workflow', 'client-home': 'grid', 'client-details': 'users', 'client-communications': 'message', 'accountant-home': 'grid', 'accountant-client': 'users', 'client-architecture': 'workflow', 'accountant-architecture': 'workflow' }
+  const icons = { 'role-workspace': 'grid', clients: 'users', engagements: 'briefcase', pbc: 'inbox', accounting: 'calculator', audit: 'clipboard', reviews: 'check-circle', release: 'lock', integration: 'pulse', architecture: 'workflow', blueprint: 'layers', cycle: 'workflow', pipeline: 'workflow', 'shared-demo': 'workflow', 'client-home': 'grid', 'client-details': 'users', 'client-communications': 'message', 'accountant-home': 'grid', 'accountant-client': 'users', 'client-architecture': 'workflow', 'accountant-architecture': 'workflow' }
   return keys.map((key) => {
     const source = navItems.find((item) => item.key === key)
     return { key, label: key === 'role-workspace' ? 'My role workspace' : source?.label || routes[key]?.label || key, icon: source?.icon || icons[key] || 'workflow', section: key === 'role-workspace' ? 'My workspace' : source?.section || 'Workflow' }
@@ -130,9 +135,14 @@ const navGroups = computed(() => {
   return groups
 })
 
+function readHashKey() {
+  if (typeof window === 'undefined') return ''
+  return window.location.hash.replace(/^#\/?/, '').split('/')[0]
+}
+
 function getRouteFromHash() {
   if (typeof window === 'undefined') return 'dashboard'
-  const key = window.location.hash.replace(/^#\/?/, '').split('/')[0]
+  const key = readHashKey()
   if (!currentUser.value) return ''
   return routes[key] && routes[key].roles.includes(currentUser.value.role) ? key : currentUser.value.landing
 }
@@ -159,6 +169,8 @@ function navigate(key) {
 
 function syncRoute() {
   if (!currentUser.value) {
+    const requested = readHashKey()
+    if (requested && routes[requested]) pendingDeepLink.value = requested
     currentRoute.value = ''
     mobileNavOpen.value = false
     accountMenuOpen.value = false
@@ -186,13 +198,34 @@ function handleLogin(user) {
   currentUser.value = user
   setActivePersona(user.id)
   saveDemoSession(user)
-  currentRoute.value = user.landing
-  permissionNotice.value = ''
-  if (typeof window !== 'undefined') window.location.hash = `/${user.landing}`
+  const target = pendingDeepLink.value || readHashKey()
+  pendingDeepLink.value = ''
+  if (target && routes[target] && routes[target].roles.includes(user.role)) {
+    currentRoute.value = target
+    permissionNotice.value = ''
+    if (typeof window !== 'undefined') window.location.hash = `/${target}`
+  } else {
+    if (target && target !== user.landing) permissionNotice.value = `${routes[target]?.label || 'That page'} is not available for the ${user.roleLabel.toLowerCase()} account.`
+    else permissionNotice.value = ''
+    currentRoute.value = user.landing
+    if (typeof window !== 'undefined') window.location.hash = `/${user.landing}`
+  }
+  if (isSharedDemoEnabled) {
+    createDemoSession(user.id).then((res) => {
+      if (!res.ok) permissionNotice.value = `Shared demo session unavailable (${res.error.code}). Continuing browser-local; shared actions will report not committed.`;
+    });
+  }
   setDocumentTitle()
 }
 
+function handleDemoReset() {
+  const message = resetDemoData()
+  permissionNotice.value = message
+  if (typeof window !== 'undefined') window.location.reload()
+}
+
 function showLogin() {
+  if (currentRoute.value) pendingDeepLink.value = currentRoute.value
   clearDemoSession()
   setActivePersona(null)
   currentUser.value = null
@@ -218,6 +251,11 @@ onMounted(() => {
   window.addEventListener('hashchange', syncRoute)
   syncRoute()
   setDocumentTitle()
+  if (currentUser.value && isSharedDemoEnabled) {
+    createDemoSession(currentUser.value.id).then((res) => {
+      if (!res.ok) permissionNotice.value = `Shared demo session unavailable (${res.error.code}). Shared actions will report not committed.`
+    })
+  }
 })
 
 onBeforeUnmount(() => window.removeEventListener('hashchange', syncRoute))
@@ -253,6 +291,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncRoute))
         <div class="help-dialog-header"><div><span class="eyebrow">Prototype orientation</span><h2 id="help-title">How to read AuditFlow</h2></div><button ref="helpCloseButton" type="button" class="icon-button" aria-label="Close help" title="Close help" @click="closeHelp"><Icon name="x" :size="17" /></button></div>
         <p>{{ helpCopy }}</p>
         <ol class="help-list"><li><strong>Orient</strong><span>Overview shows the queue, owners, and current gate pressure.</span></li><li><strong>Decide</strong><span>Clients and engagement pages separate acceptance from delivery work.</span></li><li><strong>Evidence</strong><span>PBC, Accounting, and Audit pages show the source-to-conclusion chain.</span></li><li><strong>Control</strong><span>Reviews, Release, and Integration show approvals, versions, retries, and archive evidence.</span></li></ol>
+        <div class="help-dialog-reset"><button type="button" class="button secondary" @click="handleDemoReset">Reset demo data</button><span>Clears the synthetic scenario and local drafts, keeps you signed in.</span></div>
         <div class="help-dialog-note"><Icon name="info" :size="17" /><span><strong>Demo boundary</strong> Values are illustrative. Qualified people own professional decisions, approvals, conclusions, and records actions.</span></div>
       </section>
     </div>

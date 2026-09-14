@@ -2,6 +2,16 @@
 
 > Vue + Vite synthetic prototype. Safe to click everywhere: all data is fictional QAR fixtures, browser-local by default (`LOCAL_ONLY`), no production system is touched.
 
+## 0. 3-minute executive tour (start here)
+
+Sign in as **Admin** (`maya@quadrate.demo` / `admin123`), then follow this chain — each page's guide now ends with a green **Demo checkpoint** telling you what success looks like:
+
+1. **Pipeline visualizer** (`/#/pipeline`) → press **Play**: 8 stages, owner + handoff + client-visible boundary per stage.
+2. **Complete cycle** (`/#/cycle`) → 36 Northstar actions + 5 failure checkpoints; clicks inspect only.
+3. **Phase 0 readiness** (`/#/readiness`) → **Run clean synthetic rehearsal** → end-to-end slice with `SIMULATION` evidence.
+
+Deep links work even logged out: open e.g. `http://127.0.0.1:5173/#/audit` first, then sign in — the app returns you there if your persona may see it, otherwise it lands you home with a permission notice.
+
 ## 1. Start in 2 minutes
 
 ```bash
@@ -21,7 +31,7 @@ npm run api:dev          # second terminal: fail-closed Worker on /api/*
 npm run db:migrate:local # only when testing an isolated local D1 binding
 ```
 
-Health: `npm test` → **75/75 passing** (scenario, accounting, cycle, v5, pipeline, requirements regression, api, local-state, worker-boundary).
+Health: `npm test` → **103/103 passing** (backend actions + read gates + shared frontend client) (scenario, accounting, cycle, v5, pipeline, requirements regression, api, local-state, worker-boundary).
 
 ## 2. Log in — pick a persona, no signup
 
@@ -44,7 +54,9 @@ Login page shows a persona grid + `Quick demo credentials` with one-click **Ente
 | Compliance reviewer | `compliance@quadrate.demo` | `compliance123` | Role workspace | Acceptance/independence checks |
 | System administrator | `samir@quadrate.demo` | `samir123` | Role workspace | Users, session, diagnostics (no professional decisions) |
 
-Tip: open two browsers (e.g. Admin + Client) side-by-side to see visibility boundaries — client never sees risk scores, review deliberations, or unpublished opinions.
+Switch personas fast with the top-right account menu → **Switch demo account** (no password re-typing). Tip: open two browsers (e.g. Admin + Client) side-by-side to see visibility boundaries — client never sees risk scores, review deliberations, or unpublished opinions.
+
+> Every workflow guide now shows a green **Demo checkpoint** banner (`src/data.js` → `demoCheckpoint`, rendered by `WorkflowGuide.vue`). If what you see differs from the checkpoint, stop — that is the finding to report.
 
 ## 3. 10-minute guided test script
 
@@ -71,8 +83,48 @@ Tip: open two browsers (e.g. Admin + Client) side-by-side to see visibility boun
 
 ## 4. Reset the demo
 
-* Browser-only reset: DevTools → Application → Local Storage → delete `auditflow-demo-session-v1`, `auditflow-demo-state-v2`, `auditflow-scenario-v2` → refresh. Or use **Run clean synthetic rehearsal** (resets scenario slice, keeps a bounded evidence log).
+* **In-app soft reset (recommended):** Admin console → **Demo controls → Reset demo data**, or Help (`?` in sidebar) → **Reset demo data**. Clears the synthetic scenario + local comments/preferences/profiles (`auditflow-scenario-v2`, `auditflow-demo-state-v2`/`-v1`) and reloads; you stay signed in. Code: `src/demoReset.js`.
+* **Rehearsal reset:** **Run clean synthetic rehearsal** (Complete cycle / Phase 0 readiness) resets the scenario slice only and keeps a bounded `SIMULATION` evidence log — use it to re-demo the slice, not to clear your notes.
+* **Manual hard reset:** DevTools → Application → Local Storage → delete `auditflow-demo-session-v1`, `auditflow-demo-state-v2`, `auditflow-scenario-v2` → refresh. Needed only if storage itself looks corrupt.
 * Nothing leaves the browser unless you explicitly opt into a shared demo build (`VITE_SHARED_DEMO_*` + Cloudflare Access + isolated non-production D1). Default build never calls `/api`.
+
+## 7. Shared multi-browser demo (opt-in, `DEMO-INTERACTIVE-001`)
+
+The default tour above is browser-local. The shared demo stores one synthetic Northstar engagement in Cloudflare D1 through the Worker, so five browsers (Client, Senior, Manager, Partner, Finance) see the same state within ~5 seconds. All values stay synthetic with `SIMULATION` evidence; no production integration is enabled.
+
+### Enable it
+
+1. Apply migrations in order against an **isolated non-production** binding (never the production app tables; every table uses the `auditflow_` prefix):
+
+```bash
+npx wrangler d1 execute quadrate-db --local --file worker/schema.sql
+npx wrangler d1 execute quadrate-db --local --file worker/migrations/0002_shared_interactive_demo.sql
+npx wrangler d1 execute quadrate-db --local --file worker/migrations/0003_demo_credentials.sql
+npx wrangler d1 execute quadrate-db --local --file worker/migrations/0004_tb_sources.sql
+```
+
+(Windows note: if `npx wrangler` misparses arguments, call `node_modules/.bin/wrangler` via `npm run` scripts or your normal terminal instead. `--remote` only in a separately approved release.)
+2. Protect the Worker with Cloudflare Access and set the triple flag so frontend and backend agree: `VITE_SHARED_DEMO_ENABLED=true`, `VITE_SHARED_DEMO_IDENTITY=cloudflare-access-verified`, `VITE_SHARED_DEMO_BINDING=isolated-non-production` **and** Worker vars `SHARED_DEMO_ENABLED=true`, `SHARED_DEMO_IDENTITY_MODE=cloudflare-access-verified`, `SHARED_DEMO_BINDING=isolated-non-production`. Any mismatch → clean `403 SHARED_DEMO_DISABLED`, never partial sharing.
+3. Rebuild (`npm run build`) and open the app. Signing in mints a server-side session cookie (`POST /api/demo/session`); the Worker — never the browser — decides your actor and roles.
+
+### Five-browser acceptance script (maps to story §27)
+
+* **A — Onboarding:** Client (`/#/client-details`) submits details → Partner (`/#/clients`) accepts → Finance records estimate + Partner approves fee (`/#/blueprint`) → Management accepts `EL-2026-01` → Finance verifies advance `PAY-SIM-0018` → Partner/System-admin issues credential (one-time password, hash only in D1) → Senior announces (`/#/pbc`). Pipeline stages 1–4 flip to COMPLETE in every browser.
+* **B — PBC:** Senior creates request → Client submits receipt (or hard-copy flag) → Senior accepts or clarifies. Both views show the same version history (`/#/pbc`, shared tasks + timeline).
+* **C — Execution:** Preparer submits workpaper → Manager raises/resolves review point (self-clear of SIGNIFICANT stays `403 SOD_VIOLATION`) → Senior publishes Draft FS → Management rejects with explanation, then accepts the exact revision (`/#/audit`, `/#/reviews`).
+* **D — Opinion & release:** EQR approves → Partner binds opinion to the exact draft candidate → Partner releases (blocked while EQR incomplete or points open) → Client sees only `CLIENT_VISIBLE` deliverables (`/#/release`, Document center).
+* **E — Finance close:** Finance books actuals → invoice `INV-2026-*` shows fee 36,000 − advance 9,000 = balance 27,000 → Email/WhatsApp/portal rows queue as `QUEUED_SIMULATION` → Client sees invoice + notice. Commercial close stays `OPEN` (never auto-closed by archiving).
+
+### Shared actions (all `POST /api/engagements/:id/actions`)
+
+`SUBMIT_CLIENT_DETAILS` · `ACCEPT_CLIENT` · `RECORD_ESTIMATE` · `APPROVE_FEE` · `RESPOND_EL` · `VERIFY_ADVANCE` · `ISSUE_TEMP_CREDENTIAL` · `ISSUE_ANNOUNCEMENT` · `CREATE_PBC_REQUEST` · `SUBMIT_PBC_RECEIPT` · `RESPOND_PBC_RECEIPT` · `RECORD_TB_SOURCE` · `SUBMIT_WORKPAPER` · `CREATE_REVIEW_POINT` · `CLEAR_REVIEW_POINT` · `PUBLISH_DRAFT_FS` · `RESPOND_DRAFT_FS` · `COMPLETE_EQR` · `RECORD_AUDIT_OPINION` · `RELEASE_FINAL_REPORT` · `CREATE_INVOICE`
+
+Reads: `GET /api/engagements/:id[/tasks|/timeline]` · `/api/pbc` · `/api/workpapers` (staff-only) · `/api/reviews` (staff-only) · `/api/decisions` (clients: EL + Draft FS only) · `/api/artifacts` (clients: published visible only) · `/api/outbox`.
+
+### Shared reset & failure honesty
+
+* Admin console → **Demo controls → Reset demo data** calls `POST /api/demo/reset` (Admin/Partner only): deletes only the three demo engagements' rows, mints a new `generation_id`, appends `DEMO_RESET`. Other browsers detect the generation change on next poll and offer reload. No `DROP TABLE` anywhere.
+* Denials stay denials: `401 SESSION_REQUIRED` (pick a persona), `403 ROLE/SCOPE`, `409 REVISION_CONFLICT/VERSION_MISMATCH/PRECONDITION_FAILED`, `501 ACTION_NOT_ENABLED`. Offline or 5xx → *"was not committed"* — workflow actions never synthesize local success. Evidence: `tests/shared-demo.test.js`, `tests/phase2-actions.test.js`, `tests/phase3-commercial-pbc.test.js`, `tests/phase4-audit.test.js`, `tests/phase5-release-finance.test.js`, `tests/phase6-reads.test.js`, `tests/shared-frontend.test.js`.
 
 ## 5. Share with end users
 

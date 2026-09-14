@@ -7,6 +7,8 @@ import { computed, ref } from 'vue'
 import { demoUsers } from '../auth'
 import { navItems, workflowGuides } from '../data'
 import { activeActor, actorSession, scenario, setActorStatus } from '../domain/scenario.js'
+import { resetDemoData } from '../demoReset.js'
+import { isSharedDemoEnabled, resetSharedDemo } from '../sharedDemo.js'
 
 const emit = defineEmits(['navigate'])
 const accessRows = [
@@ -29,6 +31,21 @@ const activePersonaCount = computed(() => actorRows.value.filter((actor) => acto
 const currentSessionEpoch = computed(() => activeActor()?.sessionEpoch || '—')
 
 function navigate(route) { emit('navigate', route) }
+
+async function handleDemoReset() {
+  if (isSharedDemoEnabled) {
+    toast.value = 'Resetting the shared demo for every browser…';
+    const result = await resetSharedDemo();
+    toast.value = result.ok
+      ? `Shared demo reset (generation ${result.generationId}). Reloading every open browser view…`
+      : `Shared reset failed (${result.error.code}): ${result.error.message}`;
+    if (result.ok) window.setTimeout(() => { window.location.reload() }, 900);
+    else window.setTimeout(() => { toast.value = '' }, 5000);
+    return;
+  }
+  toast.value = resetDemoData()
+  window.setTimeout(() => { window.location.reload() }, 600)
+}
 
 function toggleActor(actor) {
   const current = activeActor()
@@ -58,6 +75,8 @@ function toggleActor(actor) {
 
     <section class="admin-banner panel"><span class="admin-banner-icon"><Icon name="shield" :size="20" /></span><div><span class="eyebrow">Full demo privileges</span><h2>Every workflow boundary is visible</h2><p>Use this view to explain access, accountability, and operational health to stakeholders.</p></div><StatusPill label="Admin access" tone="good" /></section>
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="shield" :size="17" />{{ toast }}</div>
+
+    <section class="panel demo-controls-panel"><div class="panel-heading"><div><span class="eyebrow">Demo controls</span><h2>Reset the walkthrough</h2></div></div><p class="muted-copy">Clears the synthetic scenario plus browser-local comments, preferences and profiles. You stay signed in so the tour can be re-run immediately. For a full sign-out, use the account menu.</p><div class="button-row"><button type="button" class="button secondary" @click="handleDemoReset">Reset demo data</button><button type="button" class="text-button" @click="navigate('readiness')">Run rehearsal instead <Icon name="arrow-right" :size="15" /></button></div></section>
 
     <div class="admin-metric-grid"><article class="admin-metric"><span>Active personas</span><strong>{{ activePersonaCount }}</strong><small>{{ actorRows.length }} scoped actors · session epoch {{ currentSessionEpoch }}</small></article><article class="admin-metric"><span>Workflow pages</span><strong>15</strong><small>9 core + 6 portal pages</small></article><article class="admin-metric"><span>Open blockers</span><strong>4</strong><small>Visible in the Overview queue</small></article><article class="admin-metric"><span>Integration health</span><strong>3 / 4</strong><small>One retry needs attention</small></article></div>
 

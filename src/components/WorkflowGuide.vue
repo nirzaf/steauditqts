@@ -166,6 +166,7 @@ watch(() => props.guide.id, loadState)
           <div><h3>{{ item.title }}</h3><p>{{ item.body }}</p></div>
         </article>
       </div>
+      <div v-if="guide.demoCheckpoint" class="guide-checkpoint" role="status" aria-live="polite"><Icon name="check-circle" :size="16" /><span><strong>Demo checkpoint:</strong> {{ guide.demoCheckpoint }}</span></div>
       <div class="guide-footer">
         <section class="guide-checks" aria-labelledby="guide-checks-title">
           <span id="guide-checks-title" class="guide-label"><Icon name="check-circle" :size="14" />Before you continue</span>

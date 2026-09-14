@@ -3,12 +3,15 @@ import { computed, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
+import SharedTasks from '../components/SharedTasks.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { formatMoney, workflowGuides } from '../data'
 import { roleWorkspaceFor } from '../roleWorkspaces.js'
 import { activeActor, commercialRecordFor, completeSyntheticCredentialSetup, gateSummary, issueSyntheticCredential, recordRoleTaskAction, recordTerms, recordTermsDecision, scenario, selectedClient, selectedEngagement, termsFor, verifyAdvancePayment } from '../domain/scenario.js'
 
 const emit = defineEmits(['navigate'])
+const sharedEnabled = sharedDemoEnabled
 const toast = ref('')
 const busyTask = ref('')
 const credentialResult = ref(null)
@@ -17,6 +20,22 @@ const termsRationale = ref('')
 
 const actor = computed(() => activeActor())
 const workspace = computed(() => roleWorkspaceFor(actor.value?.personaId))
+const sharedAssignee = computed(() => ({
+  client: 'client_contributor',
+  'client-management': 'management_approver',
+  preparer: 'preparer',
+  'audit-senior': 'audit_senior',
+  'audit-manager': 'audit_manager',
+  partner: 'engagement_partner',
+  finance: 'finance_team',
+  accountant: 'preparer',
+  'accounting-reviewer': 'accounting_reviewer',
+  eqr: 'eqr_reviewer',
+  records: 'records_custodian',
+  'system-admin': 'system_admin',
+  compliance: 'compliance_reviewer',
+  admin: '',
+}[actor.value?.role] || ''))
 const engagement = computed(() => selectedEngagement())
 const client = computed(() => selectedClient())
 const gates = computed(() => gateSummary(engagement.value?.id))
@@ -138,6 +157,8 @@ function reissueTerms() {
         <div class="role-boundary-note"><Icon name="info" :size="16" /><span>Role membership, client assignment, and session validity are separate checks in the synthetic command layer.</span></div>
       </aside>
     </section>
+
+    <SharedTasks v-if="sharedEnabled" :engagement-id="engagement?.id || ''" title="Shared queue for this persona" :assignee="sharedAssignee" />
 
     <section v-if="canIssueCredential || canCompleteCredential || activeCredential" class="panel credential-panel">
       <div class="panel-heading"><div><span class="eyebrow">G4 · controlled onboarding</span><h2>Synthetic temporary credential</h2></div><StatusPill :label="activeCredential ? activeCredential.credentialState : 'Not issued'" :tone="activeCredential?.credentialState === 'ACTIVE' ? 'good' : 'warn'" /></div>

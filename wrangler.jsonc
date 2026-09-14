@@ -19,9 +19,10 @@
   ],
   "vars": {
     "ALLOW_DEMO_WRITES": "true",
-    "SHARED_DEMO_ENABLED": "false",
-    "SHARED_DEMO_IDENTITY_MODE": "disabled",
-    "SHARED_DEMO_BINDING": "none"
+    "SHARED_DEMO_ENABLED": "true",
+    "SHARED_DEMO_IDENTITY_MODE": "public-synthetic",
+    "SHARED_DEMO_BINDING": "isolated-non-production",
+    "PUBLIC_SYNTHETIC_DEMO_ENABLED": "true"
   },
   "observability": {
     "enabled": true,

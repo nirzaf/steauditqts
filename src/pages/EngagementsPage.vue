@@ -4,10 +4,13 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
+import SharedTimeline from '../components/SharedTimeline.vue'
+import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { client, timeline, workflowGuides } from '../data'
 import { activateEngagement, activationBlockers, activationFor, activeActor, createContinuanceShell, gateSummary, renewalCaseFor, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, selectEngagement, termsFor } from '../domain/scenario.js'
 
 const emit = defineEmits(['navigate'])
+const sharedEnabled = sharedDemoEnabled
 const activeTab = ref('Summary')
 const tabs = ['Summary', 'Timeline', 'Team & scope']
 const selectedGate = ref(4)
@@ -96,6 +99,7 @@ function createShell() {
     </template>
 
     <template v-else-if="activeTab === 'Timeline'">
+      <SharedTimeline v-if="sharedEnabled" :engagement-id="selectedEngagement?.id || ''" title="Shared activity (all browsers)" />
       <section class="panel timeline-full"><div class="panel-heading"><div><span class="eyebrow">Immutable activity ledger</span><h2>Engagement timeline</h2></div><StatusPill label="Version history preserved" tone="good" /></div><div class="timeline-list detailed"> <div v-for="event in timeline" :key="event.title" class="timeline-item"><span class="timeline-dot" :class="`tone-${event.tone}`"></span><div><div class="timeline-title"><strong>{{ event.title }}</strong><span>{{ event.date }} 2026</span></div><p>{{ event.detail }}</p><small>Actor recorded · Northstar Trading · revision-bound event</small></div></div></div></section>
     </template>
 

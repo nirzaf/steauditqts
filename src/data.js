@@ -27,6 +27,7 @@ export const navItems = [
   { key: 'blueprint', label: 'V5 operating model', icon: 'layers', section: 'Operations', badge: '26' },
   { key: 'cycle', label: 'Complete cycle', icon: 'workflow', section: 'Operations' },
   { key: 'pipeline', label: 'Pipeline visualizer', icon: 'workflow', section: 'Operations' },
+  { key: 'shared-demo', label: 'Shared demo control room', icon: 'workflow', section: 'Operations', badge: 'LIVE' },
   { key: 'artifacts', label: 'Document center', icon: 'file', section: 'Operations', badge: '26' },
   { key: 'readiness', label: 'Phase 0 readiness', icon: 'list-check', section: 'Operations', badge: '12' },
 ]
@@ -48,6 +49,7 @@ export const workflowGuides = {
     checks: ['Every amber or red item has an owner and due date.', 'The next action belongs to the correct service track.', 'No release or commercial-close action is attempted while an earlier gate is blocked.'],
     next: 'Clients & acceptance',
     nextHint: 'Open the client relationship before delivery work begins; acceptance is a separate professional decision.',
+    demoCheckpoint: 'You should see 4 signals, Next actions with owners, and a G0–G10 rail where red gates block downstream work.',
   },
   'role-workspace': {
     id: 'role-workspace-guide',
@@ -63,6 +65,7 @@ export const workflowGuides = {
     checks: ['The engagement and reporting period match the work you are about to open.', 'Blockers show a next owner instead of being hidden behind a green status.', 'A task acknowledgement or recommendation does not bypass a professional gate.'],
     next: 'Pipeline visualizer',
     nextHint: 'Use the animated pipeline to explain where this role’s handoff travels next.',
+    demoCheckpoint: 'You should see only this persona’s tasks; blocked items name the real owner and never grant another role’s authority.',
   },
   clients: {
     id: 'clients-guide',
@@ -78,6 +81,7 @@ export const workflowGuides = {
     checks: ['Entity, service route, period, and independence questions are in scope.', 'Blocking evidence has a named owner and a replacement due date.', 'A decision is not inferred from a deposit or portal access.'],
     next: 'Engagement workspace',
     nextHint: 'Once the relationship is accepted and terms are authorized, open the engagement to manage gates and accountable tracks.',
+    demoCheckpoint: 'You should see the UBO hold CE-011 blocking commencement; a quote or portal login never flips the decision.',
   },
   engagements: {
     id: 'engagement-guide',
@@ -93,6 +97,7 @@ export const workflowGuides = {
     checks: ['G0–G4 are complete before portal or fieldwork operations are treated as ready.', 'The accounting package is a versioned input, never the auditor’s ledger.', 'The partner and preparer roles remain distinct.'],
     next: 'PBC portal',
     nextHint: 'Request the evidence needed to make data usable. The client only sees published request fields and upload status.',
+    demoCheckpoint: 'You should see G0–G10 with owners; clicking a gate inspects only — try it, nothing changes status.',
   },
   pbc: {
     id: 'pbc-guide',
@@ -108,6 +113,7 @@ export const workflowGuides = {
     checks: ['The request is scoped to the right entity and reporting period.', 'Every upload has a receipt state and acceptance decision.', 'Internal risk scores, review points, and EQR deliberations stay hidden.'],
     next: 'Accounting & TB',
     nextHint: 'When the source is received, follow its raw receipt through parsing, controls, mappings, and the versioned statement package.',
+    demoCheckpoint: 'You should see PBC-019 / PBC-023 receipts with hashes; the client preview hides risk scores and review notes.',
   },
   accounting: {
     id: 'accounting-guide',
@@ -123,6 +129,7 @@ export const workflowGuides = {
     checks: ['TB v02 remains preserved as the QAR 1.82m baseline.', 'TB v03 reflects AJ-001 once, bringing each control side to QAR 1.825m.', 'A proposed correction such as AJ-002 remains a discussion until management decides.'],
     next: 'Audit & fieldwork',
     nextHint: 'Use the validated source and statement version to plan risks, assertions, procedures, populations, and samples.',
+    demoCheckpoint: 'You should see 14 accounts balanced, TB v02 at 1.82m, v03 at 1.825m/side, AJ-001 reflected once, AJ-002 still proposed.',
   },
   audit: {
     id: 'audit-guide',
@@ -138,6 +145,7 @@ export const workflowGuides = {
     checks: ['Materiality and sampling choices are documented as professional selections.', 'A significant risk has a procedure and supported evidence.', 'No threshold or model output is presented as an automatic conclusion.'],
     next: 'Reviews & approvals',
     nextHint: 'Send changed work, exceptions, and version dependencies to the review queue before completion or release.',
+    demoCheckpoint: 'You should see each risk linked to a population and sample; the AR-019 conflict stays visible, never auto-resolved.',
   },
   reviews: {
     id: 'reviews-guide',
@@ -153,6 +161,7 @@ export const workflowGuides = {
     checks: ['The responder cannot self-clear a significant review point.', 'Approval records retain person, authority, object version, and date.', 'A historical approval is never rewritten to make a new package pass.'],
     next: 'Release & archive',
     nextHint: 'When completion evidence and required approvals are ready, advance the release state machine one control at a time.',
+    demoCheckpoint: 'Try self-clearing a significant point as preparer — you should see DENIED; a manager clear records person, version and date.',
   },
   release: {
     id: 'release-guide',
@@ -168,6 +177,7 @@ export const workflowGuides = {
     checks: ['Release uses exact matching versions, not “latest” files.', 'EQR completion is required when the engagement profile says so.', 'Amendments create a new linked case and never overwrite an issued report.'],
     next: 'Integration health',
     nextHint: 'Use health and reconciliation evidence to confirm external writes, retries, and records observations have durable operation IDs.',
+    demoCheckpoint: 'Compare RC-026 blocked vs RC-READY-001 event → checkpoint → delivery → archive with one release identity.',
   },
   integration: {
     id: 'integration-guide',
@@ -243,6 +253,7 @@ export const workflowGuides = {
     checks: ['Every stage names a human owner and a destination page.', 'Client-visible documents are separated from internal review and professional decisions.', 'The animation is a synthetic explanation and never performs an external action.'],
     next: 'Complete cycle',
     nextHint: 'Open Complete cycle for the detailed v5 G0–G10 walkthrough, failure-boundary rehearsal, and 36-step chronology.',
+    demoCheckpoint: 'Press Play: 8 stages advance with owner, handoff and client-visible boundary; arrows / Home / End all work.',
   },
   blueprint: {
     id: 'v5-blueprint-guide',
@@ -333,6 +344,7 @@ export const workflowGuides = {
     checks: ['Identity and client isolation negative tests pass.', 'Exact snapshots, journal source reflection, release guards, records protection, and recovery are evidenced.', 'Unsupported service routes remain disabled instead of being enabled by a renamed template.'],
     next: 'Architecture map',
     nextHint: 'Return to the architecture map when a proof result needs a clear system owner or boundary explanation.',
+    demoCheckpoint: 'Press Run clean synthetic rehearsal: 12 experiments filter, slice runs end-to-end, passing never claims tenant proof.',
   },
   'admin-architecture': {
     id: 'admin-architecture-guide',
@@ -393,6 +405,7 @@ export const workflowGuides = {
     checks: ['A human owner is named for every decision or handoff.', 'Synthetic outcomes are read as demonstrations, not live integration evidence.', 'A hold, stale generation, invoice retry, or non-renewal path remains visible instead of being skipped.'],
     next: 'V5 operating model',
     nextHint: 'Use the readiness register after the walkthrough to see which assumptions still need tenant, provider, records, or recovery proof.',
+    demoCheckpoint: 'You should see 36 Northstar actions plus 5 failure checkpoints; rehearsal records SIMULATION evidence per step.',
   },
 }
 
