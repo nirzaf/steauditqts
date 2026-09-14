@@ -5,11 +5,42 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import { feasibilityCards, phase0Experiments, phase0Stages, phase0Tracks, verticalSliceSteps, workflowGuides } from '../data'
+import { accountingPackageFor, activeActor, auditChainSummary, gateSummary, scenario, selectEngagement, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
 
 const emit = defineEmits(['navigate'])
 const activeFilter = ref('All experiments')
 const selectedId = ref('P0-03')
 const filters = ['All experiments', 'Needs evidence', 'Blocked', 'Fixture ready']
+const selectedEngagement = computed(() => scenarioEngagement())
+const engagementOptions = computed(() => scenario.engagements.filter((item) => activeActor()?.assignments?.includes(item.id)))
+const liveGates = computed(() => gateSummary(selectedEngagement.value?.id))
+const liveAudit = computed(() => selectedEngagement.value?.service === 'audit' ? auditChainSummary(selectedEngagement.value.id) : null)
+const liveAccounting = computed(() => accountingPackageFor(selectedEngagement.value?.id))
+const releaseCandidate = computed(() => scenario.releaseCandidates.find((candidate) => candidate.engagementId === selectedEngagement.value?.id && candidate.state !== 'ARCHIVED') || null)
+const scopedOperation = computed(() => scenario.operations?.find((item) => item.engagementId === selectedEngagement.value?.id) || null)
+const scopedRecovery = computed(() => scenario.recovery?.backup?.engagementId === selectedEngagement.value?.id || scenario.recovery?.case?.engagementId === selectedEngagement.value?.id ? scenario.recovery : null)
+const evidenceRegister = computed(() => {
+  const gates = liveGates.value.gates
+  const gate = (id) => gates.find((item) => item.id === id)
+  const readyCount = liveGates.value.currentReady
+  const denominator = liveGates.value.currentDenominator
+  const submitted = (scenario.workpapers || []).filter((item) => item.engagementId === selectedEngagement.value?.id && item.submittedSnapshotId).length
+  const reviewOpen = (scenario.reviews || []).filter((item) => item.engagementId === selectedEngagement.value?.id && item.status !== 'CLEARED').length
+  const operation = scopedOperation.value
+  const state = (value) => value === 'good' ? 'READY' : value === 'neutral' ? 'NOT APPLICABLE' : 'HELD'
+  return [
+    { id: 'M0', label: 'Synthetic boundary', status: 'SIMULATION', tone: 'good', detail: `${activeActor()?.name || 'Demo actor'} · browser-local state · no external effects` },
+    { id: 'M1', label: 'G0–G2 access and authority', status: `${readyCount}/${denominator} gates`, tone: readyCount === denominator ? 'good' : 'warn', detail: `${state(gate('G2')?.status)} · terms, assignment and workspace checks` },
+    { id: 'M2', label: 'G3–G4 accounting package', status: liveAccounting.value ? (liveAccounting.value.statement.state === 'APPROVED' ? 'APPROVED' : 'IN PROGRESS') : 'NOT APPLICABLE', tone: liveAccounting.value?.statement.state === 'APPROVED' ? 'good' : liveAccounting.value ? 'warn' : 'neutral', detail: liveAccounting.value ? `${liveAccounting.value.source.sourceId} · ${liveAccounting.value.source.rows.length} rows · ${liveAccounting.value.mappings.state}` : 'Audit-only view has no standalone package.' },
+    { id: 'P14', label: 'Audit chain', status: liveAudit.value ? (liveAudit.value.blockers.length ? `${liveAudit.value.blockers.length} blockers` : 'READY') : 'NOT APPLICABLE', tone: liveAudit.value ? (liveAudit.value.blockers.length ? 'warn' : 'good') : 'neutral', detail: liveAudit.value ? `${liveAudit.value.risks.length} risks · ${liveAudit.value.populations.length} populations · ${liveAudit.value.samples.length} sample items` : 'Select an audit engagement to inspect materiality and evidence.' },
+    { id: 'P15', label: 'Exact workpaper review', status: `${submitted} submitted`, tone: submitted && !reviewOpen ? 'good' : 'warn', detail: `${reviewOpen} open review point${reviewOpen === 1 ? '' : 's'} · submitted snapshots remain immutable` },
+    { id: 'P17', label: 'Release candidate', status: releaseCandidate.value ? (releaseCandidate.value.stepIndex >= 9 ? 'ARCHIVE READY' : `${releaseCandidate.value.stepIndex}/9`) : 'NOT FOUND', tone: releaseCandidate.value?.stepIndex >= 9 ? 'good' : releaseCandidate.value ? 'warn' : 'neutral', detail: releaseCandidate.value ? `${releaseCandidate.value.id} · ${releaseCandidate.value.manifestDigest}` : 'No candidate is scoped to this engagement.' },
+    { id: 'P18', label: 'Records and amendments', status: scenario.archivePackages?.some((item) => item.engagementId === selectedEngagement.value?.id) ? 'ARCHIVE VERIFIED' : 'PENDING', tone: scenario.archivePackages?.some((item) => item.engagementId === selectedEngagement.value?.id) ? 'good' : 'warn', detail: `${(scenario.legalHolds || []).filter((item) => item.engagementId === selectedEngagement.value?.id && item.state === 'ACTIVE').length} active legal hold(s) · original releases are append-only` },
+    { id: 'P19', label: 'Provider operations', status: operation?.state || 'NOT RUN', tone: operation?.state === 'SUCCEEDED' ? 'good' : operation ? 'warn' : 'neutral', detail: operation ? `${operation.id} · ${operation.code || 'synthetic result'} · same-target retry semantics` : 'Run the local fault matrix from Integration health.' },
+    { id: 'P20', label: 'Recovery rehearsal', status: scopedRecovery.value?.state || 'NOT RUN', tone: scopedRecovery.value?.state === 'RESUMED_SIMULATION' ? 'good' : !scopedRecovery.value || scopedRecovery.value.state === 'NOT_RUN' ? 'neutral' : 'warn', detail: scopedRecovery.value?.outwardEffectsEnabled ? 'Outward effects enabled' : 'Independent checkpoint required; outward effects disabled' },
+    { id: 'G10', label: 'Next-period permission', status: gate('G10')?.status === 'good' ? 'READY' : 'FRESH FACTS REQUIRED', tone: 'neutral', detail: gate('G10')?.nextPeriodNote || 'A new continuance shell must be assessed for the next period.' },
+  ]
+})
 
 const filteredExperiments = computed(() => phase0Experiments.filter((experiment) => {
   if (activeFilter.value === 'All experiments') return true
@@ -27,6 +58,11 @@ function navigate(route) {
 function selectExperiment(id) {
   selectedId.value = id
 }
+
+function changeEngagement(event) {
+  const result = selectEngagement(event.target.value, { actorPersonaId: activeActor()?.personaId })
+  if (result.outcome !== 'COMMITTED') event.target.value = selectedEngagement.value?.id || ''
+}
 </script>
 
 <template>
@@ -39,6 +75,8 @@ function selectExperiment(id) {
       @action="navigate('architecture')"
     />
     <WorkflowGuide :guide="workflowGuides.readiness" />
+
+    <section class="panel engagement-selector readiness-scope-selector"><div><span class="eyebrow">Evidence register scope</span><strong>Switch between the linked audit and accounting-only synthetic engagements</strong><small>The register recalculates gates, package applicability, audit chain, operations, and recovery for the selected service-period scope.</small></div><label>Engagement<select :value="selectedEngagement?.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
 
     <section class="readiness-metrics" aria-label="Phase 0 metrics">
       <article v-for="track in phase0Tracks" :key="track.label" class="readiness-metric panel" :class="`readiness-${track.tone}`">
@@ -55,6 +93,17 @@ function selectExperiment(id) {
           <Icon v-if="index < phase0Stages.length - 1" class="readiness-stage-arrow" name="arrow-right" :size="17" aria-hidden="true" />
         </template>
       </div>
+    </section>
+
+    <section class="panel evidence-register-panel">
+      <div class="panel-heading"><div><span class="eyebrow">M4 evidence register</span><h2>What the prototype can prove now</h2></div><span class="muted-label">Selected scope · {{ selectedEngagement?.id }}</span></div>
+      <p class="evidence-register-intro">This register turns the walkthrough into an auditable conversation. Each row points to a real synthetic record or an explicit missing proof; it never treats a green screen as evidence of a live integration.</p>
+      <div class="evidence-register-list" role="list">
+        <div v-for="item in evidenceRegister" :key="item.id" class="evidence-register-row" role="listitem">
+          <span class="evidence-register-id">{{ item.id }}</span><div class="evidence-register-copy"><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></div><StatusPill :label="item.status" :tone="item.tone === 'good' ? 'good' : item.tone === 'warn' ? 'warn' : 'neutral'" />
+        </div>
+      </div>
+      <div class="evidence-register-foot"><Icon name="info" :size="16" /><span><strong>How to read this:</strong> READY means the synthetic command and fixture are present; HELD means the page shows the blocker to resolve; NOT RUN / NOT APPLICABLE means no claim is being made.</span></div>
     </section>
 
     <section class="readiness-layout">

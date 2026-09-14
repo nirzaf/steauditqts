@@ -21,6 +21,7 @@ const form = reactive({
 const loading = ref(true)
 const saving = ref(false)
 const source = ref('d1')
+const syncState = ref('SYNCED')
 const statusMessage = ref('')
 
 function applyProfile(profile) {
@@ -29,10 +30,20 @@ function applyProfile(profile) {
 }
 
 async function loadProfile() {
-  const result = await loadClientProfile()
-  source.value = result.source
-  applyProfile(result.profile)
-  loading.value = false
+  loading.value = true
+  try {
+    const result = await loadClientProfile()
+    source.value = result.source
+    syncState.value = result.syncState || 'LOCAL_ONLY'
+    applyProfile(result.profile)
+    if (result.error) statusMessage.value = `${result.error.code}: ${result.error.message}`
+  } catch (error) {
+    source.value = 'local'
+    syncState.value = 'LOCAL_ONLY'
+    statusMessage.value = `${error?.code || 'PROFILE_UNAVAILABLE'}: ${error?.message || 'The synthetic profile could not be loaded.'}`
+  } finally {
+    loading.value = false
+  }
 }
 
 async function submitDetails() {
@@ -41,8 +52,13 @@ async function submitDetails() {
   statusMessage.value = ''
   const result = await saveClientProfile({ ...form, submittedBy: form.contactName || 'Client contact' })
   source.value = result.source
-  applyProfile(result.profile)
-  statusMessage.value = result.source === 'd1' ? 'Client details submitted to the engagement team.' : 'Details saved in this browser while the API is offline.'
+  syncState.value = result.syncState || 'LOCAL_ONLY'
+  if (result.profile) applyProfile(result.profile)
+  statusMessage.value = result.outcome === 'COMMITTED'
+    ? 'Client details submitted to the shared synthetic record.'
+    : result.outcome === 'SAVED_LOCAL_DRAFT'
+      ? 'Details saved as SAVED_LOCAL_DRAFT. They are not synchronized or queued for replay.'
+      : `${result.error?.code || 'SAVE_FAILED'}: ${result.error?.message || 'The details were not saved.'}`
   saving.value = false
 }
 
@@ -56,7 +72,7 @@ onMounted(loadProfile)
 
     <div class="portal-form-layout">
       <section class="panel portal-form-panel">
-        <div class="panel-heading"><div><span class="eyebrow">Submission form</span><h2>Northstar Trading profile</h2></div><span class="portal-form-source" :class="{ local: source === 'local' }">{{ source === 'd1' ? 'Shared demo record' : 'Browser fallback' }}</span></div>
+        <div class="panel-heading"><div><span class="eyebrow">Submission form</span><h2>Northstar Trading profile</h2></div><span class="portal-form-source" :class="{ local: source !== 'd1' }">{{ source === 'd1' ? 'Shared demo record' : syncState === 'LOCAL_ONLY_FALLBACK' ? 'Saved local draft' : 'Browser-local synthetic state' }}</span></div>
         <form class="portal-form" @submit.prevent="submitDetails">
           <div class="form-section-heading"><span><Icon name="building" :size="16" />Registered entity</span><small>Required for matching the engagement record</small></div>
           <div class="form-field-grid"><label>Legal name<input v-model="form.legalName" required maxlength="160" /></label><label>Registration / CR number<input v-model="form.registration" required maxlength="80" /></label></div>

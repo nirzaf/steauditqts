@@ -1,0 +1,15 @@
+account_code,account_name,area,debit,credit
+100101,Bank,Cash,150000.00,0.00
+110100,Trade receivables,Receivables,300000.00,0.00
+120100,Inventory,Inventory,200000.00,0.00
+150100,PPE cost,Fixed assets,150000.00,0.00
+159100,Accumulated depreciation,Fixed assets,0.00,50000.00
+200100,Trade payables,Payables,0.00,240000.00
+220100,Loan,Non-current liabilities,0.00,30000.00
+300100,Share capital,Equity,0.00,250000.00
+310100,Opening retained earnings,Equity,0.00,50000.00
+400100,Revenue,Revenue,0.00,1200000.00
+500100,Cost of sales,Cost of sales,800000.00,0.00
+510100,Payroll expense,Operating expenses,190000.00,0.00
+520100,Depreciation expense,Fixed assets,20000.00,0.00
+530100,Finance costs,Finance,10000.00,0.00

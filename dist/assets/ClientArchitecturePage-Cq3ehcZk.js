@@ -1,1 +1,0 @@
-import{_ as e}from"./RoleArchitecturePage-B6HEfzNs.js";import{o as r,Q as t}from"./index-DPTVXdzk.js";import"./WorkflowGuide-BxmQV8Pb.js";import"./StatusPill-Be1dYFlT.js";const i={__name:"ClientArchitecturePage",setup(o){return(a,c)=>(r(),t(e,{persona:"client"}))}};export{i as default};

@@ -18,7 +18,10 @@
     }
   ],
   "vars": {
-    "ALLOW_DEMO_WRITES": "true"
+    "ALLOW_DEMO_WRITES": "true",
+    "SHARED_DEMO_ENABLED": "false",
+    "SHARED_DEMO_IDENTITY_MODE": "disabled",
+    "SHARED_DEMO_BINDING": "none"
   },
   "observability": {
     "enabled": true,

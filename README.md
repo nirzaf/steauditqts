@@ -16,7 +16,7 @@ Vue + Vite multi-page prototype for a Frappe/Microsoft 365 accounting and audit 
 - Architecture map (V4 systems of record, control planes and service routes)
 - Phase 0 readiness (12 synthetic proof experiments, vertical slice and feasibility decision)
 
-The UI uses fictional QAR data based on the supplied workflow architecture. It demonstrates workflow controls and versioning; it is not a production accounting system or an audit opinion engine.
+The UI uses fictional QAR data based on the supplied workflow architecture. It demonstrates workflow controls and versioning; it is not a production accounting system or an audit opinion engine. Every screen is marked **SYNTHETIC DEMO** and carries `SIMULATION` evidence. Do not enter real client information, credentials, files, or professional decisions.
 
 ## Local development
 
@@ -27,11 +27,15 @@ npm run dev
 
 Create a production build with `npm run build`. The static output is in `dist/` and is deployed to Cloudflare Pages for `ste.quadrate.lk`.
 
-## Client comments and optional steps
+## Client comments and walkthrough preferences
 
-Every workflow guide includes a client-comment composer and a step setting. A client can add a note to the current guide step, then mark that step as required or optional for this walkthrough. The page keeps the setting visible and explains that optional status does not bypass a real approval, independence check, or audit requirement.
+Every workflow guide includes a client-comment composer and a presentation-only walkthrough preference. A participant can add a note to the current guide step and choose whether it may be skipped in this walkthrough. This preference never changes a professional gate, approval, independence check, methodology, or release eligibility.
 
-The UI first uses the same-origin API at `/api`. If the API is temporarily unavailable, it falls back to browser storage and labels that state clearly. In production, the API is the `steaudit-api` Cloudflare Worker on the `ste.quadrate.lk/api/*` route and persists records in two additive tables (`auditflow_comments` and `auditflow_step_preferences`) in the existing `quadrate-db` D1 database.
+The default build is **LOCAL_ONLY**: it stores scoped synthetic comments, walkthrough preferences, and client submissions in browser storage and does not contact `/api`. Local saves are labelled `SAVED_LOCAL_DRAFT` and are never promised for automatic replay. A shared demo must be explicitly opted into at build time with a verified Cloudflare Access boundary and an isolated non-production binding; caller-supplied roles, passwords, Origin headers, or URLs are not authentication. The Worker fails closed unless that boundary is configured. In an explicitly enabled shared demo, the API is the `steaudit-api` Cloudflare Worker on the `ste.quadrate.lk/api/*` route and persists records in additive tables in a separately approved non-production binding.
+
+### If a page looks empty
+
+An empty shell is usually a browser holding an older lazy-loaded chunk after a deployment. Refresh the tab (or close and reopen it) so `index.html` and its versioned page modules come from the same build. The current source also shows an explicit “This demo page needs a refresh” panel when a chunk cannot be loaded. A role-ineligible deep link is redirected to that persona's landing page with a permission notice, and an intentionally blocked synthetic fixture may show no downstream records until its prerequisite gate is completed. The deployed `ste.quadrate.lk` site must be rebuilt and delivered before these local fixes can appear there.
 
 Run the API locally in a second terminal with:
 
@@ -39,14 +43,13 @@ Run the API locally in a second terminal with:
 npm run api:dev
 ```
 
-Apply the isolated schema locally or remotely only when needed:
+Apply the isolated schema locally only when needed for a deliberately configured test binding:
 
 ```bash
 npm run db:migrate:local
-npm run db:migrate:remote
 ```
 
-Deploy the API and Pages bundle with:
+Remote deployment is intentionally outside the prototype implementation task. If a separately authorized release is required, review the safety boundary and Cloudflare Access configuration first, then run the deployment commands from a controlled release environment:
 
 ```bash
 npx wrangler deploy --config wrangler.jsonc --minify
@@ -54,7 +57,7 @@ npm run build
 npx wrangler pages deploy dist --project-name ste-quadrate-lk --branch main
 ```
 
-The Worker is intentionally a demo API: inputs are length- and key-validated, writes are scoped to the selected engagement and step, and the interface keeps fictional data and professional decision boundaries visible.
+The Worker is intentionally fail-closed demo infrastructure: inputs are length- and key-validated, writes are scoped to an explicit engagement and step, public health returns no client records, and every response includes a correlation ID and `SIMULATION` evidence. Do not treat this API or its D1 tables as production identity, isolation, tamper resistance, records protection, or audit evidence.
 
 ## V4 architecture views
 

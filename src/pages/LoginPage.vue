@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { demoUsers, findDemoUser } from '../auth'
 import Icon from '../components/Icon.vue'
+import SyntheticDemoBanner from '../components/SyntheticDemoBanner.vue'
 
 const emit = defineEmits(['login'])
 const selectedId = ref(demoUsers[0].id)
@@ -35,6 +36,7 @@ function enterDemo(user) {
 
 <template>
   <main class="login-shell">
+    <SyntheticDemoBanner />
     <section class="login-intro">
       <div class="login-brand"><span class="brand-mark"><Icon name="workflow" :size="22" /></span><span><strong>AuditFlow</strong><small>Practice platform</small></span></div>
       <div class="login-copy"><span class="eyebrow">STE AuditFlow QTS</span><h1>Choose how you want to walk through the workflow.</h1><p>Three fictional personas make the boundaries clear: the client submits and communicates, the accountant prepares, and the admin supervises every control.</p></div>

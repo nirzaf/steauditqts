@@ -1,0 +1,25 @@
+{
+  "baseline": {
+    "debits": "1820000.00",
+    "credits": "1820000.00",
+    "profit": "180000.00",
+    "netPpe": "100000.00",
+    "assets": "750000.00",
+    "liabilities": "270000.00",
+    "equity": "480000.00"
+  },
+  "afterAj001": {
+    "debits": "1825000.00",
+    "credits": "1825000.00",
+    "profit": "175000.00",
+    "netPpe": "95000.00",
+    "assets": "745000.00",
+    "liabilities": "270000.00",
+    "equity": "475000.00"
+  },
+  "aj001": {
+    "debitAccount": "520100",
+    "creditAccount": "159100",
+    "amount": "5000.00"
+  }
+}

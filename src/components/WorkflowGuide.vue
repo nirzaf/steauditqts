@@ -19,6 +19,7 @@ const loadingState = ref(true)
 const savingComment = ref(false)
 const savingPreference = ref(false)
 const source = ref('d1')
+const syncState = ref('SYNCED')
 const statusMessage = ref('')
 
 const guideIcon = computed(() => ({
@@ -46,10 +47,12 @@ const guideIcon = computed(() => ({
 
 const stepIcons = ['list-check', 'file', 'arrow-right']
 
-const sourceLabel = computed(() => source.value === 'd1' ? 'Shared demo record' : 'Browser-only fallback')
+const sourceLabel = computed(() => source.value === 'd1' ? 'Shared demo record' : syncState.value === 'LOCAL_ONLY_FALLBACK' ? 'Saved local draft' : 'Browser-local synthetic state')
 const sourceHint = computed(() => source.value === 'd1'
-  ? 'Comments and step preferences are saved in the shared Quadrate D1 demo database.'
-  : 'The API is unavailable, so this browser is keeping a temporary copy until it reconnects.')
+  ? 'This explicit shared-demo record is synthetic and carries SIMULATION evidence.'
+  : syncState.value === 'LOCAL_ONLY_FALLBACK'
+    ? 'The shared API was unavailable. This is a local-only draft with no automatic replay or professional effect.'
+    : 'This normal prototype build stores synthetic state in this browser only; it is not synchronized.')
 const commentCountLabel = computed(() => `${comments.value.length} ${comments.value.length === 1 ? 'comment' : 'comments'}`)
 
 function toggle() {
@@ -64,12 +67,23 @@ function formatCommentDate(value) {
 
 async function loadState() {
   loadingState.value = true
-  const state = await loadWorkflowState({ engagementId: props.engagementId, pageKey: props.guide.id })
-  comments.value = state.comments
-  source.value = state.source
-  const preference = state.preferences.find((item) => item.stepKey === props.guide.id)
-  stepOptional.value = Boolean(preference?.isOptional)
-  loadingState.value = false
+  statusMessage.value = ''
+  try {
+    const state = await loadWorkflowState({ engagementId: props.engagementId, pageKey: props.guide.id })
+    comments.value = state.comments || []
+    source.value = state.source
+    syncState.value = state.syncState || 'LOCAL_ONLY'
+    const preference = (state.preferences || []).find((item) => item.stepKey === props.guide.id)
+    stepOptional.value = Boolean(preference?.isOptional)
+    if (state.error) statusMessage.value = `${state.error.code}: ${state.error.message}`
+  } catch (error) {
+    comments.value = []
+    source.value = 'local'
+    syncState.value = 'LOCAL_ONLY'
+    statusMessage.value = `${error?.code || 'WORKFLOW_STATE_UNAVAILABLE'}: ${error?.message || 'Workflow guidance could not be loaded.'}`
+  } finally {
+    loadingState.value = false
+  }
 }
 
 async function addComment() {
@@ -86,10 +100,15 @@ async function addComment() {
     authorRole: 'Client contact',
     body,
   })
-  comments.value = [result.comment, ...comments.value]
   source.value = result.source
+  syncState.value = result.syncState || 'LOCAL_ONLY'
   commentBody.value = ''
-  statusMessage.value = result.source === 'd1' ? 'Comment saved to the shared demo record.' : 'Comment saved in this browser while the API is offline.'
+  statusMessage.value = result.outcome === 'COMMITTED'
+    ? 'Comment saved to the shared synthetic demo record.'
+    : result.outcome === 'SAVED_LOCAL_DRAFT'
+      ? 'Comment saved as SAVED_LOCAL_DRAFT. It is not synchronized or queued for replay.'
+      : `${result.error?.code || 'SAVE_FAILED'}: ${result.error?.message || 'The comment was not saved.'}`
+  if (result.comment) comments.value = [result.comment, ...comments.value.filter((item) => item.id !== result.comment.id)]
   savingComment.value = false
 }
 
@@ -106,9 +125,12 @@ async function updateOptional(event) {
     updatedBy: authorName.value.trim() || 'Client contact',
   })
   source.value = result.source
-  statusMessage.value = result.source === 'd1'
-    ? `${nextValue ? 'Optional' : 'Required'} status saved for this step.`
-    : `${nextValue ? 'Optional' : 'Required'} status saved in this browser while the API is offline.`
+  syncState.value = result.syncState || 'LOCAL_ONLY'
+  statusMessage.value = result.outcome === 'COMMITTED'
+    ? 'Walkthrough visibility preference saved to the shared synthetic record.'
+    : result.outcome === 'SAVED_LOCAL_DRAFT'
+      ? 'Walkthrough visibility preference saved locally only; it never changes a professional gate.'
+      : `${result.error?.code || 'SAVE_FAILED'}: ${result.error?.message || 'The preference was not saved.'}`
   savingPreference.value = false
 }
 
@@ -174,8 +196,8 @@ watch(() => props.guide.id, loadState)
 
         <section class="guide-comments-card" :aria-labelledby="`${feedbackId}-comments-title`">
           <div class="guide-feedback-heading"><div><span class="guide-label"><Icon name="settings" :size="14" />Decision aid</span><h3 :id="`${feedbackId}-comments-title`">Step setting &amp; comments</h3></div><span class="guide-comment-count">{{ commentCountLabel }}</span></div>
-          <label class="guide-optional-control"><input type="checkbox" :checked="stepOptional" :disabled="savingPreference || loadingState" @change="updateOptional" /><span><strong>{{ stepOptional ? 'Optional in this walkthrough' : 'Required in this walkthrough' }}</strong><small>{{ stepOptional ? 'You can continue without this step, but keep the reason visible.' : 'Use this when the engagement needs this control before handoff.' }}</small></span></label>
-          <p class="guide-optional-warning">Optional status changes the demo path only. It never bypasses a real approval, independence check, or audit requirement.</p>
+          <label class="guide-optional-control"><input type="checkbox" :checked="stepOptional" :disabled="savingPreference || loadingState" @change="updateOptional" /><span><strong>{{ stepOptional ? 'Allow skip in this walkthrough' : 'Include this step in the walkthrough' }}</strong><small>{{ stepOptional ? 'Presentation preference only; keep the reason visible.' : 'Keep the step visible while explaining the workflow boundary.' }}</small></span></label>
+          <p class="guide-optional-warning">This is a presentation preference, not a control policy. It never bypasses an approval, independence check, or audit requirement.</p>
           <div class="guide-comment-list" aria-live="polite">
             <p v-if="loadingState" class="guide-empty-state">Loading comments…</p>
             <p v-else-if="!comments.length" class="guide-empty-state">No client comments yet. Add the first piece of context above.</p>

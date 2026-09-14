@@ -4,9 +4,17 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
-import { approvals, formatMoney, reviewPoints, workflowGuides } from '../data'
+import { approvals, formatMoney, workflowGuides } from '../data'
+import { activeActor, actorById, clearReviewPoint as clearReviewPointCommand, scenario } from '../domain/scenario.js'
 
-const points = ref(reviewPoints.map((point) => ({ ...point })))
+const points = computed(() => scenario.reviews.map((point) => ({
+  ...point,
+  status: point.status === 'CLEARED' ? 'Cleared' : 'Open',
+  severity: point.severity === 'SIGNIFICANT' ? 'Significant' : 'Routine',
+  assignee: actorById(point.assigneeActorId)?.name || point.assigneeActorId,
+  blocks: point.status !== 'CLEARED',
+  tone: point.status === 'CLEARED' ? 'good' : point.severity === 'SIGNIFICANT' ? 'danger' : 'warn',
+})))
 const toast = ref('')
 const activeFilter = ref('All points')
 const filters = ['All points', 'Blocking', 'My queue']
@@ -15,10 +23,8 @@ const openCount = computed(() => points.value.filter((point) => point.status !==
 
 function clearPoint(point) {
   if (point.status === 'Cleared') return
-  point.status = 'Cleared'
-  point.blocks = false
-  point.tone = 'good'
-  toast.value = `${point.id} marked cleared for this prototype.`
+  const result = clearReviewPointCommand({ pointId: point.id, actorPersonaId: activeActor()?.personaId, expectedRevision: point.revision, response: 'Reviewed exact response and alternative-work reference.' })
+  toast.value = result.outcome === 'COMMITTED' ? `${point.id} cleared with an appended reviewer decision.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 3500)
 }
 
@@ -34,7 +40,7 @@ function createReviewPoint() {
     <WorkflowGuide :guide="workflowGuides.reviews" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 
-    <section class="stats-strip compact"><div><span>Open review points</span><strong>{{ openCount }}</strong><small>2 currently block a gate</small></div><div><span>Stale approvals</span><strong>3</strong><small>Created after FS v05 changed</small></div><div><span>Reviewer queue</span><strong>6</strong><small>Across all active engagements</small></div><div><span>Dependency health</span><strong>92%</strong><small>Last graph check 09:42</small></div></section>
+    <section class="stats-strip compact"><div><span>Open review points</span><strong>{{ openCount }}</strong><small>{{ openCount }} current synthetic points in this scope</small></div><div><span>Stale approvals</span><strong>3</strong><small>Created after a dependency changed</small></div><div><span>Reviewer queue</span><strong>6</strong><small>Across synthetic engagements</small></div><div><span>Dependency health</span><strong>SIMULATION</strong><small>Live provider evidence is not connected</small></div></section>
 
     <section class="review-layout"><article class="panel review-queue-panel"><div class="panel-heading"><div><span class="eyebrow">Review queue</span><h2>Items needing a response</h2></div><div class="filter-row"><button v-for="filter in filters" :key="filter" type="button" :class="{ active: activeFilter === filter }" @click="activeFilter = filter">{{ filter }}</button></div></div><div class="review-list"><div v-for="point in filteredPoints" :key="point.id" class="review-row"><span class="review-severity" :class="`tone-${point.tone}`"><Icon :name="point.severity === 'Significant' ? 'warning' : 'info'" :size="15" /></span><div><div class="review-title"><strong>{{ point.title }}</strong><span>{{ point.id }}</span></div><p>{{ point.detail }}</p><small>{{ point.area }} · {{ point.assignee }} · due {{ point.due }}</small></div><div class="review-actions"><StatusPill :label="point.status" :tone="point.tone" /><button type="button" class="row-button" :disabled="point.status === 'Cleared'" @click="clearPoint(point)">{{ point.status === 'Cleared' ? 'Cleared' : 'Clear' }}</button></div></div></div></article><aside class="panel applicability-panel"><div class="panel-heading"><div><span class="eyebrow">Applicability check</span><h2>FS v05 impact map</h2></div><StatusPill label="Re-review required" tone="warn" /></div><p class="panel-copy">AJ-002 changes the accounting package. Historical approvals remain preserved, but their applicability to the release candidate is re-evaluated.</p><div class="dependency-graph"><div class="dependency-node good"><span>TB v03</span><small>Validated source</small></div><span class="dependency-line"></span><div class="dependency-node good"><span>FS v05</span><small>New package</small></div><span class="dependency-line"></span><div class="dependency-node warn"><span>Approvals</span><small>3 stale</small></div><span class="dependency-line"></span><div class="dependency-node danger"><span>Release</span><small>Blocked</small></div></div><button type="button" class="button secondary full-width">Open dependency log <Icon name="arrow-right" :size="16" /></button></aside></section>
 

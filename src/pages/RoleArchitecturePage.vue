@@ -52,6 +52,10 @@ function navigate(route) {
       <div class="role-architecture-reading">
         <span class="eyebrow"><Icon name="workflow" :size="14" /> How to read this page</span>
         <p>Follow the numbered path from your action to the platform control. Select a step to see its owner, source of record, and handoff output.</p>
+        <div class="architecture-status-stack" aria-label="Implementation status">
+          <span class="architecture-status current"><strong>CURRENT IMPLEMENTATION</strong><small>Vue/Vite · browser-local synthetic state</small></span>
+          <span class="architecture-status target"><strong>TARGET V4 ARCHITECTURE</strong><small>Frappe/Microsoft controls remain a reference design</small></span>
+        </div>
         <div class="role-architecture-legend" aria-label="Architecture legend">
           <span><i class="role-legend-dot tone-blue"></i>Human access</span>
           <span><i class="role-legend-dot tone-navy"></i>Firm state</span>

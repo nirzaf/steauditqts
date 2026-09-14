@@ -4,27 +4,75 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
-import { client, gateMeta, gateStatuses, timeline, workflowGuides } from '../data'
+import { client, timeline, workflowGuides } from '../data'
+import { activateEngagement, activationBlockers, activationFor, activeActor, createContinuanceShell, gateSummary, renewalCaseFor, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, selectEngagement, termsFor } from '../domain/scenario.js'
 
 const emit = defineEmits(['navigate'])
 const activeTab = ref('Summary')
 const tabs = ['Summary', 'Timeline', 'Team & scope']
 const selectedGate = ref(4)
+const actionWorking = ref(false)
+const toast = ref('')
 const statusLabels = { good: 'Satisfied', warn: 'In review', danger: 'Blocked', neutral: 'Planned' }
 
-const readyCount = computed(() => gateStatuses.filter((status) => status === 'good').length)
-const selectedGateInfo = computed(() => gateMeta[selectedGate.value])
+const selectedEngagement = computed(() => scenarioEngagement())
+const selectedClient = computed(() => scenarioClient())
+const gateState = computed(() => gateSummary(selectedEngagement.value?.id))
+const gates = computed(() => gateState.value.gates)
+const readyCount = computed(() => gateState.value.currentReady)
+const selectedGateInfo = computed(() => gates.value[selectedGate.value] || gates.value[0])
+const engagementOptions = computed(() => scenario.engagements.filter((item) => activeActor()?.assignments?.includes(item.id)))
+const terms = computed(() => termsFor(selectedEngagement.value?.id))
+const activation = computed(() => activationFor(selectedEngagement.value?.id))
+const blockers = computed(() => activationBlockers(selectedEngagement.value?.id))
+const renewal = computed(() => renewalCaseFor(selectedEngagement.value?.id))
+const canActivate = computed(() => Boolean(activeActor()?.roles?.includes('engagement_partner')))
 function navigate(route) { emit('navigate', route) }
+
+function changeEngagement(event) {
+  const engagementId = event.target.value
+  selectEngagement(engagementId, { actorPersonaId: activeActor()?.personaId })
+  selectedGate.value = 0
+}
+
+function showResult(result, successMessage) {
+  toast.value = result.outcome === 'COMMITTED' ? successMessage : `${result.outcome}: ${result.code} — ${result.message}`
+  window.setTimeout(() => { toast.value = '' }, 4500)
+}
+
+function activate() {
+  if (actionWorking.value || !selectedEngagement.value) return
+  actionWorking.value = true
+  const result = activateEngagement({ engagementId: selectedEngagement.value.id, actorPersonaId: activeActor()?.personaId, expectedRevision: selectedEngagement.value.revision, idempotencyKey: `activate-${selectedEngagement.value.id}-${selectedEngagement.value.revision}` })
+  actionWorking.value = false
+  showResult(result, `${selectedEngagement.value.id} is now active for the synthetic walkthrough.`)
+}
+
+function createShell() {
+  if (actionWorking.value || !selectedEngagement.value) return
+  actionWorking.value = true
+  const result = createContinuanceShell({ sourceEngagementId: selectedEngagement.value.id, actorPersonaId: activeActor()?.personaId, expectedRevision: selectedEngagement.value.revision, idempotencyKey: `shell-${selectedEngagement.value.id}-${selectedEngagement.value.revision}` })
+  actionWorking.value = false
+  showResult(result, `${result.data?.shellEngagementId || 'Next-period shell'} created with copied facts and fresh continuance responses.`)
+}
 </script>
 
 <template>
   <div class="page">
-    <PageHeader eyebrow="Engagement workspace · ENG-2026-0018" title="Northstar Trading W.L.L." description="Recurring financial-statement audit with a separately scoped accounting-package handoff. Planning and PBC work can continue in parallel." action-label="Open client portal" @action="navigate('pbc')" />
+    <PageHeader :eyebrow="`Engagement workspace · ${selectedEngagement.id}`" :title="selectedClient.name" :description="`${selectedEngagement.serviceLabel} · ${selectedEngagement.periodLabel} · ${selectedEngagement.currency}. Planning and PBC work can continue only within this selected scope.`" action-label="Open PBC workspace" @action="navigate('pbc')" />
     <WorkflowGuide :guide="workflowGuides.engagements" />
+    <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+
+    <section class="panel engagement-selector"><div><span class="eyebrow">Selected service-period scope</span><strong>Every command is revision-bound to one engagement</strong><small>Use the selector to demonstrate how accounting-only and audit routes keep separate gates and authorities.</small></div><label>Engagement<select :value="selectedEngagement.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
 
     <section class="engagement-hero panel">
-      <div class="engagement-identity"><div class="large-avatar">NT</div><div><div class="title-line"><h2>Year ended 31 Dec 2026</h2><StatusPill label="Fieldwork in progress" tone="warn" /></div><p>Financial-statement audit · QAR · Qatar · Medium client risk</p><div class="tag-row"><span class="tag">Independent auditor route</span><span class="tag">EQR required</span><span class="tag">SharePoint repository ready</span></div></div></div>
-      <div class="engagement-kpis"><div><span>Gates ready</span><strong>{{ readyCount }} / 10</strong><small>G4 and G5 in review</small></div><div><span>Budget used</span><strong>68%</strong><small>QAR 94,600 of QAR 139,000</small></div><div><span>Next deadline</span><strong>15 Sep</strong><small>AR conclusion + AJ-002</small></div></div>
+      <div class="engagement-identity"><div class="large-avatar">{{ selectedClient.name.split(' ').map((part) => part[0]).slice(0, 2).join('') }}</div><div><div class="title-line"><h2>{{ selectedEngagement.periodLabel }}</h2><StatusPill :label="selectedEngagement.service === 'audit' ? 'Fieldwork in progress' : 'Preparation in progress'" tone="warn" /></div><p>{{ selectedEngagement.serviceLabel }} · {{ selectedEngagement.currency }} · {{ selectedClient.name }}</p><div class="tag-row"><span class="tag">{{ selectedEngagement.service === 'audit' ? 'Independent auditor route' : 'Accounting-only route' }}</span><span class="tag">{{ selectedEngagement.evidence.eqrRequired ? 'EQR required' : 'EQR not applicable' }}</span><span class="tag">Client {{ selectedClient.id }} · explicit scope</span></div></div></div>
+      <div class="engagement-kpis"><div><span>Current gates ready</span><strong>{{ readyCount }} / {{ gateState.currentDenominator }}</strong><small>G10 is shown separately as next-period permission</small></div><div><span>Input generation</span><strong>g{{ selectedEngagement.inputGeneration }}</strong><small>Revision {{ selectedEngagement.revision }} · policy g{{ selectedEngagement.policyGeneration }}</small></div><div><span>Next deadline</span><strong>15 Sep</strong><small>Scoped to {{ selectedClient.name }}</small></div></div>
+    </section>
+
+    <section class="split-grid engagement-controls">
+      <article class="panel"><div class="panel-heading"><div><span class="eyebrow">Commencement control</span><h2>{{ activation?.state === 'ACTIVE' ? 'Engagement active' : 'Activation readiness' }}</h2></div><StatusPill :label="activation?.state || 'PENDING'" :tone="activation?.state === 'ACTIVE' ? 'good' : blockers.length ? 'danger' : 'warn'" /></div><p class="panel-copy">Activation requires a favorable acceptance or continuance decision, signed terms, eligible assignments, a verified workspace, and a ready firm profile. A green gate is evidence—not an automatic command.</p><ul v-if="blockers.length" class="check-list"><li v-for="blocker in blockers.slice(0, 4)" :key="`${blocker.code}-${blocker.message}`"><span class="list-icon danger"><Icon name="lock" :size="14" /></span><span><strong>{{ blocker.code }}</strong><small>{{ blocker.message }}</small></span></li></ul><div v-else class="prototype-note"><Icon name="check-circle" :size="16" /><span>All commencement prerequisites are satisfied for this synthetic scope.</span></div><div class="card-footer"><span>Terms: {{ terms?.state || 'Not recorded' }} · revision {{ selectedEngagement.revision }}</span><button v-if="canActivate" type="button" class="button primary" :disabled="actionWorking || activation?.state === 'ACTIVE'" @click="activate">{{ actionWorking ? 'Working…' : activation?.state === 'ACTIVE' ? 'Active' : 'Activate engagement' }}</button><StatusPill v-else label="Partner action required" tone="neutral" /></div></article>
+      <article class="panel"><div class="panel-heading"><div><span class="eyebrow">Next-period continuity</span><h2>{{ renewal ? 'Renewal case in progress' : 'Create a fresh shell' }}</h2></div><StatusPill :label="renewal?.state || 'Not started'" :tone="renewal?.state === 'NON_RENEWED' ? 'warn' : renewal ? 'good' : 'neutral'" /></div><p class="panel-copy">Continuance copies prior facts for context, then resets current answers to UNKNOWN. The next-period shell cannot inherit acceptance, terms, or evidence silently.</p><div v-if="renewal" class="detail-list compact-details"><div><dt>Shell</dt><dd>{{ renewal.shellEngagementId }}</dd></div><div><dt>Copied facts</dt><dd>{{ renewal.copiedFacts?.length || 0 }} responses retained as prior context</dd></div><div><dt>Decision</dt><dd>{{ renewal.decision?.decision || 'Pending partner decision' }}</dd></div></div><div class="card-footer"><span>{{ selectedEngagement.nextPeriodEngagementId ? `Shell ${selectedEngagement.nextPeriodEngagementId} linked` : 'No next-period shell linked' }}</span><button v-if="canActivate && !selectedEngagement.nextPeriodEngagementId" type="button" class="button secondary" :disabled="actionWorking" @click="createShell">Create FY2027 shell</button><StatusPill v-else-if="selectedEngagement.nextPeriodEngagementId" label="Linked shell" tone="good" /><StatusPill v-else label="Partner action required" tone="neutral" /></div></article>
     </section>
 
     <nav class="sub-tabs" aria-label="Engagement views"><button v-for="tab in tabs" :key="tab" type="button" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button></nav>
@@ -34,9 +82,9 @@ function navigate(route) { emit('navigate', route) }
         <article class="panel gate-map-panel">
           <div class="panel-heading"><div><span class="eyebrow">Operational gates</span><h2>Where the engagement stands</h2></div><span class="muted-label">Click a gate for its owner and next action</span></div>
           <div class="gate-map">
-            <button v-for="(gate, index) in gateMeta.slice(0, 10)" :key="gate.id" type="button" class="gate-map-item" :class="[`gate-${gateStatuses[index]}`, { selected: selectedGate === index }]" @click="selectedGate = index"><span class="gate-node"><Icon :name="gateStatuses[index] === 'good' ? 'check' : gateStatuses[index] === 'warn' ? 'warning' : gateStatuses[index] === 'danger' ? 'lock' : 'clock'" :size="14" /></span><span><strong>{{ gate.id }} · {{ gate.title }}</strong><small>{{ gate.detail }}</small></span></button>
+            <button v-for="(gate, index) in gates" :key="gate.id" type="button" class="gate-map-item" :class="[`gate-${gate.status}`, { selected: selectedGate === index }, { 'gate-next-period': gate.period === 'next' }, { 'gate-not-applicable': !gate.applicable }]" @click="selectedGate = index"><span class="gate-node"><Icon :name="!gate.applicable ? 'minus' : gate.status === 'good' ? 'check' : gate.status === 'warn' ? 'warning' : gate.status === 'danger' ? 'lock' : 'clock'" :size="14" /></span><span><strong>{{ gate.id }} · {{ gate.title }}</strong><small>{{ gate.applicable ? gate.detail : 'Not applicable for this service route' }}{{ gate.period === 'next' ? ' · next period' : '' }}</small></span></button>
           </div>
-          <div class="selected-gate"><div><span class="eyebrow">Selected gate</span><h3>{{ selectedGateInfo.id }} · {{ selectedGateInfo.title }}</h3><p>{{ selectedGateInfo.detail }}</p></div><StatusPill :label="statusLabels[gateStatuses[selectedGate]]" :tone="gateStatuses[selectedGate] === 'good' ? 'good' : gateStatuses[selectedGate] === 'warn' ? 'warn' : gateStatuses[selectedGate] === 'danger' ? 'danger' : 'neutral'" /></div>
+          <div class="selected-gate"><div><span class="eyebrow">Selected gate</span><h3>{{ selectedGateInfo.id }} · {{ selectedGateInfo.title }}</h3><p>{{ selectedGateInfo.applicable ? selectedGateInfo.detail : 'This gate is not applicable to the selected service route.' }}{{ selectedGateInfo.nextPeriodNote ? ` ${selectedGateInfo.nextPeriodNote}` : '' }}</p></div><StatusPill :label="selectedGateInfo.applicable ? statusLabels[selectedGateInfo.status] : 'Not applicable'" :tone="selectedGateInfo.applicable ? selectedGateInfo.status : 'neutral'" /></div>
         </article>
 
         <aside class="panel track-panel"><div class="panel-heading"><div><span class="eyebrow">Service routing</span><h2>Two accountable tracks</h2></div></div><div class="track-card accounting-track"><div class="track-icon"><Icon name="calculator" :size="17" /></div><div><strong>Accounting package</strong><small>Leila Noor · management owns decisions</small><span>TB v03 validated · FS v05 in review</span></div><button type="button" class="text-button" @click="navigate('accounting')">Open <Icon name="arrow-right" :size="15" /></button></div><div class="track-card audit-track"><div class="track-icon"><Icon name="clipboard" :size="17" /></div><div><strong>Audit file</strong><small>Omar Aziz · partner Maya Rahman</small><span>Plan approved · AR-019 follow-up open</span></div><button type="button" class="text-button" @click="navigate('audit')">Open <Icon name="arrow-right" :size="15" /></button></div><div class="handoff-note"><Icon name="arrow-right" :size="17" /><span><strong>Controlled handoff</strong> The accounting package is a versioned input to audit; it is not the auditor’s ledger.</span></div></aside>

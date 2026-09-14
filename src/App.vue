@@ -2,32 +2,56 @@
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import LoginPage from './pages/LoginPage.vue'
 import Icon from './components/Icon.vue'
+import AsyncPageError from './components/AsyncPageError.vue'
+import AsyncPageLoading from './components/AsyncPageLoading.vue'
+import SyntheticDemoBanner from './components/SyntheticDemoBanner.vue'
 import { clearDemoSession, loadDemoSession, saveDemoSession } from './auth'
 import { client, navItems } from './data'
+import { setActivePersona } from './domain/scenario.js'
+
+function asyncPage(loader, label) {
+  return defineAsyncComponent({
+    loader,
+    loadingComponent: AsyncPageLoading,
+    errorComponent: AsyncPageError,
+    // Render the loading surface immediately. A short delay leaves an empty
+    // main region during route transitions, which users can mistake for a
+    // missing page on slower networks or a cold browser cache.
+    delay: 0,
+    timeout: 15000,
+    onError(error, _retry, fail) {
+      // A stale tab can request a removed content-hash chunk after a deploy.
+      // Fail into an explicit refresh panel instead of leaving an empty main.
+      console.warn(`AuditFlow could not load ${label}.`, error)
+      fail(error)
+    },
+  })
+}
 
 const routes = {
-  dashboard: { label: 'Overview', title: 'Overview', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/DashboardPage.vue')) },
-  clients: { label: 'Clients & acceptance', title: 'Clients & acceptance', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ClientsPage.vue')) },
-  engagements: { label: 'Engagements', title: 'Engagement workspace', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/EngagementsPage.vue')) },
-  pbc: { label: 'PBC portal', title: 'PBC portal', roles: ['admin', 'accountant'], component: defineAsyncComponent(() => import('./pages/PbcPage.vue')) },
-  accounting: { label: 'Accounting & TB', title: 'Accounting & TB', roles: ['admin', 'accountant'], component: defineAsyncComponent(() => import('./pages/AccountingPage.vue')) },
-  audit: { label: 'Audit & fieldwork', title: 'Audit & fieldwork', roles: ['admin', 'accountant'], component: defineAsyncComponent(() => import('./pages/AuditPage.vue')) },
-  reviews: { label: 'Reviews & approvals', title: 'Reviews & approvals', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ReviewsPage.vue')) },
-  release: { label: 'Release & archive', title: 'Release & archive', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ReleasePage.vue')) },
-  integration: { label: 'Integration health', title: 'Integration health', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/IntegrationPage.vue')) },
-  architecture: { label: 'Architecture map', title: 'Architecture map', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ArchitecturePage.vue')) },
-  'accountant-architecture': { label: 'Accountant architecture', title: 'Accountant architecture', roles: ['admin', 'accountant'], component: defineAsyncComponent(() => import('./pages/AccountantArchitecturePage.vue')) },
-  'client-architecture': { label: 'Client architecture', title: 'Client architecture', roles: ['admin', 'client'], component: defineAsyncComponent(() => import('./pages/ClientArchitecturePage.vue')) },
-  readiness: { label: 'Phase 0 readiness', title: 'Phase 0 readiness', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ReadinessPage.vue')) },
-  'client-home': { label: 'Portal overview', title: 'Client portal', roles: ['admin', 'client'], component: defineAsyncComponent(() => import('./pages/ClientPortalPage.vue')) },
-  'client-details': { label: 'Client details', title: 'Client details', roles: ['admin', 'client'], component: defineAsyncComponent(() => import('./pages/ClientDetailsPage.vue')) },
-  'client-communications': { label: 'Communications', title: 'Portal communications', roles: ['admin', 'client'], component: defineAsyncComponent(() => import('./pages/ClientCommunicationsPage.vue')) },
-  'accountant-home': { label: 'Accountant overview', title: 'Accountant portal', roles: ['admin', 'accountant'], component: defineAsyncComponent(() => import('./pages/AccountantHomePage.vue')) },
-  'accountant-client': { label: 'View client details', title: 'View client details', roles: ['admin', 'accountant'], component: defineAsyncComponent(() => import('./pages/AccountantClientPage.vue')) },
-  'admin-console': { label: 'Admin console', title: 'Admin console', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/AdminConsolePage.vue')) },
+  dashboard: { label: 'Overview', title: 'Overview', roles: ['admin'], component: asyncPage(() => import('./pages/DashboardPage.vue'), 'Overview') },
+  clients: { label: 'Clients & acceptance', title: 'Clients & acceptance', roles: ['admin'], component: asyncPage(() => import('./pages/ClientsPage.vue'), 'Clients & acceptance') },
+  engagements: { label: 'Engagements', title: 'Engagement workspace', roles: ['admin'], component: asyncPage(() => import('./pages/EngagementsPage.vue'), 'Engagement workspace') },
+  pbc: { label: 'PBC portal', title: 'PBC portal', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/PbcPage.vue'), 'PBC portal') },
+  accounting: { label: 'Accounting & TB', title: 'Accounting & TB', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AccountingPage.vue'), 'Accounting & TB') },
+  audit: { label: 'Audit & fieldwork', title: 'Audit & fieldwork', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AuditPage.vue'), 'Audit & fieldwork') },
+  reviews: { label: 'Reviews & approvals', title: 'Reviews & approvals', roles: ['admin'], component: asyncPage(() => import('./pages/ReviewsPage.vue'), 'Reviews & approvals') },
+  release: { label: 'Release & archive', title: 'Release & archive', roles: ['admin'], component: asyncPage(() => import('./pages/ReleasePage.vue'), 'Release & archive') },
+  integration: { label: 'Integration health', title: 'Integration health', roles: ['admin'], component: asyncPage(() => import('./pages/IntegrationPage.vue'), 'Integration health') },
+  architecture: { label: 'Architecture map', title: 'Architecture map', roles: ['admin'], component: asyncPage(() => import('./pages/ArchitecturePage.vue'), 'Architecture map') },
+  'accountant-architecture': { label: 'Accountant architecture', title: 'Accountant architecture', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AccountantArchitecturePage.vue'), 'Accountant architecture') },
+  'client-architecture': { label: 'Client architecture', title: 'Client architecture', roles: ['admin', 'client'], component: asyncPage(() => import('./pages/ClientArchitecturePage.vue'), 'Client architecture') },
+  readiness: { label: 'Phase 0 readiness', title: 'Phase 0 readiness', roles: ['admin'], component: asyncPage(() => import('./pages/ReadinessPage.vue'), 'Phase 0 readiness') },
+  'client-home': { label: 'Portal overview', title: 'Client portal', roles: ['admin', 'client'], component: asyncPage(() => import('./pages/ClientPortalPage.vue'), 'Client portal') },
+  'client-details': { label: 'Client details', title: 'Client details', roles: ['admin', 'client'], component: asyncPage(() => import('./pages/ClientDetailsPage.vue'), 'Client details') },
+  'client-communications': { label: 'Communications', title: 'Portal communications', roles: ['admin', 'client'], component: asyncPage(() => import('./pages/ClientCommunicationsPage.vue'), 'Portal communications') },
+  'accountant-home': { label: 'Accountant overview', title: 'Accountant portal', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AccountantHomePage.vue'), 'Accountant portal') },
+  'accountant-client': { label: 'View client details', title: 'View client details', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AccountantClientPage.vue'), 'View client details') },
+  'admin-console': { label: 'Admin console', title: 'Admin console', roles: ['admin'], component: asyncPage(() => import('./pages/AdminConsolePage.vue'), 'Admin console') },
 }
 
 const currentUser = ref(loadDemoSession())
+if (currentUser.value) setActivePersona(currentUser.value.id)
 const currentRoute = ref(getRouteFromHash())
 const mobileNavOpen = ref(false)
 const search = ref('')
@@ -45,6 +69,8 @@ const workspaceName = computed(() => isClient.value ? currentUser.value.organiza
 const workspaceSubtitle = computed(() => isClient.value ? 'Client portal' : currentUser.value?.roleLabel || 'Demo workspace')
 const workspaceInitials = computed(() => currentUser.value?.initials || 'Q')
 const systemLabel = computed(() => isClient.value ? 'Client portal · shared communication record' : currentUser.value?.role === 'accountant' ? 'Accountant workspace · preparation access' : 'Admin workspace · all demo privileges')
+const healthLabel = computed(() => isClient.value ? 'Synthetic portal projection' : 'Synthetic controls only')
+const healthDetail = computed(() => isClient.value ? 'Browser-local demo · SIMULATION' : 'No live integrations enabled')
 const helpCopy = computed(() => isClient.value
   ? 'Use Client details to submit facts, Requests to see what is due, Communications for every question, and How the platform works to understand the handoff.'
   : isAccountant.value
@@ -147,6 +173,7 @@ function submitSearch() {
 
 function handleLogin(user) {
   currentUser.value = user
+  setActivePersona(user.id)
   saveDemoSession(user)
   currentRoute.value = user.landing
   permissionNotice.value = ''
@@ -156,6 +183,7 @@ function handleLogin(user) {
 
 function showLogin() {
   clearDemoSession()
+  setActivePersona(null)
   currentUser.value = null
   currentRoute.value = ''
   accountMenuOpen.value = false
@@ -199,11 +227,12 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncRoute))
         <div v-for="group in navGroups" :key="group.name" class="nav-group"><span class="nav-group-label">{{ group.name }}</span><button v-for="item in group.items" :key="item.key" type="button" class="nav-item" :class="{ active: currentRoute === item.key }" :aria-current="currentRoute === item.key ? 'page' : undefined" @click="navigate(item.key)"><Icon :name="item.icon" :size="18" /><span>{{ item.label }}</span><em v-if="item.badge">{{ item.badge }}</em></button></div>
       </nav>
 
-      <div class="sidebar-bottom"><div class="sidebar-health"><span class="health-pulse"></span><span><strong>{{ isClient ? 'Portal connected' : 'All systems healthy' }}</strong><small>{{ isClient ? 'Secure demo workspace' : 'Reconciled 09:42' }}</small></span></div><div class="sidebar-foot"><span>{{ currentUser.roleLabel }}</span><button ref="helpButton" type="button" aria-label="Open help" title="Open help and orientation" @click="openHelp"><Icon name="info" :size="18" /></button></div></div>
+      <div class="sidebar-bottom"><div class="sidebar-health"><span class="health-pulse"></span><span><strong>{{ healthLabel }}</strong><small>{{ healthDetail }}</small></span></div><div class="sidebar-foot"><span>{{ currentUser.roleLabel }}</span><button ref="helpButton" type="button" aria-label="Open help" title="Open help and orientation" @click="openHelp"><Icon name="info" :size="18" /></button></div></div>
     </aside>
 
     <div class="app-main">
       <header class="topbar"><div class="topbar-left"><button type="button" class="mobile-menu" aria-label="Open navigation" title="Open navigation" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = true"><Icon name="menu" :size="19" /></button><div class="breadcrumbs"><span>{{ currentUser.roleLabel }}</span><Icon name="chevron-right" :size="16" /><strong>{{ activeNav.label }}</strong></div></div><div class="topbar-actions"><form class="top-search" role="search" @submit.prevent="submitSearch"><Icon name="search" :size="17" /><input v-model="search" type="search" aria-label="Search clients, engagements and IDs" placeholder="Search anything" /></form><button type="button" class="top-icon-button" :aria-label="isClient ? 'Portal messages, 2 items' : 'Notifications, 3 items'" :title="isClient ? 'Portal messages, 2 items' : 'Notifications, 3 items'"><Icon name="bell" :size="18" /><span aria-hidden="true">{{ isClient ? '2' : '3' }}</span></button><div class="account-control"><button type="button" class="top-user top-user-button" aria-label="Open account menu" title="Open account menu" :aria-expanded="accountMenuOpen" @click="accountMenuOpen = !accountMenuOpen"><span class="avatar" :class="`avatar-${currentUser.tone}`">{{ currentUser.initials }}</span><span><strong>{{ currentUser.name }}</strong><small>{{ currentUser.roleLabel }}</small></span><Icon name="chevron-down" :size="15" /></button><div v-if="accountMenuOpen" class="account-menu" role="menu"><div class="account-menu-heading"><strong>{{ currentUser.name }}</strong><span>{{ currentUser.email }}</span></div><button type="button" role="menuitem" @click="showLogin">Switch demo account</button><button type="button" role="menuitem" @click="showLogin">Sign out</button></div></div></div></header>
+      <SyntheticDemoBanner />
       <div class="system-strip"><span><i></i> {{ systemLabel }}</span><span>{{ isClient ? currentUser.organization : `${client.name} · ${client.period}` }}</span></div>
       <div v-if="permissionNotice" class="permission-notice" role="status" aria-live="polite"><Icon name="warning" :size="17" />{{ permissionNotice }}</div>
       <main id="main-content" class="main-content" tabindex="-1"><component :is="current.component" @navigate="navigate" /></main>

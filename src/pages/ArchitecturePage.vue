@@ -49,6 +49,10 @@ function statusTone(tone) {
         <span class="eyebrow">Decision baseline</span>
         <h2>One modular app, explicit ownership</h2>
         <p>AuditFlow is a synthetic demonstration of the proposed Frappe/ERPNext + <code>audit_practice</code> modular monolith. Each system below has one job, one owner, and a visible handoff.</p>
+        <div class="architecture-status-stack" aria-label="Implementation status">
+          <span class="architecture-status current"><strong>CURRENT IMPLEMENTATION</strong><small>Vue/Vite · browser-local synthetic state · SIMULATION evidence</small></span>
+          <span class="architecture-status target"><strong>TARGET V4 ARCHITECTURE</strong><small>Frappe + MariaDB + Microsoft 365 controls · not implemented or proven here</small></span>
+        </div>
       </div>
       <div class="architecture-chip-row" aria-label="Architecture decisions">
         <span class="architecture-chip"><Icon name="workflow" :size="16" /><strong>Frappe-first</strong><small>one custom app</small></span>

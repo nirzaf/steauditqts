@@ -33,6 +33,7 @@ const paths = {
   'chevron-right': ['m9 5 7 7-7 7'],
   'arrow-right': ['M5 12h14', 'm13 6 6 6-6 6'],
   plus: ['M12 5v14M5 12h14'],
+  minus: ['M5 12h14'],
   x: ['m6 6 12 12M18 6 6 18'],
   info: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 10v6M12 7.5v.5'],
   upload: ['M12 16V4', 'm7 9 5-5 5 5', 'M5 20h14'],

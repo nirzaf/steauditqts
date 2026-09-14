@@ -1,4 +1,4 @@
-const DEFAULT_ENGAGEMENT_ID = 'ENG-2026-0018'
+const DEFAULT_ENGAGEMENT_ID = 'ENG-0018-AUD-2026'
 const MAX_REQUEST_BYTES = 16_000
 const MAX_COMMENT_LENGTH = 1_200
 const MAX_CONTEXT_LENGTH = 1_200
@@ -16,33 +16,53 @@ function originFor(request) {
   return origin && ALLOWED_ORIGINS.has(origin) ? origin : null
 }
 
-function baseHeaders(request) {
+function requestCorrelationId(request) {
+  const supplied = request.headers.get('X-AuditFlow-Request-Id')
+  if (supplied && /^[a-zA-Z0-9._:-]{8,120}$/.test(supplied)) return supplied
+  return `af-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
+}
+
+function baseHeaders(request, correlationId = requestCorrelationId(request)) {
   const headers = {
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'X-Correlation-Id': correlationId,
   }
   const origin = originFor(request)
   if (origin) {
     headers['Access-Control-Allow-Origin'] = origin
     headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, OPTIONS'
-    headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    headers['Access-Control-Allow-Headers'] = 'Content-Type, X-AuditFlow-Request-Id, X-Correlation-Id'
     headers.Vary = 'Origin'
   }
   return headers
 }
 
-function json(request, payload, status = 200) {
-  return Response.json(payload, { status, headers: baseHeaders(request) })
+function json(request, payload, status = 200, correlationId = requestCorrelationId(request)) {
+  return Response.json(payload, { status, headers: baseHeaders(request, correlationId) })
 }
 
 function error(request, message, status = 400, code = 'BAD_REQUEST') {
-  return json(request, { ok: false, error: { code, message } }, status)
+  const correlationId = requestCorrelationId(request)
+  return json(request, { ok: false, error: { code, message, correlationId }, evidenceLevel: 'SIMULATION' }, status, correlationId)
 }
 
 function readEngagementId(value) {
-  const engagementId = String(value || DEFAULT_ENGAGEMENT_ID).trim()
+  const engagementId = String(value || '').trim()
   return SAFE_ENGAGEMENT_ID.test(engagementId) ? engagementId : null
+}
+
+// The browser demo is deliberately local-only. Shared routes can be enabled
+// only by an operator who has separately protected the Worker with Cloudflare
+// Access, provisioned an isolated non-production binding, and set all three
+// explicit deployment values. A caller-supplied role, Origin, password or
+// obscured URL is never treated as identity.
+function trustedSharedDemoRequest(request, env) {
+  if (env.SHARED_DEMO_ENABLED !== 'true') return false
+  if (env.SHARED_DEMO_IDENTITY_MODE !== 'cloudflare-access-verified') return false
+  if (env.SHARED_DEMO_BINDING !== 'isolated-non-production') return false
+  return Boolean(request.headers.get('Cf-Access-Jwt-Assertion') && request.headers.get('Cf-Access-Authenticated-User-Email'))
 }
 
 function readKey(value, fallback = '') {
@@ -254,8 +274,16 @@ async function handle(request, env) {
     return new Response(null, { status: 204, headers: baseHeaders(request) })
   }
   if (path === '/api/health' && request.method === 'GET') {
-    return json(request, { ok: true, service: 'steaudit-api', database: Boolean(env.DB), mode: 'demo' })
+    return json(request, {
+      ok: true,
+      service: 'steaudit-api',
+      databaseConfigured: Boolean(env.DB),
+      mode: trustedSharedDemoRequest(request, env) ? 'shared-demo-opt-in' : 'local-only',
+      sharedDemoEnabled: trustedSharedDemoRequest(request, env),
+      evidenceLevel: 'SIMULATION',
+    })
   }
+  if (!trustedSharedDemoRequest(request, env)) return error(request, 'Shared demo data routes are disabled until a verified Cloudflare Access identity and isolated non-production binding are configured.', 403, 'SHARED_DEMO_DISABLED')
   if (!env.DB) return error(request, 'D1 is not configured for this Worker.', 503, 'DATABASE_UNAVAILABLE')
   if (path === '/api/comments' && request.method === 'GET') return listComments(request, env, url)
   if (path === '/api/comments' && request.method === 'POST') return createComment(request, env)
