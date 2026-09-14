@@ -16,6 +16,8 @@ const routes = {
   release: { label: 'Release & archive', title: 'Release & archive', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ReleasePage.vue')) },
   integration: { label: 'Integration health', title: 'Integration health', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/IntegrationPage.vue')) },
   architecture: { label: 'Architecture map', title: 'Architecture map', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ArchitecturePage.vue')) },
+  'accountant-architecture': { label: 'Accountant architecture', title: 'Accountant architecture', roles: ['admin', 'accountant'], component: defineAsyncComponent(() => import('./pages/AccountantArchitecturePage.vue')) },
+  'client-architecture': { label: 'Client architecture', title: 'Client architecture', roles: ['admin', 'client'], component: defineAsyncComponent(() => import('./pages/ClientArchitecturePage.vue')) },
   readiness: { label: 'Phase 0 readiness', title: 'Phase 0 readiness', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ReadinessPage.vue')) },
   'client-home': { label: 'Portal overview', title: 'Client portal', roles: ['admin', 'client'], component: defineAsyncComponent(() => import('./pages/ClientPortalPage.vue')) },
   'client-details': { label: 'Client details', title: 'Client details', roles: ['admin', 'client'], component: defineAsyncComponent(() => import('./pages/ClientDetailsPage.vue')) },
@@ -44,10 +46,10 @@ const workspaceSubtitle = computed(() => isClient.value ? 'Client portal' : curr
 const workspaceInitials = computed(() => currentUser.value?.initials || 'Q')
 const systemLabel = computed(() => isClient.value ? 'Client portal · shared communication record' : currentUser.value?.role === 'accountant' ? 'Accountant workspace · preparation access' : 'Admin workspace · all demo privileges')
 const helpCopy = computed(() => isClient.value
-  ? 'Use Client details to submit facts, Requests to see what is due, and Communications for every question or clarification.'
+  ? 'Use Client details to submit facts, Requests to see what is due, Communications for every question, and How the platform works to understand the handoff.'
   : isAccountant.value
-    ? 'Start with View client details, then follow PBC, Accounting, and Audit. Acceptance, review, release, and integration controls remain with the admin role.'
-    : 'Use the full navigation to trace acceptance, evidence, accounting, audit, approvals, release, architecture, and Phase 0 proof controls.')
+    ? 'Start with View client details, then follow PBC, Accounting, and Audit. Use How the platform works to see where your package moves; acceptance, review, release, and integration controls remain with the admin role.'
+    : 'Use the full navigation to trace acceptance, evidence, accounting, audit, approvals, release, architecture, and the role-specific architecture lenses before opening Phase 0 proof.')
 const visibleNavItems = computed(() => {
   if (!currentUser.value) return []
   if (currentUser.value.role === 'client') {
@@ -55,12 +57,14 @@ const visibleNavItems = computed(() => {
       { key: 'client-home', label: 'Portal overview', icon: 'grid', section: 'Client portal' },
       { key: 'client-details', label: 'Client details', icon: 'users', section: 'Client portal' },
       { key: 'client-communications', label: 'Communications', icon: 'message', section: 'Client portal', badge: '2' },
+      { key: 'client-architecture', label: 'How the platform works', icon: 'workflow', section: 'Client portal' },
     ]
   }
   if (currentUser.value.role === 'accountant') {
     return [
       { key: 'accountant-home', label: 'Accountant overview', icon: 'grid', section: 'Accountant workspace' },
       { key: 'accountant-client', label: 'View client details', icon: 'users', section: 'Accountant workspace' },
+      { key: 'accountant-architecture', label: 'How the platform works', icon: 'workflow', section: 'Accountant workspace' },
       ...navItems.filter((item) => ['pbc', 'accounting', 'audit'].includes(item.key)),
     ]
   }
@@ -71,6 +75,8 @@ const visibleNavItems = computed(() => {
     { key: 'client-communications', label: 'Client communications', icon: 'message', section: 'Portals' },
     { key: 'accountant-home', label: 'Accountant portal preview', icon: 'calculator', section: 'Portals' },
     { key: 'accountant-client', label: 'Accountant client view', icon: 'users', section: 'Portals' },
+    { key: 'client-architecture', label: 'Client architecture', icon: 'workflow', section: 'Portals' },
+    { key: 'accountant-architecture', label: 'Accountant architecture', icon: 'workflow', section: 'Portals' },
     { key: 'admin-console', label: 'Admin console', icon: 'shield', section: 'Administration' },
   ]
 })

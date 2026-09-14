@@ -58,7 +58,7 @@ The Worker is intentionally a demo API: inputs are length- and key-validated, wr
 
 ## V4 architecture views
 
-The admin navigation includes two architecture-focused prototype pages. **Architecture map** explains the Frappe-first modular-monolith boundary, Entra identity, MariaDB/outbox records, SharePoint document ownership, Purview protection and independent recovery checkpoints. **Phase 0 readiness** turns the specification's 12 experiments into a filterable register with owners, pass criteria, a small complete vertical slice and the conditional feasibility decision. All values are synthetic planning examples; these pages do not claim that a tenant capability, production approval, or regulatory control has been proven.
+The admin navigation includes architecture-focused prototype pages. **Architecture map** explains the Frappe-first modular-monolith boundary, Entra identity, MariaDB/outbox records, SharePoint document ownership, Purview protection and independent recovery checkpoints. **Admin architecture**, **Accountant architecture**, and **Client architecture** provide the same high-level diagram through each persona's boundary: control ownership, source-to-package preparation, or portal submission and communication. **Phase 0 readiness** turns the specification's 12 experiments into a filterable register with owners, pass criteria, a small complete vertical slice and the conditional feasibility decision. All values are synthetic planning examples; these pages do not claim that a tenant capability, production approval, or regulatory control has been proven.
 
 ## Iconography and accessibility
 

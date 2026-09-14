@@ -39,6 +39,9 @@ const guideIcon = computed(() => ({
   'admin-console-guide': 'shield',
   'architecture-guide': 'workflow',
   'readiness-guide': 'list-check',
+  'admin-architecture-guide': 'workflow',
+  'accountant-architecture-guide': 'calculator',
+  'client-architecture-guide': 'workflow',
 }[props.guide.id] || 'workflow'))
 
 const stepIcons = ['list-check', 'file', 'arrow-right']

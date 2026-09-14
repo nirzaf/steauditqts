@@ -6,6 +6,7 @@ defineProps({
   title: { type: String, required: true },
   description: { type: String, default: '' },
   actionLabel: { type: String, default: '' },
+  actionIcon: { type: String, default: 'plus' },
 })
 
 const emit = defineEmits(['action'])
@@ -20,7 +21,7 @@ const emit = defineEmits(['action'])
     </div>
     <button v-if="actionLabel" type="button" class="button primary" @click="emit('action')">
       <span>{{ actionLabel }}</span>
-      <Icon name="plus" :size="16" />
+      <Icon :name="actionIcon" :size="16" />
     </button>
   </div>
 </template>

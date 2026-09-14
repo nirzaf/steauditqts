@@ -49,6 +49,7 @@ function navigate(route) {
         <div class="portal-shortcuts">
           <button type="button" class="portal-shortcut" @click="navigate('client-details')"><span class="shortcut-icon tone-blue"><Icon name="user" :size="17" /></span><span><strong>Client details</strong><small>Submit or confirm entity facts</small></span><Icon name="arrow-right" :size="16" /></button>
           <button type="button" class="portal-shortcut" @click="navigate('client-communications')"><span class="shortcut-icon tone-green"><Icon name="message" :size="17" /></span><span><strong>Communications</strong><small>Ask, clarify, and confirm next steps</small></span><Icon name="arrow-right" :size="16" /></button>
+          <button type="button" class="portal-shortcut" @click="navigate('client-architecture')"><span class="shortcut-icon tone-navy"><Icon name="workflow" :size="17" /></span><span><strong>How the platform works</strong><small>See where your facts, files, and questions go</small></span><Icon name="arrow-right" :size="16" /></button>
           <div class="portal-boundary-note"><Icon name="shield" :size="17" /><span><strong>What stays private</strong> Internal risk notes, review points, and approvals remain with the engagement team.</span></div>
         </div>
       </section>

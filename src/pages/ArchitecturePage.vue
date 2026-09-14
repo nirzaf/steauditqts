@@ -4,12 +4,17 @@ import Icon from '../components/Icon.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
-import { architectureFlowRows, architectureGuardrails, architectureNodes, client, serviceRoutes, systemsOfRecord, workflowGuides } from '../data'
+import { architectureFlowRows, architectureGuardrails, architectureNodes, client, roleArchitecturePages, serviceRoutes, systemsOfRecord, workflowGuides } from '../data'
 
 const emit = defineEmits(['navigate'])
 const selectedNodeId = ref('frappe')
 
 const selectedNode = computed(() => architectureNodes.find((node) => node.id === selectedNodeId.value) || architectureNodes[0])
+const roleLenses = computed(() => [
+  { ...roleArchitecturePages.admin, route: 'architecture', label: 'Admin control map', detail: 'Full system-of-record, boundary, and Phase 0 view.' },
+  { ...roleArchitecturePages.accountant, route: 'accountant-architecture', label: 'Accountant architecture', detail: 'Source evidence → accounting package → review handoff.' },
+  { ...roleArchitecturePages.client, route: 'client-architecture', label: 'Client architecture', detail: 'Portal submission → evidence receipt → safe status projection.' },
+])
 
 function nodeFor(id) {
   return architectureNodes.find((node) => node.id === id) || architectureNodes[0]
@@ -51,6 +56,17 @@ function statusTone(tone) {
         <span class="architecture-chip"><Icon name="folder" :size="16" /><strong>SharePoint</strong><small>documents + snapshots</small></span>
         <span class="architecture-chip"><Icon name="key" :size="16" /><strong>Entra</strong><small>identity and sessions</small></span>
         <span class="architecture-chip"><Icon name="shield" :size="16" /><strong>Purview</strong><small>records control plane</small></span>
+      </div>
+    </section>
+
+    <section class="panel role-lens-panel">
+      <div class="panel-heading"><div><span class="eyebrow">Role lenses</span><h2>Open the explanation for each user type</h2></div><span class="muted-label">Same platform · different boundary</span></div>
+      <div class="role-lens-grid">
+        <button v-for="lens in roleLenses" :key="lens.key" type="button" class="role-lens-card" :class="`role-lens-${lens.avatarTone}`" @click="navigate(lens.route)">
+          <span class="role-lens-avatar avatar" :class="`avatar-${lens.avatarTone}`">{{ lens.initials }}</span>
+          <span class="role-lens-copy"><strong>{{ lens.label }}</strong><small>{{ lens.audience }}</small><em>{{ lens.detail }}</em></span>
+          <Icon name="arrow-right" :size="16" />
+        </button>
       </div>
     </section>
 
