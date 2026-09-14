@@ -90,6 +90,26 @@ export function summarizeRows(rows) {
   return { debitTotal, creditTotal, signedTotal: subtractMoney(creditTotal, debitTotal), profit, netPpe, assets: subtractMoney(assets, accumulatedDepreciation), liabilities, equity }
 }
 
+/**
+ * Return truthful mapping coverage for the selected source rows. The
+ * denominator is the rows actually in the selected dataset, not the size of
+ * a global mapping catalogue; an unknown code is therefore visibly unmapped.
+ */
+export function mappingSummary(rows = [], mappings = {}) {
+  const selected = Array.isArray(rows) ? rows : []
+  const mappedRows = selected.filter((row) => {
+    const destination = mappings?.[row?.accountCode]
+    return typeof destination === 'string' && destination.trim().length > 0
+  })
+  return {
+    required: selected.length,
+    mapped: mappedRows.length,
+    unmapped: selected.length - mappedRows.length,
+    coveragePercent: selected.length ? Math.round((mappedRows.length / selected.length) * 100) : 0,
+    state: mappedRows.length === selected.length ? 'REVIEWED' : 'REVIEW_REQUIRED',
+  }
+}
+
 export function sourceReflection(baselineRows, replacementRows, adjustment = { debitAccount: '520100', creditAccount: '159100', amount: '5000.00' }) {
   if (!Array.isArray(baselineRows) || !Array.isArray(replacementRows) || !baselineRows.length || !replacementRows.length) return 'UNKNOWN'
   const baseline = Object.fromEntries(baselineRows.map((row) => [row.accountCode, row]))

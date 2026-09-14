@@ -5,13 +5,16 @@ import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { client, formatMoney, workpapers as templateWorkpapers, workflowGuides } from '../data'
-import { activeActor, actorById, auditChainSummary, auditFindingFor, auditPopulationFor, auditSampleFor, recordAlternativeWork, recordFindingDisposition, recordMaterialitySelection, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, submitWorkpaper } from '../domain/scenario.js'
+import { activeActor, actorById, auditChainSummary, auditFindingFor, auditPopulationFor, auditSampleFor, createWorkpaperDraft, recordAlternativeWork, recordFindingDisposition, recordMaterialitySelection, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, submitWorkpaper } from '../domain/scenario.js'
 
 const activeTab = ref('Planning')
 const selectedRiskId = ref('RISK-AR-019')
 const tabs = ['Planning', 'Fieldwork', 'Populations & samples']
 const showEvidence = ref(false)
 const toast = ref('')
+const workpaperDraftOpen = ref(false)
+const workpaperDraft = ref({ title: '', procedureId: '', reviewerActorId: 'ACT-OMAR', detail: '' })
+const workpaperDraftWorking = ref(false)
 const selectedEngagement = computed(() => scenarioEngagement())
 const selectedClient = computed(() => scenarioClient())
 const liveWorkpapers = computed(() => {
@@ -49,8 +52,19 @@ const testedSampleCount = computed(() => selectedPlanSamples.value.filter((item)
 const canPerformIndependentWork = computed(() => Boolean(activeActor()?.roles?.some((role) => ['independent_reviewer', 'engagement_partner'].includes(role))))
 
 function addWorkpaper() {
-  toast.value = 'Working-paper draft opened. Choose the procedure, exact source snapshot, evidence links, reviewer, and conclusion owner before submitting.'
-  window.setTimeout(() => { toast.value = '' }, 4000)
+  workpaperDraft.value = { title: '', procedureId: selectedRisk.value?.procedureId || '', reviewerActorId: 'ACT-OMAR', detail: '' }
+  workpaperDraftOpen.value = true
+}
+
+function saveWorkpaperDraft() {
+  if (workpaperDraftWorking.value || !workpaperDraft.value.title.trim()) return
+  workpaperDraftWorking.value = true
+  const actor = activeActor()
+  const result = createWorkpaperDraft({ engagementId: selectedEngagement.value?.id, actorPersonaId: actor?.personaId, expectedSessionEpoch: actor?.sessionEpoch, idempotencyKey: `workpaper-create-${selectedEngagement.value?.id}-${workpaperDraft.value.title.trim().toLowerCase()}`, ...workpaperDraft.value })
+  workpaperDraftWorking.value = false
+  workpaperDraftOpen.value = false
+  toast.value = result.outcome === 'COMMITTED' ? `${result.data.id} draft created. Submit an exact snapshot from Fieldwork when evidence is ready.` : `${result.outcome}: ${result.code} — ${result.message}`
+  window.setTimeout(() => { toast.value = '' }, 4500)
 }
 
 async function submitSnapshot(workpaper) {
@@ -89,6 +103,8 @@ function recordMateriality() {
     <PageHeader eyebrow="Audit execution" title="Audit & fieldwork" description="Move from approved materiality and risk responses to populations, selected items, evidence and supported conclusions. The platform records the chain; professionals evaluate it." action-label="Add workpaper" @action="addWorkpaper" />
     <WorkflowGuide :guide="workflowGuides.audit" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+
+    <section v-if="workpaperDraftOpen" class="panel workpaper-draft-panel" aria-labelledby="workpaper-draft-title"><div class="panel-heading"><div><span class="eyebrow">Scoped workpaper workspace</span><h2 id="workpaper-draft-title">Open a working-paper draft</h2></div><button type="button" class="icon-button" aria-label="Close workpaper draft" title="Close workpaper draft" @click="workpaperDraftOpen = false"><Icon name="x" :size="17" /></button></div><p class="panel-copy">Create the draft record first, then submit an exact evidence snapshot from Fieldwork. A draft does not clear a review point or imply a conclusion.</p><form class="portal-form" @submit.prevent="saveWorkpaperDraft"><div class="form-grid"><label>Workpaper title<input v-model="workpaperDraft.title" required maxlength="140" placeholder="e.g. Payroll completeness testing" /></label><label>Procedure ID<input v-model="workpaperDraft.procedureId" maxlength="60" placeholder="PROC-PAY-01" /></label><label>Reviewer<select v-model="workpaperDraft.reviewerActorId"><option value="ACT-OMAR">Omar Aziz · manager</option><option value="ACT-FATIMA">Fatima Saleh · independent reviewer</option></select></label><label class="form-span-2">Evidence plan<textarea v-model="workpaperDraft.detail" rows="3" maxlength="500" placeholder="Describe the evidence and expected conclusion support"></textarea></label></div><div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />Synthetic draft is scoped to {{ selectedEngagement?.id || 'the selected engagement' }}.</span><button type="submit" class="button primary" :disabled="workpaperDraftWorking || !workpaperDraft.title.trim()">{{ workpaperDraftWorking ? 'Saving…' : 'Create draft record' }}<Icon name="arrow-right" :size="17" /></button></div></form></section>
 
     <section class="audit-hero panel"><div><span class="eyebrow">{{ selectedEngagement?.id || 'ENG-0018-AUD-2026' }} · {{ selectedClient?.name || client.name }}</span><h2>Risk-based audit plan</h2><p>Audit plan revision {{ chain.materialityRecord?.revision || '—' }} · source revision {{ chain.materialityRecord?.sourceRevision || '—' }} · preliminary information pinned to the selected accounting source</p></div><div class="audit-hero-meta"><StatusPill :label="selectedEngagement?.service === 'audit' ? 'Plan approved' : 'Audit route preview'" tone="good" /><span>{{ highRisks }} significant risks · {{ risks.length }} linked responses · {{ selectedEngagement?.period || 'FY2026' }}</span></div></section>
 

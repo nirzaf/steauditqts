@@ -16,11 +16,13 @@ Vue + Vite multi-page prototype for a Frappe/Microsoft 365 accounting and audit 
 - Integration health
 - Architecture map (V5 systems of record, control planes and service routes)
 - V5 operating model (11 gates, 26 named outputs, commercial fixture, roles and notifications)
+- Role workspaces (client contributor, management approver, preparer, senior, manager, partner, finance, accounting reviewer, EQR, records, compliance and system administrator)
+- Document center (all 26 v5 outputs with scoped metadata, version, state and destination)
 - Audit portal pipeline visualizer (animated eight-stage client, portal, audit and finance swimlane)
 - Complete cycle walkthrough (§35.1 journey and §27–29 failure-boundary overlays)
 - Phase 0 readiness (12 synthetic proof experiments, vertical slice and feasibility decision)
 
-The UI uses fictional QAR data based on the supplied workflow architecture. It demonstrates workflow controls and versioning; it is not a production accounting system or an audit opinion engine. Every screen is marked **SYNTHETIC DEMO** and carries `SIMULATION` evidence. Do not enter real client information, credentials, files, or professional decisions.
+The UI uses fictional QAR data based on the supplied workflow architecture. It demonstrates workflow controls and versioning; it is not a production accounting system or an audit opinion engine. Safety copy remains available in the login and workflow guidance surfaces, while the persistent synthetic warning card has been removed from the page shell. Do not enter real client information, credentials, files, or professional decisions.
 
 ## Local development
 
@@ -71,7 +73,7 @@ The Worker is intentionally fail-closed demo infrastructure: inputs are length- 
 
 The admin navigation includes architecture-focused prototype pages. **Architecture map** explains the v5 Frappe-first modular-monolith boundary, the optional Cloudflare Worker edge/server-function boundary used by this prototype, Entra identity, MariaDB/outbox records, SharePoint document ownership, Purview protection and independent recovery checkpoints. **Admin architecture**, **Accountant architecture**, and **Client architecture** provide the same high-level diagram through each persona's boundary: control ownership, source-to-package preparation, or portal submission and communication. **V5 operating model** translates the new specification into its 11 independent gates, 26 named outputs, commercial fixture, role boundaries and notification handoffs. **Phase 0 readiness** turns the inherited experiments into a filterable register with owners, pass criteria, a small complete vertical slice and the conditional feasibility decision. All values are synthetic planning examples; these pages do not claim that a tenant capability, production approval, or regulatory control has been proven.
 
-The **Phase 0 readiness** page also includes an explicit **Run clean synthetic rehearsal** action. It resets only the browser-local synthetic scenario (separate from every professional command), runs the small end-to-end acceptance/PBC/accounting/audit/release/recovery slice, exercises confirmed-prohibition and non-renewal branches, and retains a bounded step-by-step `SIMULATION` evidence record. Each run links its exercised steps to the source-derived 28 AT, 44 ET, 24 VT, and 12 P0 traceability identities. A passing rehearsal is not a Microsoft, Frappe/MariaDB, records-retention, provider exactly-once, or recovery-fencing proof.
+The **Phase 0 readiness** page also includes an explicit **Run clean synthetic rehearsal** action. It resets only the browser-local synthetic scenario (separate from every professional command), runs the small end-to-end acceptance/PBC/accounting/audit/release/recovery slice, exercises confirmed-prohibition and non-renewal branches, and retains a bounded step-by-step `SIMULATION` evidence record. The source-derived traceability register contains 28 AT, 44 ET, 64 BT and 24 VT identities (160 acceptance scenarios), plus 12 P0 experiments. A passing rehearsal is not a Microsoft, Frappe/MariaDB, records-retention, provider exactly-once, or recovery-fencing proof.
 
 The **Pipeline visualizer** is the client-friendly high-level explanation layer. Its eight animated stages map the supplied portal flow from client details and acceptance through quote, activation, planning, PBC, Draft FS, opinion, final report, invoice, and archive. Playback is interruptible, keyboard-operable, pauses when hidden, and falls back to manual stepping for reduced-motion preferences. Each stage exposes the accountable owner, portal handoff, documents, visibility boundary, and a link to the detailed prototype page.
 
@@ -83,12 +85,23 @@ The interface uses the shared `src/components/Icon.vue` outline set for navigati
 
 ## Demo personas
 
-The sign-in screen exposes three fictional accounts so a stakeholder can walk the same engagement from different perspectives:
+The sign-in screen exposes scoped fictional accounts so a stakeholder can walk the same engagement from each important perspective:
 
 | Persona | Login | Main scope |
 | --- | --- | --- |
 | Client portal | `nadia@northstar.demo` / `client123` | Submit client details, review requests, and keep all communication in the portal thread |
+| Client management approver | `management@northstar.demo` / `management123` | Accept the engagement letter and review the Draft FS package |
 | Admin portal | `maya@quadrate.demo` / `admin123` | Full workflow visibility plus the admin console and persona matrix |
+| System administrator | `samir@quadrate.demo` / `samir123` | Technical actor/session and integration diagnostics only |
+| Audit senior | `omar@quadrate.demo` / `omar123` | Planning, PBC requests, workpapers and Draft FS coordination |
+| Audit manager | `manager@quadrate.demo` / `manager123` | Plan/workpaper/review-point queue and completion recommendation |
+| Audit partner / signatory | `partner@quadrate.demo` / `partner123` | Acceptance, opinion, final discussion and guarded release |
+| Finance team | `finance@quadrate.demo` / `finance123` | Cost estimate, advance verification, invoice and commercial close |
+| Junior / preparer | `preparer@quadrate.demo` / `preparer123` | Assigned procedures, workpaper submission and time entry |
 | Accountant portal | `leila@quadrate.demo` / `accountant123` | View client details and continue PBC, accounting, and audit preparation |
+| Accounting reviewer | `reviewer@quadrate.demo` / `reviewer123` | Independent source, journal and statement-package review |
+| EQR reviewer | `eqr@quadrate.demo` / `eqr123` | Independent engagement-quality review before release |
+| Records custodian | `records@quadrate.demo` / `records123` | Checkpoint, archive and legal-hold operations |
+| Compliance reviewer | `compliance@quadrate.demo` / `compliance123` | Acceptance evidence and records-policy observations |
 
-These credentials are for the prototype only. The browser session is a local demo switch, not an authentication system.
+These credentials are for the prototype only. The browser session is a local demo switch, not an authentication system. The role workspace and document center are synthetic records backed by the same browser-local scenario; temporary credential issuance reveals a one-time demo password only in the command response and never stores it in event history.

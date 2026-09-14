@@ -4,9 +4,9 @@ import LoginPage from './pages/LoginPage.vue'
 import Icon from './components/Icon.vue'
 import AsyncPageError from './components/AsyncPageError.vue'
 import AsyncPageLoading from './components/AsyncPageLoading.vue'
-import SyntheticDemoBanner from './components/SyntheticDemoBanner.vue'
 import { clearDemoSession, loadDemoSession, saveDemoSession } from './auth'
 import { client, navItems } from './data'
+import { roleRouteSets } from './roleWorkspaces.js'
 import { setActivePersona } from './domain/scenario.js'
 
 function asyncPage(loader, label) {
@@ -30,26 +30,28 @@ function asyncPage(loader, label) {
 
 const routes = {
   dashboard: { label: 'Overview', title: 'Overview', roles: ['admin'], component: asyncPage(() => import('./pages/DashboardPage.vue'), 'Overview') },
-  clients: { label: 'Clients & acceptance', title: 'Clients & acceptance', roles: ['admin'], component: asyncPage(() => import('./pages/ClientsPage.vue'), 'Clients & acceptance') },
-  engagements: { label: 'Engagements', title: 'Engagement workspace', roles: ['admin'], component: asyncPage(() => import('./pages/EngagementsPage.vue'), 'Engagement workspace') },
-  pbc: { label: 'PBC portal', title: 'PBC portal', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/PbcPage.vue'), 'PBC portal') },
-  accounting: { label: 'Accounting & TB', title: 'Accounting & TB', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AccountingPage.vue'), 'Accounting & TB') },
-  audit: { label: 'Audit & fieldwork', title: 'Audit & fieldwork', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AuditPage.vue'), 'Audit & fieldwork') },
-  reviews: { label: 'Reviews & approvals', title: 'Reviews & approvals', roles: ['admin'], component: asyncPage(() => import('./pages/ReviewsPage.vue'), 'Reviews & approvals') },
-  release: { label: 'Release & archive', title: 'Release & archive', roles: ['admin'], component: asyncPage(() => import('./pages/ReleasePage.vue'), 'Release & archive') },
-  integration: { label: 'Integration health', title: 'Integration health', roles: ['admin'], component: asyncPage(() => import('./pages/IntegrationPage.vue'), 'Integration health') },
-  architecture: { label: 'Architecture map', title: 'Architecture map', roles: ['admin'], component: asyncPage(() => import('./pages/ArchitecturePage.vue'), 'Architecture map') },
-  blueprint: { label: 'V5 operating model', title: 'V5 operating model', roles: ['admin'], component: asyncPage(() => import('./pages/V5BlueprintPage.vue'), 'V5 operating model') },
+  clients: { label: 'Clients & acceptance', title: 'Clients & acceptance', roles: ['admin', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'compliance'], component: asyncPage(() => import('./pages/ClientsPage.vue'), 'Clients & acceptance') },
+  engagements: { label: 'Engagements', title: 'Engagement workspace', roles: ['admin', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'finance'], component: asyncPage(() => import('./pages/EngagementsPage.vue'), 'Engagement workspace') },
+  pbc: { label: 'PBC portal', title: 'PBC portal', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'audit-senior', 'audit-manager'], component: asyncPage(() => import('./pages/PbcPage.vue'), 'PBC portal') },
+  accounting: { label: 'Accounting & TB', title: 'Accounting & TB', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'client-management'], component: asyncPage(() => import('./pages/AccountingPage.vue'), 'Accounting & TB') },
+  audit: { label: 'Audit & fieldwork', title: 'Audit & fieldwork', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'audit-senior', 'audit-manager', 'partner'], component: asyncPage(() => import('./pages/AuditPage.vue'), 'Audit & fieldwork') },
+  reviews: { label: 'Reviews & approvals', title: 'Reviews & approvals', roles: ['admin', 'audit-manager', 'partner', 'accounting-reviewer', 'eqr'], component: asyncPage(() => import('./pages/ReviewsPage.vue'), 'Reviews & approvals') },
+  release: { label: 'Release & archive', title: 'Release & archive', roles: ['admin', 'partner', 'eqr', 'records', 'finance', 'compliance'], component: asyncPage(() => import('./pages/ReleasePage.vue'), 'Release & archive') },
+  integration: { label: 'Integration health', title: 'Integration health', roles: ['admin', 'system-admin', 'records'], component: asyncPage(() => import('./pages/IntegrationPage.vue'), 'Integration health') },
+  architecture: { label: 'Architecture map', title: 'Architecture map', roles: ['admin', 'audit-senior', 'audit-manager', 'partner', 'finance', 'eqr', 'records', 'system-admin', 'compliance'], component: asyncPage(() => import('./pages/ArchitecturePage.vue'), 'Architecture map') },
+  blueprint: { label: 'V5 operating model', title: 'V5 operating model', roles: ['admin', 'finance'], component: asyncPage(() => import('./pages/V5BlueprintPage.vue'), 'V5 operating model') },
   cycle: { label: 'Complete cycle', title: 'Complete synthetic cycle', roles: ['admin'], component: asyncPage(() => import('./pages/CyclePage.vue'), 'Complete synthetic cycle') },
-  pipeline: { label: 'Pipeline visualizer', title: 'Audit portal pipeline', roles: ['admin', 'accountant', 'client'], component: asyncPage(() => import('./pages/PipelinePage.vue'), 'Audit portal pipeline') },
-  'accountant-architecture': { label: 'Accountant architecture', title: 'Accountant architecture', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AccountantArchitecturePage.vue'), 'Accountant architecture') },
-  'client-architecture': { label: 'Client architecture', title: 'Client architecture', roles: ['admin', 'client'], component: asyncPage(() => import('./pages/ClientArchitecturePage.vue'), 'Client architecture') },
+  pipeline: { label: 'Pipeline visualizer', title: 'Audit portal pipeline', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'client', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'finance', 'eqr', 'records', 'system-admin', 'compliance'], component: asyncPage(() => import('./pages/PipelinePage.vue'), 'Audit portal pipeline') },
+  'accountant-architecture': { label: 'Accountant architecture', title: 'Accountant architecture', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer'], component: asyncPage(() => import('./pages/AccountantArchitecturePage.vue'), 'Accountant architecture') },
+  'client-architecture': { label: 'Client architecture', title: 'Client architecture', roles: ['admin', 'client', 'client-management'], component: asyncPage(() => import('./pages/ClientArchitecturePage.vue'), 'Client architecture') },
   readiness: { label: 'Phase 0 readiness', title: 'Phase 0 readiness', roles: ['admin'], component: asyncPage(() => import('./pages/ReadinessPage.vue'), 'Phase 0 readiness') },
-  'client-home': { label: 'Portal overview', title: 'Client portal', roles: ['admin', 'client'], component: asyncPage(() => import('./pages/ClientPortalPage.vue'), 'Client portal') },
-  'client-details': { label: 'Client details', title: 'Client details', roles: ['admin', 'client'], component: asyncPage(() => import('./pages/ClientDetailsPage.vue'), 'Client details') },
-  'client-communications': { label: 'Communications', title: 'Portal communications', roles: ['admin', 'client'], component: asyncPage(() => import('./pages/ClientCommunicationsPage.vue'), 'Portal communications') },
-  'accountant-home': { label: 'Accountant overview', title: 'Accountant portal', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AccountantHomePage.vue'), 'Accountant portal') },
-  'accountant-client': { label: 'View client details', title: 'View client details', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AccountantClientPage.vue'), 'View client details') },
+  'client-home': { label: 'Portal overview', title: 'Client portal', roles: ['admin', 'client', 'client-management'], component: asyncPage(() => import('./pages/ClientPortalPage.vue'), 'Client portal') },
+  'client-details': { label: 'Client details', title: 'Client details', roles: ['admin', 'client', 'client-management'], component: asyncPage(() => import('./pages/ClientDetailsPage.vue'), 'Client details') },
+  'client-communications': { label: 'Communications', title: 'Portal communications', roles: ['admin', 'client', 'client-management'], component: asyncPage(() => import('./pages/ClientCommunicationsPage.vue'), 'Portal communications') },
+  'accountant-home': { label: 'Accountant overview', title: 'Accountant portal', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer'], component: asyncPage(() => import('./pages/AccountantHomePage.vue'), 'Accountant portal') },
+  'accountant-client': { label: 'View client details', title: 'View client details', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer'], component: asyncPage(() => import('./pages/AccountantClientPage.vue'), 'View client details') },
+  'role-workspace': { label: 'My role workspace', title: 'Role workspace', roles: ['client', 'client-management', 'preparer', 'audit-senior', 'audit-manager', 'partner', 'finance', 'accountant', 'accounting-reviewer', 'eqr', 'records', 'system-admin', 'compliance', 'admin'], component: asyncPage(() => import('./pages/RoleWorkspacePage.vue'), 'Role workspace') },
+  artifacts: { label: 'Document center', title: 'Document center', roles: ['admin', 'client', 'client-management', 'preparer', 'audit-senior', 'audit-manager', 'partner', 'finance', 'accountant', 'accounting-reviewer', 'eqr', 'records', 'system-admin', 'compliance'], component: asyncPage(() => import('./pages/ArtifactsPage.vue'), 'Document center') },
   'admin-console': { label: 'Admin console', title: 'Admin console', roles: ['admin'], component: asyncPage(() => import('./pages/AdminConsolePage.vue'), 'Admin console') },
 }
 
@@ -67,39 +69,37 @@ const helpCloseButton = ref(null)
 const current = computed(() => routes[currentRoute.value] || routes.dashboard)
 const activeNav = computed(() => visibleNavItems.value.find((item) => item.key === currentRoute.value) || visibleNavItems.value[0] || { label: 'Sign in' })
 const isClient = computed(() => currentUser.value?.role === 'client')
-const isAccountant = computed(() => currentUser.value?.role === 'accountant')
-const workspaceName = computed(() => isClient.value ? currentUser.value.organization : currentUser.value?.role === 'accountant' ? 'Quadrate Accounting' : 'Quadrate Audit')
+const isClientManagement = computed(() => currentUser.value?.role === 'client-management')
+const isAccountant = computed(() => ['accountant', 'accounting-reviewer', 'preparer'].includes(currentUser.value?.role))
+const workspaceName = computed(() => isClient.value || isClientManagement.value ? currentUser.value.organization : currentUser.value?.role === 'accountant' || currentUser.value?.role === 'accounting-reviewer' ? 'Quadrate Accounting' : 'Quadrate Audit')
 const workspaceSubtitle = computed(() => isClient.value ? 'Client portal' : currentUser.value?.roleLabel || 'Demo workspace')
 const workspaceInitials = computed(() => currentUser.value?.initials || 'Q')
-const systemLabel = computed(() => isClient.value ? 'Client portal · shared communication record' : currentUser.value?.role === 'accountant' ? 'Accountant workspace · preparation access' : 'Admin workspace · all demo privileges')
+const systemLabel = computed(() => isClient.value ? 'Client portal · shared communication record' : isClientManagement.value ? 'Client management · approval access' : currentUser.value?.role === 'accountant' || currentUser.value?.role === 'accounting-reviewer' || currentUser.value?.role === 'preparer' ? 'Accounting workspace · scoped preparation access' : currentUser.value?.role === 'admin' ? 'Presenter admin · synthetic inspection access' : `${currentUser.value?.roleLabel || 'Staff'} · scoped role access`)
 const healthLabel = computed(() => isClient.value ? 'Synthetic portal projection' : 'Synthetic controls only')
 const healthDetail = computed(() => isClient.value ? 'Browser-local demo · SIMULATION' : 'No live integrations enabled')
 const helpCopy = computed(() => isClient.value
   ? 'Use Client details to submit facts, Requests to see what is due, Communications for every question, and Pipeline visualizer to understand the end-to-end handoff.'
-  : isAccountant.value
-    ? 'Start with View client details, then follow PBC, Accounting, and Audit. Use Pipeline visualizer to see where your package moves; acceptance, review, release, and integration controls remain with the admin role.'
-    : 'Use the full navigation to trace the animated pipeline, acceptance, evidence, accounting, audit, approvals, release, architecture, and the role-specific architecture lenses before opening Phase 0 proof.')
+  : isClientManagement.value
+    ? 'Review the exact Engagement Letter and Draft FS versions, then use the portal surface to confirm what is published. Professional opinion and release controls remain separate.'
+    : isAccountant.value
+      ? 'Start with your role workspace, then follow the scoped PBC, Accounting, and Audit pages. The package is handed to an independent reviewer; acceptance and release remain separate authorities.'
+      : currentUser.value?.role === 'admin'
+        ? 'Use the full navigation to trace the animated pipeline, acceptance, evidence, accounting, audit, approvals, release, architecture, and Phase 0 proof.'
+        : 'Start with My role workspace to see your owner queue and blockers. Each link opens the exact record surface while the authority boundary remains visible.')
 const visibleNavItems = computed(() => {
   if (!currentUser.value) return []
   if (currentUser.value.role === 'client') {
     return [
+      { key: 'role-workspace', label: 'My role workspace', icon: 'grid', section: 'Client portal' },
       { key: 'client-home', label: 'Portal overview', icon: 'grid', section: 'Client portal' },
       { key: 'client-details', label: 'Client details', icon: 'users', section: 'Client portal' },
       { key: 'client-communications', label: 'Communications', icon: 'message', section: 'Client portal', badge: '2' },
+      { key: 'artifacts', label: 'Published outputs', icon: 'file', section: 'Client portal' },
       { key: 'pipeline', label: 'Pipeline visualizer', icon: 'workflow', section: 'Client portal' },
       { key: 'client-architecture', label: 'How the platform works', icon: 'workflow', section: 'Client portal' },
     ]
   }
-  if (currentUser.value.role === 'accountant') {
-    return [
-      { key: 'accountant-home', label: 'Accountant overview', icon: 'grid', section: 'Accountant workspace' },
-      { key: 'accountant-client', label: 'View client details', icon: 'users', section: 'Accountant workspace' },
-      { key: 'pipeline', label: 'Pipeline visualizer', icon: 'workflow', section: 'Accountant workspace' },
-      { key: 'accountant-architecture', label: 'How the platform works', icon: 'workflow', section: 'Accountant workspace' },
-      ...navItems.filter((item) => ['pbc', 'accounting', 'audit'].includes(item.key)),
-    ]
-  }
-  return [
+  if (currentUser.value.role === 'admin') return [
     ...navItems,
     { key: 'client-home', label: 'Client portal preview', icon: 'grid', section: 'Portals' },
     { key: 'client-details', label: 'Client details preview', icon: 'users', section: 'Portals' },
@@ -110,6 +110,12 @@ const visibleNavItems = computed(() => {
     { key: 'accountant-architecture', label: 'Accountant architecture', icon: 'workflow', section: 'Portals' },
     { key: 'admin-console', label: 'Admin console', icon: 'shield', section: 'Administration' },
   ]
+  const keys = roleRouteSets[currentUser.value.role] || ['role-workspace', 'pipeline']
+  const icons = { 'role-workspace': 'grid', clients: 'users', engagements: 'briefcase', pbc: 'inbox', accounting: 'calculator', audit: 'clipboard', reviews: 'check-circle', release: 'lock', integration: 'pulse', architecture: 'workflow', blueprint: 'layers', cycle: 'workflow', pipeline: 'workflow', 'client-home': 'grid', 'client-details': 'users', 'client-communications': 'message', 'accountant-home': 'grid', 'accountant-client': 'users', 'client-architecture': 'workflow', 'accountant-architecture': 'workflow' }
+  return keys.map((key) => {
+    const source = navItems.find((item) => item.key === key)
+    return { key, label: key === 'role-workspace' ? 'My role workspace' : source?.label || routes[key]?.label || key, icon: source?.icon || icons[key] || 'workflow', section: key === 'role-workspace' ? 'My workspace' : source?.section || 'Workflow' }
+  })
 })
 const navGroups = computed(() => {
   const groups = []
@@ -237,7 +243,6 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncRoute))
 
     <div class="app-main">
       <header class="topbar"><div class="topbar-left"><button type="button" class="mobile-menu" aria-label="Open navigation" title="Open navigation" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = true"><Icon name="menu" :size="19" /></button><div class="breadcrumbs"><span>{{ currentUser.roleLabel }}</span><Icon name="chevron-right" :size="16" /><strong>{{ activeNav.label }}</strong></div></div><div class="topbar-actions"><form class="top-search" role="search" @submit.prevent="submitSearch"><Icon name="search" :size="17" /><input v-model="search" type="search" aria-label="Search clients, engagements and IDs" placeholder="Search anything" /></form><button type="button" class="top-icon-button" :aria-label="isClient ? 'Portal messages, 2 items' : 'Notifications, 3 items'" :title="isClient ? 'Portal messages, 2 items' : 'Notifications, 3 items'"><Icon name="bell" :size="18" /><span aria-hidden="true">{{ isClient ? '2' : '3' }}</span></button><div class="account-control"><button type="button" class="top-user top-user-button" aria-label="Open account menu" title="Open account menu" :aria-expanded="accountMenuOpen" @click="accountMenuOpen = !accountMenuOpen"><span class="avatar" :class="`avatar-${currentUser.tone}`">{{ currentUser.initials }}</span><span><strong>{{ currentUser.name }}</strong><small>{{ currentUser.roleLabel }}</small></span><Icon name="chevron-down" :size="15" /></button><div v-if="accountMenuOpen" class="account-menu" role="menu"><div class="account-menu-heading"><strong>{{ currentUser.name }}</strong><span>{{ currentUser.email }}</span></div><button type="button" role="menuitem" @click="showLogin">Switch demo account</button><button type="button" role="menuitem" @click="showLogin">Sign out</button></div></div></div></header>
-      <SyntheticDemoBanner />
       <div class="system-strip"><span><i></i> {{ systemLabel }}</span><span>{{ isClient ? currentUser.organization : `${client.name} · ${client.period}` }}</span></div>
       <div v-if="permissionNotice" class="permission-notice" role="status" aria-live="polite"><Icon name="warning" :size="17" />{{ permissionNotice }}</div>
       <main id="main-content" class="main-content" tabindex="-1"><component :is="current.component" @navigate="navigate" /></main>

@@ -5,9 +5,9 @@ import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { client, formatMoney, practiceJournals, reconciliationAreas, workflowGuides } from '../data'
-import { baselineFixture, fixtureRows, parseCsv, replacementFixture, sourceReflection, summarizeRows } from '../domain/accounting.js'
+import { baselineFixture, fixtureRows, mappingSummary, parseCsv, replacementFixture, sourceReflection, summarizeRows } from '../domain/accounting.js'
 import { subtractMoney } from '../domain/money.js'
-import { activeActor, accountingPackageFor, engagementById, replaceAccountingSource, scenario, selectedEngagement as scenarioEngagement, stageAccountingJournal, submitAccountingStatement } from '../domain/scenario.js'
+import { activeActor, accountingPackageFor, engagementById, recordDraftFsDecision, replaceAccountingSource, scenario, selectedEngagement as scenarioEngagement, stageAccountingJournal, submitAccountingStatement } from '../domain/scenario.js'
 
 const activeTab = ref('Data intake')
 const tabs = ['Data intake', 'Mappings & reconciliations', 'Financial statements']
@@ -20,6 +20,9 @@ const importFile = ref(null)
 const sourceLabel = ref('TB v03 · reflected replacement fixture')
 const sourceRows = ref([])
 const actionWorking = ref(false)
+const draftFsDecision = ref('APPROVE')
+const draftFsRationale = ref('')
+const decisionWorking = ref(false)
 const mappings = {
   '100101': 'Cash & cash equivalents',
   '110100': 'Trade receivables',
@@ -49,16 +52,30 @@ const visibleRows = computed(() => {
     code: row.accountCode,
     closing: subtractMoney(row.debit, row.credit),
     mapped: mappings[row.accountCode] || 'Unmapped',
-    status: row.accountCode === '520100' && sourceReflection(baselineRows.value, sourceRows.value) === 'REFLECTED' ? 'Adjusted' : 'Mapped',
+    status: !mappings[row.accountCode] ? 'Unmapped' : row.accountCode === '520100' && sourceReflection(baselineRows.value, sourceRows.value) === 'REFLECTED' ? 'Adjusted' : packageRecord.value?.mappings?.state === 'REVIEW_REQUIRED' ? 'Needs review' : 'Mapped',
   }))
   return showAllRows.value ? rows : rows.slice(0, 8)
 })
 const debitTotal = computed(() => summary.value.debitTotal)
 const creditTotal = computed(() => summary.value.creditTotal)
 const closingTotal = computed(() => summary.value.signedTotal)
+const revenueValue = computed(() => sourceRows.value.find((row) => row.accountCode === '400100')?.credit || '0.00')
 const bridgeState = computed(() => sourceReflection(baselineRows.value, sourceRows.value))
-const mappingCoverage = computed(() => `${Object.values(mappings).length} / ${sourceRows.value.length}`)
+const mappingSummaryValue = computed(() => mappingSummary(sourceRows.value, mappings))
+const mappedRowCount = computed(() => mappingSummaryValue.value.mapped)
+const mappingCoverage = computed(() => `${mappedRowCount.value} / ${sourceRows.value.length}`)
+const mappingPercent = computed(() => mappingSummaryValue.value.coveragePercent)
+const mappingState = computed(() => packageRecord.value?.mappings?.state === 'REVIEW_REQUIRED' || mappingSummaryValue.value.unmapped ? 'REVIEW_REQUIRED' : 'REVIEWED')
+const canManageDraft = computed(() => Boolean(activeActor()?.roles?.includes('management_approver')))
 const isBalanced = computed(() => debitTotal.value === creditTotal.value && closingTotal.value === '0.00')
+const statementComponents = computed(() => {
+  const components = packageRecord.value?.statement?.components || {}
+  const labels = { balanceSheet: 'Balance sheet', incomeStatement: 'Income statement', cashFlow: 'Cash-flow statement', comparatives: 'Comparatives', disclosures: 'Notes & disclosures' }
+  return Object.entries(labels).map(([key, label]) => ({ key, label, state: components[key] || 'NOT_PROVIDED', ready: ['DERIVED', 'PROVIDED'].includes(components[key]) }))
+})
+const statementReadyCount = computed(() => statementComponents.value.filter((item) => item.ready).length)
+const statementReadiness = computed(() => statementReadyCount.value === statementComponents.value.length ? 'READY_FOR_REVIEW' : 'INPUTS_REQUIRED')
+const statementApproval = computed(() => packageRecord.value?.statement?.managementDecision || packageRecord.value?.statement?.managementApproval || null)
 const importSummary = computed(() => ({
   debitTotal: summary.value.debitTotal,
   creditTotal: summary.value.creditTotal,
@@ -110,7 +127,7 @@ async function readImport(event) {
   if (!file) return
   try {
     const text = await file.text()
-    const result = parseCsv(text, { entityId: 'CLI-0018', period: 'FY2026', currency: 'QAR', sourceId: `TB-UPLOAD-${Date.now()}` })
+    const result = parseCsv(text, { ...sourceContext.value, sourceId: `TB-UPLOAD-${Date.now()}` })
     if (!result.ok) {
       importError.value = `${result.code}: ${result.message}`
       return
@@ -143,6 +160,17 @@ function submitStatement() {
   window.setTimeout(() => { toast.value = '' }, 4500)
 }
 
+function saveDraftFsDecision() {
+  if (decisionWorking.value || !packageRecord.value) return
+  const actor = activeActor()
+  decisionWorking.value = true
+  const result = recordDraftFsDecision({ engagementId: accountingEngagement.value?.id, actorPersonaId: actor?.personaId, expectedRevision: packageRecord.value.revision, expectedSessionEpoch: actor?.sessionEpoch, idempotencyKey: `draft-fs-decision-${accountingEngagement.value?.id}-${packageRecord.value.revision}-${draftFsDecision.value}`, decision: draftFsDecision.value, rationale: draftFsRationale.value })
+  decisionWorking.value = false
+  toast.value = result.outcome === 'COMMITTED' ? `Draft FS ${draftFsDecision.value.toLowerCase().replace('_', ' ')} recorded against ${result.data.statementId} revision ${result.data.statementRevision}.` : `${result.outcome}: ${result.code} — ${result.message}`
+  if (result.outcome === 'COMMITTED') draftFsRationale.value = ''
+  window.setTimeout(() => { toast.value = '' }, 4500)
+}
+
 function journalStatusFor(index) {
   if (index !== 1) return journalStatus.value[index]
   const journal = packageRecord.value?.journalRevisions?.find((item) => item.logicalJournalId === 'AJ-002')
@@ -169,7 +197,7 @@ function journalStatusFor(index) {
 
     <section class="data-hero panel"><div class="data-file"><span class="file-icon"><Icon name="file" :size="20" /></span><div><span class="eyebrow">Selected dataset · browser-local synthetic receipt</span><h2>{{ sourceLabel }}</h2><p>{{ accountingEngagement?.id || 'No accounting scope' }} · CSV receipt · literal Decimal parser · entity {{ sourceRows[0]?.entityId || '—' }} · period {{ sourceRows[0]?.period || '—' }} · source identity remains preserved</p></div></div><div class="data-status"><StatusPill :label="isBalanced ? 'Validated for processing' : 'Blocked — totals differ'" :tone="isBalanced ? 'good' : 'danger'" /><span>{{ sourceRows.length }} accounts · {{ sourceRows[0]?.currency || '—' }} · {{ sourceRows[0]?.period || '—' }}</span><small>Package {{ packageState }} · revision {{ packageRecord?.revision || '—' }} · source bridge: {{ bridgeState }}</small></div></section>
 
-    <section class="stats-strip compact"><div><span>Debit control total</span><strong>{{ formatMoney(debitTotal) }}</strong><small>Literal values only</small></div><div><span>Credit control total</span><strong>{{ formatMoney(creditTotal) }}</strong><small>{{ isBalanced ? 'Matches debits' : 'Must match before promotion' }}</small></div><div><span>Signed balance</span><strong>{{ formatMoney(closingTotal) }}</strong><small>{{ isBalanced ? 'Zero at approved precision' : 'Non-zero — source held' }}</small></div><div><span>Mapping coverage</span><strong>{{ mappingCoverage }}</strong><small>Canonical account codes assigned</small></div></section>
+    <section class="stats-strip compact"><div><span>Debit control total</span><strong>{{ formatMoney(debitTotal) }}</strong><small>Literal values only</small></div><div><span>Credit control total</span><strong>{{ formatMoney(creditTotal) }}</strong><small>{{ isBalanced ? 'Matches debits' : 'Must match before promotion' }}</small></div><div><span>Signed balance</span><strong>{{ formatMoney(closingTotal) }}</strong><small>{{ isBalanced ? 'Zero at approved precision' : 'Non-zero — source held' }}</small></div><div><span>Mapping coverage</span><strong>{{ mappingCoverage }}</strong><small>{{ mappingState }} · {{ mappingPercent }}% of selected rows assigned</small></div></section>
 
     <nav class="sub-tabs" aria-label="Accounting views"><button v-for="tab in tabs" :key="tab" type="button" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button></nav>
 
@@ -186,12 +214,54 @@ function journalStatusFor(index) {
     </template>
 
     <template v-else-if="activeTab === 'Mappings & reconciliations'">
-       <section class="split-grid"><article class="panel"><div class="panel-heading"><div><span class="eyebrow">Dual mapping</span><h2>Statement taxonomy coverage</h2></div><StatusPill :label="`${mappingCoverage} mapped`" tone="good" /></div><div class="mapping-summary"><div class="mapping-ring"><strong>{{ sourceRows.length ? Math.round((Object.keys(mappings).length / sourceRows.length) * 100) : 0 }}%</strong><span>mapped</span></div><div><strong>Every non-zero account has a reviewed destination.</strong><p>Presentation signs remain separate from original source signs. A mapping change creates a new schedule version and impact tasks.</p></div></div><div class="mapping-bars"><div><span>Financial statement taxonomy</span><strong>{{ mappingCoverage }}</strong><i><b :style="{ width: `${sourceRows.length ? Math.round((Object.keys(mappings).length / sourceRows.length) * 100) : 0}%` }"></b></i></div><div><span>Audit area mapping</span><strong>{{ mappingCoverage }}</strong><i><b :style="{ width: `${sourceRows.length ? Math.round((Object.keys(mappings).length / sourceRows.length) * 100) : 0}%` }"></b></i></div><div><span>Supporting schedule links</span><strong>11 / {{ sourceRows.length }}</strong><i><b :style="{ width: `${sourceRows.length ? Math.min(100, Math.round((11 / sourceRows.length) * 100)) : 0}%` }"></b></i></div></div></article><article class="panel"><div class="panel-heading"><div><span class="eyebrow">Reconciliation workspaces</span><h2>Control account status</h2></div><button type="button" class="text-button" @click="toast = 'Reconciliation workspaces remain synthetic and are linked by account area, not by a live ledger.'">Inspect workspaces <Icon name="arrow-right" :size="15" /></button></div><div class="recon-list"><div v-for="area in reconciliationAreas" :key="area.name" class="recon-row"><span class="recon-icon" :class="`tone-${area.tone}`"><Icon name="chart" :size="16" /></span><span><strong>{{ area.name }}</strong><small>{{ area.source }} · {{ area.owner }}</small></span><span class="recon-amount">{{ formatMoney(area.balance) }}</span><StatusPill :label="area.status" :tone="area.tone" /></div></div></article></section>
+       <section class="split-grid"><article class="panel"><div class="panel-heading"><div><span class="eyebrow">Dual mapping</span><h2>Statement taxonomy coverage</h2></div><StatusPill :label="`${mappingCoverage} mapped`" :tone="mappingPercent === 100 && mappingState === 'REVIEWED' ? 'good' : 'warn'" /></div><div class="mapping-summary"><div class="mapping-ring"><strong>{{ mappingPercent }}%</strong><span>mapped</span></div><div><strong>{{ mappingState === 'REVIEWED' && mappingPercent === 100 ? 'Every selected account has a reviewed destination.' : 'Mapping review is still required before downstream readiness.' }}</strong><p>Presentation signs remain separate from original source signs. A mapping change creates a new schedule version and impact tasks.</p></div></div><div class="mapping-bars"><div><span>Financial statement taxonomy</span><strong>{{ mappingCoverage }}</strong><i><b :style="{ width: `${mappingPercent}%` }"></b></i></div><div><span>Audit area mapping</span><strong>{{ mappingCoverage }}</strong><i><b :style="{ width: `${mappingPercent}%` }"></b></i></div><div><span>Supporting schedule links</span><strong>{{ Math.min(mappedRowCount, 11) }} / {{ sourceRows.length }}</strong><i><b :style="{ width: `${sourceRows.length ? Math.min(100, Math.round((Math.min(mappedRowCount, 11) / sourceRows.length) * 100)) : 0}%` }"></b></i></div></div></article><article class="panel"><div class="panel-heading"><div><span class="eyebrow">Reconciliation workspaces</span><h2>Control account status</h2></div><button type="button" class="text-button" @click="toast = 'Reconciliation workspaces remain synthetic and are linked by account area, not by a live ledger.'">Inspect workspaces <Icon name="arrow-right" :size="15" /></button></div><div class="recon-list"><div v-for="area in reconciliationAreas" :key="area.name" class="recon-row"><span class="recon-icon" :class="`tone-${area.tone}`"><Icon name="chart" :size="16" /></span><span><strong>{{ area.name }}</strong><small>{{ area.source }} · {{ area.owner }}</small></span><span class="recon-amount">{{ formatMoney(area.balance) }}</span><StatusPill :label="area.status" :tone="area.tone" /></div></div></article></section>
        <section class="panel"><div class="panel-heading"><div><span class="eyebrow">Source bridge</span><h2>What changed from TB v02 to the selected source</h2></div><StatusPill :label="bridgeState" :tone="bridgeState === 'REFLECTED' ? 'warn' : bridgeState === 'NOT_REFLECTED' ? 'good' : 'danger'" /></div><div class="bridge-flow"><div><span>TB v02</span><strong>{{ formatMoney(summarizeRows(baselineRows).debitTotal) }}</strong><small>Raw source · 14-account fixture</small></div><Icon class="bridge-arrow" name="arrow-right" :size="17" /><div class="bridge-change"><span>AJ-001</span><strong>+ {{ formatMoney(5000) }}</strong><small>{{ bridgeState.toLowerCase() }} source reflection</small></div><Icon class="bridge-arrow" name="arrow-right" :size="17" /><div><span>Selected source</span><strong>{{ formatMoney(debitTotal) }}</strong><small>{{ sourceLabel }}</small></div></div></section>
     </template>
 
     <template v-else>
-      <section class="statement-layout"><article class="panel statement-card"><div class="panel-heading"><div><span class="eyebrow">Financial Statement Package · synthetic projection</span><h2>{{ packageRecord?.statement?.id || 'FS v05' }} · {{ packageState.toLowerCase() }}</h2></div><StatusPill :label="packageState === 'APPROVED' ? 'Approved in simulation' : 'Illustrative — not issued'" :tone="packageState === 'APPROVED' ? 'good' : 'warn'" /></div><div class="statement-metrics"><div><span>Total assets</span><strong>{{ formatMoney(summary.assets) }}</strong><small>Derived from the 14-account fixture</small></div><div><span>Current profit</span><strong>{{ formatMoney(summary.profit) }}</strong><small>After source reflection</small></div><div><span>Equity</span><strong>{{ formatMoney(summary.equity) }}</strong><small>Presentation bridge only</small></div></div><div class="statement-bars"><div class="bar-item"><span>Assets</span><b :style="{ height: `${Math.max(18, Math.round(Number(summary.assets) / 6000))}px` }"></b><strong>{{ formatMoney(summary.assets) }}</strong></div><div class="bar-item"><span>Liabilities</span><b class="bar-blue" :style="{ height: `${Math.max(18, Math.round(Number(summary.liabilities) / 6000))}px` }"></b><strong>{{ formatMoney(summary.liabilities) }}</strong></div><div class="bar-item"><span>Equity</span><b class="bar-green" :style="{ height: `${Math.max(18, Math.round(Number(summary.equity) / 6000))}px` }"></b><strong>{{ formatMoney(summary.equity) }}</strong></div></div><div class="prototype-note"><Icon name="info" :size="16" /><span>This miniature TB does not include cash-flow, comparative or disclosure inputs; the statement package is intentionally incomplete.</span></div></article><aside class="panel"><div class="panel-heading"><div><span class="eyebrow">Package checks</span><h2>Before audit release</h2></div><StatusPill :label="packageState" :tone="packageState === 'APPROVED' ? 'good' : 'warn'" /></div><ul class="check-list"><li><span class="list-icon" :class="isBalanced ? 'good' : 'danger'"><Icon :name="isBalanced ? 'check' : 'warning'" :size="14" /></span><span><strong>Statement balance</strong><small>{{ isBalanced ? 'Assets = liabilities + equity' : 'Source is unbalanced; package held' }}</small></span></li><li><span class="list-icon good"><Icon name="check" :size="14" /></span><span><strong>Profit-to-equity movement</strong><small>Current-period movement reconciles</small></span></li><li><span class="list-icon warn"><Icon name="warning" :size="14" /></span><span><strong>Disclosure responses</strong><small>Cash-flow, comparatives and notes are not in this fixture</small></span></li><li><span class="list-icon warn"><Icon name="warning" :size="14" /></span><span><strong>Accounting technical review</strong><small>{{ packageRecord?.journalRevisions?.some((item) => item.state === 'STAGED' || item.state === 'PROPOSED') ? 'AJ-002 remains staged for discussion' : 'No proposed journals pending' }}</small></span></li></ul><button type="button" class="button primary full-width" :disabled="actionWorking" @click="submitStatement">{{ actionWorking ? 'Working…' : 'Submit for management approval' }}</button><p class="prototype-note"><Icon name="info" :size="16" /><span>Submission is blocked until every financial component is provided and proposed journals are separately authorized. Management approval is recorded by the client role.</span></p></aside></section>
+      <section class="split-grid">
+        <article class="panel statement-preview-card">
+          <div class="panel-heading">
+            <div><span class="eyebrow">Versioned package</span><h2>Financial statement preview</h2></div>
+            <StatusPill :label="packageState" :tone="packageState === 'APPROVED' ? 'good' : packageState === 'READY_FOR_APPROVAL' ? 'warn' : 'danger'" />
+          </div>
+          <p class="panel-copy">This preview is calculated from the selected, validated source. It is a read-only demonstration of how the accounting package is handed to management and the audit team.</p>
+          <div class="statement-kpis">
+            <div><span>Revenue</span><strong>{{ formatMoney(revenueValue) }}</strong><small>Mapped sales / income line</small></div>
+            <div><span>Net assets</span><strong>{{ formatMoney(summary.assets) }}</strong><small>Assets less accumulated depreciation</small></div>
+            <div><span>Liabilities</span><strong>{{ formatMoney(summary.liabilities) }}</strong><small>Trade payables and borrowings</small></div>
+            <div><span>Equity</span><strong>{{ formatMoney(summary.equity) }}</strong><small>Including current-period result</small></div>
+          </div>
+          <div class="table-wrap responsive-table statement-table-wrap">
+            <table>
+              <thead><tr><th>Statement line</th><th class="num">QAR</th><th>Source / treatment</th></tr></thead>
+              <tbody>
+                <tr><td>Net assets</td><td class="num strong-number">{{ formatMoney(summary.assets) }}</td><td>Mapped balance-sheet accounts</td></tr>
+                <tr><td>Profit for the period</td><td class="num strong-number">{{ formatMoney(summary.profit) }}</td><td>Revenue less mapped operating costs</td></tr>
+                <tr><td>Liabilities</td><td class="num strong-number">{{ formatMoney(summary.liabilities) }}</td><td>Mapped credit balances</td></tr>
+                <tr><td>Equity</td><td class="num strong-number">{{ formatMoney(summary.equity) }}</td><td>Share capital, retained earnings and result</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-footnote"><Icon name="lock" :size="16" /><span>Statement {{ packageRecord?.statement?.id || '—' }} · revision {{ packageRecord?.statement?.revision || '—' }} · engine {{ packageRecord?.statement?.engineVersion || '—' }} · source {{ packageRecord?.source?.sourceId || '—' }}</span></div>
+        </article>
+        <article class="panel">
+          <div class="panel-heading"><div><span class="eyebrow">Completion checklist</span><h2>{{ statementReadyCount }} / {{ statementComponents.length }} components ready</h2></div><StatusPill :label="statementReadiness" :tone="statementReadiness === 'READY_FOR_REVIEW' ? 'good' : 'warn'" /></div>
+          <ul class="check-list statement-components">
+            <li v-for="component in statementComponents" :key="component.key"><span class="list-icon" :class="component.ready ? 'good' : 'danger'"><Icon :name="component.ready ? 'check' : 'warning'" :size="14" /></span><span><strong>{{ component.label }}</strong><small>{{ component.ready ? `${component.state.toLowerCase()} from controlled source` : `${component.state.toLowerCase()} — complete before submission` }}</small></span><StatusPill :label="component.state" :tone="component.ready ? 'good' : 'danger'" /></li>
+          </ul>
+          <button type="button" class="button secondary full-width" :disabled="!packageRecord || !isBalanced || statementReadiness !== 'READY_FOR_REVIEW'" @click="submitStatement">Submit exact package for management review <Icon name="arrow-right" :size="16" /></button>
+        </article>
+      </section>
+
+      <section v-if="canManageDraft" class="panel draft-fs-panel">
+        <div class="panel-heading"><div><span class="eyebrow">Client management decision</span><h2>Review Draft FS v{{ packageRecord?.statement?.revision || '—' }}</h2></div><StatusPill v-if="statementApproval" :label="statementApproval.decision" :tone="statementApproval.decision === 'APPROVE' ? 'good' : 'warn'" /></div>
+        <p class="panel-copy">Management can approve the exact version, reject it, or request changes. Rejection and requested changes create a durable revision task for the preparer.</p>
+        <div class="draft-fs-form"><label><span>Decision</span><select v-model="draftFsDecision"><option value="APPROVE">Approve</option><option value="REQUEST_CHANGES">Request changes</option><option value="REJECT">Reject</option></select></label><label class="wide"><span>Rationale (required for changes or rejection)</span><textarea v-model="draftFsRationale" rows="3" placeholder="Explain the decision for the review record"></textarea></label><button type="button" class="button primary" :disabled="decisionWorking || !packageRecord" @click="saveDraftFsDecision">{{ decisionWorking ? 'Saving…' : 'Record decision' }}</button></div>
+        <div v-if="packageRecord?.statement?.revisionTasks?.length" class="revision-task"><Icon name="arrow-right" :size="16" /><span><strong>Open revision task</strong><small>{{ packageRecord.statement.revisionTasks.at(-1).id }} · owner {{ packageRecord.statement.revisionTasks.at(-1).ownerActorId }} · {{ packageRecord.statement.revisionTasks.at(-1).state }}</small></span></div>
+      </section>
+
+      <section v-else class="panel insight-card"><span class="eyebrow">Management handoff</span><h2>Awaiting scoped client decision</h2><p>Sign in as the Northstar management demo persona to approve or request changes on this exact statement revision. The audit team cannot substitute for the client’s management representation.</p><div class="equation"><span>{{ packageRecord?.statement?.id || 'FS package' }}</span><b>→</b><strong>{{ packageRecord?.statement?.managementDecision?.decision || 'PENDING MANAGEMENT' }}</strong></div></section>
     </template>
   </div>
 </template>

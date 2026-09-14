@@ -29,7 +29,11 @@ export const gateDefinitions = [
 const roleDefinitions = [
   { id: 'system_admin', label: 'System administrator', professional: false },
   { id: 'compliance_reviewer', label: 'Compliance / onboarding reviewer', professional: true },
+  { id: 'client_contributor', label: 'Client contributor', professional: false },
   { id: 'preparer', label: 'Preparer', professional: true },
+  { id: 'audit_senior', label: 'Audit senior', professional: true },
+  { id: 'audit_manager', label: 'Audit manager', professional: true },
+  { id: 'finance_team', label: 'Finance team', professional: false },
   { id: 'accounting_reviewer', label: 'Accounting technical reviewer', professional: true },
   { id: 'client_finance', label: 'Client finance user', professional: false },
   { id: 'management_approver', label: 'Management approver', professional: false },
@@ -42,7 +46,7 @@ const roleDefinitions = [
 
 export const scenarioRoles = roleDefinitions
 
-function accountingPackageFixture({ id, engagementId, entityId = 'CLI-0018', period = 'FY2026', currency = 'QAR', sourceId, sourceLabel, rows, baselineSourceId = 'TB-BASELINE-001', statementId = `FS-${id.replace(/^PKG-/, '')}-V05` }) {
+function accountingPackageFixture({ id, engagementId, entityId = 'CLI-0018', period = 'FY2026', currency = 'QAR', sourceId, sourceLabel, rows, baselineSourceId = 'TB-BASELINE-001', statementId = `FS-${id.replace(/^PKG-/, '')}-V05`, statementComponents = { balanceSheet: 'DERIVED', incomeStatement: 'DERIVED', cashFlow: 'NOT_PROVIDED', comparatives: 'NOT_PROVIDED', disclosures: 'NOT_PROVIDED' }, statementState = 'INCOMPLETE', managementApproval = null }) {
   const scopedRows = fixtureRows(rows, { entityId, period, currency, sourceId })
   const baselineRows = fixtureRows(baselineFixture, { entityId, period, currency, sourceId: baselineSourceId })
   const summary = summarizeRows(scopedRows)
@@ -74,13 +78,15 @@ function accountingPackageFixture({ id, engagementId, entityId = 'CLI-0018', per
     statement: {
       id: statementId,
       revision: 5,
-      state: 'INCOMPLETE',
+      state: statementState,
       engineVersion: 'synthetic-decimal-1',
       methodologyVersion: 'FS-METHOD-2026-01',
       taxonomyVersion: 'QAR-COA-2026-01',
       summary,
-      components: { balanceSheet: 'DERIVED', incomeStatement: 'DERIVED', cashFlow: 'NOT_PROVIDED', comparatives: 'NOT_PROVIDED', disclosures: 'NOT_PROVIDED' },
-      managementApproval: null,
+      components: statementComponents,
+      managementApproval,
+      managementDecision: null,
+      revisionTasks: [],
       submittedSnapshotId: null,
     },
     history: [],
@@ -111,13 +117,13 @@ function initialScenario() {
   const cedarAssessment = createAssessment({ id: 'ASMT-0009-ACCEPT-2026', engagementId: 'ENG-0009-ACC-2026', type: 'acceptance', revision: 2, seed: acceptanceSeed })
   cedarAssessment.decision = { decision: 'ACCEPT', rationale: 'Synthetic accounting-only relationship accepted for the fixture cycle.', actorId: 'ACT-MAYA', recordedAt: '2026-09-01T09:00:00.000Z', revision: cedarAssessment.revision }
   const initialTerms = [
-    { id: 'TERMS-0018-AUD-2026', engagementId: 'ENG-0018-AUD-2026', version: 'EL-2026-01', state: 'SIGNED', signedBy: 'ACT-NADIA', signedAt: '2026-09-04T09:00:00.000Z', responsibilitiesVersion: 'RESP-2026-01', scopeVersion: 'SCOPE-AUD-2026' },
-    { id: 'TERMS-0018-ACC-2026', engagementId: 'ENG-0018-ACC-2026', version: 'EL-2026-01', state: 'SIGNED', signedBy: 'ACT-NADIA', signedAt: '2026-09-04T09:05:00.000Z', responsibilitiesVersion: 'RESP-2026-01', scopeVersion: 'SCOPE-ACC-2026' },
-    { id: 'TERMS-0009-ACC-2026', engagementId: 'ENG-0009-ACC-2026', version: 'EL-2026-01', state: 'SIGNED', signedBy: 'ACT-NADIA', signedAt: '2026-09-02T09:00:00.000Z', responsibilitiesVersion: 'RESP-2026-01', scopeVersion: 'SCOPE-ACC-2026' },
+    { id: 'TERMS-0018-AUD-2026', engagementId: 'ENG-0018-AUD-2026', version: 'EL-2026-01', state: 'SIGNED', signedBy: 'ACT-NADIA', signedAt: '2026-09-04T09:00:00.000Z', responsibilitiesVersion: 'RESP-2026-01', scopeVersion: 'SCOPE-AUD-2026', clientDecision: { decision: 'ACCEPT', version: 'EL-2026-01', actorId: 'ACT-NADIA', recordedAt: '2026-09-04T09:05:00.000Z', rationale: 'Synthetic client management acceptance of the exact engagement letter.' } },
+    { id: 'TERMS-0018-ACC-2026', engagementId: 'ENG-0018-ACC-2026', version: 'EL-2026-01', state: 'SIGNED', signedBy: 'ACT-NADIA', signedAt: '2026-09-04T09:05:00.000Z', responsibilitiesVersion: 'RESP-2026-01', scopeVersion: 'SCOPE-ACC-2026', clientDecision: { decision: 'ACCEPT', version: 'EL-2026-01', actorId: 'ACT-NADIA', recordedAt: '2026-09-04T09:10:00.000Z', rationale: 'Synthetic client management acceptance of the exact engagement letter.' } },
+    { id: 'TERMS-0009-ACC-2026', engagementId: 'ENG-0009-ACC-2026', version: 'EL-2026-01', state: 'SIGNED', signedBy: 'ACT-NADIA', signedAt: '2026-09-02T09:00:00.000Z', responsibilitiesVersion: 'RESP-2026-01', scopeVersion: 'SCOPE-ACC-2026', clientDecision: { decision: 'ACCEPT', version: 'EL-2026-01', actorId: 'ACT-NADIA', recordedAt: '2026-09-02T09:05:00.000Z', rationale: 'Synthetic client management acceptance of the exact engagement letter.' } },
   ]
   const initialAccountingPackages = [
     accountingPackageFixture({ id: 'PKG-0018-ACC-2026', engagementId: 'ENG-0018-ACC-2026', sourceId: 'TB-REPLACEMENT-001', sourceLabel: 'TB v03 · reflected replacement fixture', rows: replacementFixture }),
-    accountingPackageFixture({ id: 'PKG-0009-ACC-2026', engagementId: 'ENG-0009-ACC-2026', entityId: 'CLI-0009', sourceId: 'TB-BASELINE-0009', sourceLabel: 'TB v02 · accounting-only baseline fixture', rows: baselineFixture, baselineSourceId: 'TB-BASELINE-0009' }),
+    accountingPackageFixture({ id: 'PKG-0009-ACC-2026', engagementId: 'ENG-0009-ACC-2026', entityId: 'CLI-0009', sourceId: 'TB-BASELINE-0009', sourceLabel: 'TB v02 · accounting-only baseline fixture', rows: baselineFixture, baselineSourceId: 'TB-BASELINE-0009', statementComponents: { balanceSheet: 'DERIVED', incomeStatement: 'DERIVED', cashFlow: 'PROVIDED', comparatives: 'PROVIDED', disclosures: 'PROVIDED' }, statementState: 'APPROVED', managementApproval: { decision: 'APPROVE', rationale: 'Synthetic complete positive FS fixture.', actorId: 'ACT-NADIA', recordedAt: '2026-09-02T09:10:00.000Z', snapshotId: 'SNAP-FS-0009-01', snapshotHash: 'sha256:synthetic-fs-0009' } }),
   ]
   return {
     version: SCENARIO_VERSION,
@@ -158,7 +164,8 @@ function initialScenario() {
           accepted: true,
           commercialReady: true,
           termsSigned: true,
-          portalEligible: true,
+          advanceVerified: false,
+          portalEligible: false,
           assignmentsEligible: true,
           workspaceVerified: true,
           sourceValidated: true,
@@ -175,7 +182,7 @@ function initialScenario() {
           commercialClosed: false,
         },
         holds: [
-          { id: 'HOLD-AR-019', code: 'EVIDENCE_CONFLICT', message: 'AR-019 has contradictory ageing and subsequent-receipt evidence.', action: 'Independent reviewer disposition required.' },
+      { id: 'HOLD-AR-019', code: 'EVIDENCE_CONFLICT', message: 'AR-019 has contradictory ageing and subsequent-receipt evidence.', action: 'Independent reviewer disposition required.' },
         ],
       },
       {
@@ -195,6 +202,7 @@ function initialScenario() {
           accepted: true,
           commercialReady: true,
           termsSigned: true,
+          advanceVerified: false,
           portalEligible: true,
           assignmentsEligible: true,
           workspaceVerified: true,
@@ -230,6 +238,7 @@ function initialScenario() {
           accepted: true,
           commercialReady: true,
           termsSigned: true,
+          advanceVerified: true,
           portalEligible: true,
           assignmentsEligible: true,
           workspaceVerified: true,
@@ -251,13 +260,20 @@ function initialScenario() {
     ],
     actors: [
       { id: 'ACT-MAYA', personaId: 'admin-demo', name: 'Maya Rahman', roles: ['system_admin', 'engagement_partner', 'signatory'], assignments: ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026', 'ENG-0009-ACC-2026'], sessionEpoch: 1, active: true },
+      { id: 'ACT-PARTNER', personaId: 'partner-demo', name: 'Maya Rahman', roles: ['engagement_partner', 'signatory'], assignments: ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026', 'ENG-0009-ACC-2026'], sessionEpoch: 1, active: true },
       { id: 'ACT-LEILA', personaId: 'accountant-demo', name: 'Leila Noor', roles: ['preparer', 'accounting_reviewer'], assignments: ['ENG-0018-ACC-2026', 'ENG-0009-ACC-2026'], sessionEpoch: 1, active: true },
-      { id: 'ACT-NADIA', personaId: 'client-demo', name: 'Nadia Faris', roles: ['client_finance', 'management_approver'], assignments: ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026'], sessionEpoch: 1, active: true },
-      { id: 'ACT-OMAR', personaId: 'audit-manager-demo', name: 'Omar Aziz', roles: ['preparer', 'independent_reviewer'], assignments: ['ENG-0018-AUD-2026'], sessionEpoch: 1, active: true },
-      { id: 'ACT-YUSUF', personaId: 'eqr-demo', name: 'Yusuf Ali', roles: ['eqr_reviewer'], assignments: ['ENG-0018-AUD-2026'], sessionEpoch: 1, active: true },
+      { id: 'ACT-ACCOUNTING-REVIEWER', personaId: 'accounting-reviewer-demo', name: 'Leila Noor', roles: ['accounting_reviewer'], assignments: ['ENG-0018-ACC-2026', 'ENG-0009-ACC-2026'], sessionEpoch: 1, active: true },
+      { id: 'ACT-NADIA', personaId: 'client-demo', name: 'Nadia Faris', roles: ['client_contributor', 'client_finance', 'management_approver'], assignments: ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026'], sessionEpoch: 1, active: true },
+      { id: 'ACT-NADIA-MGMT', personaId: 'client-management-demo', name: 'Nadia Faris', roles: ['management_approver'], assignments: ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026'], sessionEpoch: 1, active: true },
+      { id: 'ACT-OMAR', personaId: 'audit-manager-demo', name: 'Omar Aziz', roles: ['audit_manager', 'preparer', 'independent_reviewer'], assignments: ['ENG-0018-AUD-2026'], sessionEpoch: 1, active: true },
+      { id: 'ACT-OMAR-SENIOR', personaId: 'audit-senior-demo', name: 'Omar Aziz', roles: ['audit_senior', 'preparer'], assignments: ['ENG-0018-AUD-2026'], sessionEpoch: 1, active: true },
+      { id: 'ACT-JUNIOR', personaId: 'preparer-demo', name: 'Fatima Saleh', roles: ['preparer'], assignments: ['ENG-0018-AUD-2026'], sessionEpoch: 1, active: true },
       { id: 'ACT-FATIMA', personaId: 'independent-reviewer-demo', name: 'Fatima Saleh', roles: ['independent_reviewer'], assignments: ['ENG-0018-AUD-2026'], sessionEpoch: 1, active: true },
+      { id: 'ACT-AISHA', personaId: 'finance-demo', name: 'Aisha Rahman', roles: ['finance_team'], assignments: ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026', 'ENG-0009-ACC-2026'], sessionEpoch: 1, active: true },
+      { id: 'ACT-YUSUF', personaId: 'eqr-demo', name: 'Yusuf Ali', roles: ['eqr_reviewer'], assignments: ['ENG-0018-AUD-2026'], sessionEpoch: 1, active: true },
       { id: 'ACT-SAMIR', personaId: 'system-admin-only-demo', name: 'Samir Khan', roles: ['system_admin'], assignments: ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026', 'ENG-0009-ACC-2026'], sessionEpoch: 1, active: true },
       { id: 'ACT-SARA', personaId: 'compliance-demo', name: 'Sara Khan', roles: ['compliance_reviewer', 'records_custodian'], assignments: ['ENG-0018-AUD-2026', 'ENG-0009-ACC-2026'], sessionEpoch: 1, active: true },
+      { id: 'ACT-RECORDS', personaId: 'records-demo', name: 'Sara Khan', roles: ['records_custodian'], assignments: ['ENG-0018-AUD-2026', 'ENG-0009-ACC-2026'], sessionEpoch: 1, active: true },
     ],
     activePersonaId: 'admin-demo',
     // A browser tab receives a session epoch when it selects a persona. A
@@ -272,6 +288,12 @@ function initialScenario() {
       { engagementId: 'ENG-0018-ACC-2026', state: 'PENDING', activatedBy: null, activatedAt: null, eventId: null },
       { engagementId: 'ENG-0009-ACC-2026', state: 'ACTIVE', activatedBy: 'ACT-MAYA', activatedAt: '2026-09-02T10:00:00.000Z', eventId: 'EV-ACT-0009' },
     ],
+    commercialRecords: [
+      { id: 'COMM-0018-2026', engagementId: 'ENG-0018-AUD-2026', estimateId: 'COST-0018-2026', estimateHours: 140, estimatedCost: '26000.00', feeBasis: 'FIXED_FEE', quotedFee: '36000.00', feeApprovalState: 'APPROVED', quotationId: 'QTN-0018-2026', engagementLetterId: 'EL-2026-01', advanceRequired: '9000.00', advanceState: 'PENDING_VERIFICATION', advanceVerifiedBy: null, advanceVerifiedAt: null, invoiceId: null, invoiceState: 'NOT_READY', actualHours: '0.00', actualCost: '0.00', remainingBalance: '36000.00', commercialCloseState: 'OPEN', revision: 1 },
+      { id: 'COMM-0009-2026', engagementId: 'ENG-0009-ACC-2026', estimateId: 'COST-0009-2026', estimateHours: 80, estimatedCost: '12000.00', feeBasis: 'FIXED_FEE', quotedFee: '18000.00', feeApprovalState: 'APPROVED', quotationId: 'QTN-0009-2026', engagementLetterId: 'EL-2026-01', advanceRequired: '4500.00', advanceState: 'VERIFIED', advanceVerifiedBy: 'ACT-MAYA', advanceVerifiedAt: '2026-09-02T09:30:00.000Z', invoiceId: 'INV-0009-2026', invoiceState: 'ISSUED_SIMULATION', actualHours: '92.00', actualCost: '13200.00', remainingBalance: '13500.00', commercialCloseState: 'CLOSED_SIMULATION', revision: 3 },
+    ],
+    credentialBootstraps: [],
+    taskActions: [],
     accountingPackages: initialAccountingPackages,
     renewalCases: [],
     audit: {
@@ -285,7 +307,7 @@ function initialScenario() {
     },
     archivePackages: [],
     legalHolds: [
-      { id: 'LH-0018-AR', engagementId: 'ENG-0018-AUD-2026', type: 'LITIGATION', state: 'ACTIVE', blocksDisposal: true, reason: 'Synthetic receivables dispute preservation', createdBy: 'ACT-SARA', createdAt: '2026-09-01T08:30:00.000Z', revision: 1, releasedBy: null, releasedAt: null },
+      { id: 'LH-0018-AR', engagementId: 'ENG-0018-AUD-2026', type: 'LITIGATION', state: 'ACTIVE', blocksDisposal: true, blocksActions: ['DISPOSAL', 'ARCHIVE_CLOSE'], reason: 'Synthetic receivables dispute preservation', createdBy: 'ACT-SARA', createdAt: '2026-09-01T08:30:00.000Z', revision: 1, releasedBy: null, releasedAt: null },
     ],
     amendments: [],
     safety: {
@@ -295,8 +317,15 @@ function initialScenario() {
       impactProcessing: 'RUNNING',
     },
     pbcRequests: [
-      { id: 'PBC-019', engagementId: 'ENG-0018-AUD-2026', title: 'Receivables ageing and subsequent receipts', classification: 'AUDIT_EVIDENCE', period: 'FY2026', ownerActorId: 'ACT-NADIA', reviewerActorId: 'ACT-OMAR', due: '2026-09-11', state: 'UNDER_REVIEW', receipts: ['REC-019-01'], revision: 2 },
-      { id: 'PBC-023', engagementId: 'ENG-0018-AUD-2026', title: 'Inventory count sheets', classification: 'AUDIT_EVIDENCE', period: 'FY2026', ownerActorId: 'ACT-NADIA', reviewerActorId: 'ACT-OMAR', due: '2026-09-12', state: 'CLARIFICATION_REQUIRED', receipts: [], revision: 1 },
+      { id: 'PBC-019', engagementId: 'ENG-0018-AUD-2026', title: 'Receivables ageing and subsequent receipts', classification: 'AUDIT_EVIDENCE', period: 'FY2026', ownerActorId: 'ACT-NADIA', reviewerActorId: 'ACT-OMAR', due: '2026-09-11', state: 'UNDER_REVIEW', receipts: ['REC-019-01'], hardCopyState: 'NOT_DECLARED', hardCopyReceiptId: null, revision: 2 },
+      { id: 'PBC-023', engagementId: 'ENG-0018-AUD-2026', title: 'Inventory count sheets', classification: 'AUDIT_EVIDENCE', period: 'FY2026', ownerActorId: 'ACT-NADIA', reviewerActorId: 'ACT-OMAR', due: '2026-09-12', state: 'CLARIFICATION_REQUIRED', receipts: [], hardCopyState: 'NOT_DECLARED', hardCopyReceiptId: null, revision: 1 },
+    ],
+    informationRequests: [
+      { id: 'MIR-0018-01', engagementId: 'ENG-0018-AUD-2026', title: 'Management representation and receivables explanation', period: 'FY2026', ownerActorId: 'ACT-NADIA-MGMT', reviewerActorId: 'ACT-OMAR', state: 'OPEN', response: null, revision: 1, due: '2026-09-18' },
+    ],
+    outbox: [
+      { id: 'OUT-0018-EL', engagementId: 'ENG-0018-AUD-2026', channel: 'PORTAL', recipientPersonaId: 'client-management-demo', reference: 'EL-2026-01', state: 'QUEUED_SIMULATION', preview: 'Synthetic Engagement Letter delivery', createdAt: '2026-09-04T09:01:00.000Z', correlationId: 'sim-out-el-001' },
+      { id: 'OUT-0018-ANN', engagementId: 'ENG-0018-AUD-2026', channel: 'PORTAL', recipientPersonaId: 'client-demo', reference: 'ANN-0018-2026', state: 'QUEUED_SIMULATION', preview: 'Synthetic audit announcement delivery', createdAt: '2026-09-10T09:00:00.000Z', correlationId: 'sim-out-ann-001' },
     ],
     // CRM-inspired relationship intake records. These are synthetic leads,
     // deliberately separate from clients and engagements until a qualified
@@ -360,7 +389,7 @@ function mergeScenarioState(defaults, parsed) {
     const additions = (defaultsList || []).filter((entry) => entry?.id && !currentIds.has(entry.id)).map(clone)
     return [...currentList, ...additions]
   }
-  for (const key of ['clients', 'engagements', 'actors', 'assessments', 'terms', 'activation', 'accountingPackages', 'renewalCases', 'leads', 'documents', 'workpapers', 'reviews', 'releaseCandidates', 'snapshots', 'operations', 'checkpoints', 'events', 'commandReceipts', 'cycleRuns', 'legalHolds', 'amendments']) {
+  for (const key of ['clients', 'engagements', 'actors', 'assessments', 'terms', 'activation', 'commercialRecords', 'credentialBootstraps', 'taskActions', 'accountingPackages', 'renewalCases', 'leads', 'documents', 'workpapers', 'reviews', 'releaseCandidates', 'snapshots', 'operations', 'checkpoints', 'events', 'commandReceipts', 'cycleRuns', 'pbcRequests', 'informationRequests', 'outbox', 'legalHolds', 'amendments']) {
     merged[key] = appendMissingById(defaults[key], merged[key])
   }
   merged.audit.risks = appendMissingById(defaults.audit.risks, merged.audit.risks)
@@ -424,6 +453,16 @@ export function setActivePersona(personaId) {
   scenario.activePersonaId = personaId || null
   const actor = actorForPersona(scenario.activePersonaId)
   scenario.activeSessionEpoch = actor?.sessionEpoch || null
+  // Persona changes are also a scope transition. Keep the current period
+  // only when the newly selected actor is assigned to it; otherwise choose
+  // the actor's first assigned engagement and never expose another client's
+  // candidate, queue or document count through a stale selection.
+  if (actor?.active) {
+    const assigned = scenario.engagements.filter((engagement) => actor.assignments.includes(engagement.id))
+    if (!actor.assignments.includes(scenario.selectedEngagementId)) scenario.selectedEngagementId = assigned[0]?.id || null
+  } else {
+    scenario.selectedEngagementId = null
+  }
   persistScenario()
   return actor
 }
@@ -571,9 +610,9 @@ export function importLeadFixtures({ actorPersonaId = scenario.activePersonaId, 
   return finish(commandResult('COMMITTED', { data: { imported, skipped, importedCount: imported.length, skippedCount: skipped.length }, scope: leadScope(), revision: scenario.leads.length, operationId: `LEAD-IMPORT-${scenario.events.length}` }))
 }
 
-export function selectedEngagement() { return engagementById(scenario.selectedEngagementId) || scenario.engagements[0] }
+export function selectedEngagement() { return engagementById(scenario.selectedEngagementId) || null }
 
-export function selectedClient() { return clientById(selectedEngagement()?.clientId) || scenario.clients[0] }
+export function selectedClient() { return clientById(selectedEngagement()?.clientId) || null }
 
 export function selectedScope() {
   const engagement = selectedEngagement()
@@ -583,6 +622,11 @@ export function selectedScope() {
 
 export function termsFor(engagementId = scenario.selectedEngagementId) {
   return scenario.terms?.find((terms) => terms.engagementId === engagementId) || null
+}
+
+export function termsAcceptedFor(engagementId = scenario.selectedEngagementId) {
+  const terms = termsFor(engagementId)
+  return Boolean(terms && terms.clientDecision?.decision === 'ACCEPT' && terms.clientDecision.version === terms.version)
 }
 
 export function activationFor(engagementId = scenario.selectedEngagementId) {
@@ -834,6 +878,216 @@ export function setActorStatus({ targetActorId, actorPersonaId = scenario.active
   return finish(commandResult('COMMITTED', { data: actorSession(target.personaId), revision: target.sessionEpoch, operationId: target.id }))
 }
 
+export function commercialRecordFor(engagementId = scenario.selectedEngagementId) {
+  return (scenario.commercialRecords || []).find((record) => record.engagementId === engagementId) || null
+}
+
+/**
+ * Record the synthetic advance verification that gates portal onboarding.
+ * The result is deliberately local-only and keeps payment evidence separate
+ * from a client-facing invoice or any real payment provider.
+ */
+export function verifyAdvancePayment({ engagementId = scenario.selectedEngagementId, actorPersonaId = scenario.activePersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, reference = 'PAY-SIM-0018' } = {}) {
+  const engagement = engagementById(engagementId)
+  const record = commercialRecordFor(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'VERIFY_ADVANCE_PAYMENT', targetId: record?.id, engagementId, payload: { expectedRevision, expectedSessionEpoch, reference } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !record || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot verify an advance for this engagement.' }))
+  if (!actorHasRole(actor, 'finance_team', engagementId)) return finish(commandResult('DENIED', { code: 'FINANCE_AUTHORITY_REQUIRED', message: 'Only the assigned finance team can verify the required advance.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (expectedRevision != null && expectedRevision !== record.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected commercial revision ${expectedRevision}, current revision is ${record.revision}.`, revision: record.revision }))
+  record.advanceState = 'VERIFIED'
+  record.advanceReference = String(reference || 'PAY-SIM-0018')
+  record.advanceVerifiedBy = actor.id
+  record.advanceVerifiedAt = new Date().toISOString()
+  record.revision += 1
+  engagement.evidence.advanceVerified = true
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'ADVANCE_VERIFIED_SIMULATION', engagementId, commercialRecordId: record.id, actorId: actor.id, revision: record.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: record, revision: record.revision, operationId: record.id }))
+}
+
+/**
+ * Issue a one-time synthetic portal credential after G4 evidence is present.
+ * The password is returned only to the caller and is never persisted in the
+ * scenario, event history, or command receipt.
+ */
+export function issueSyntheticCredential({ engagementId = scenario.selectedEngagementId, actorPersonaId = scenario.activePersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey } = {}) {
+  const engagement = engagementById(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'ISSUE_SYNTHETIC_CREDENTIAL', targetId: engagementId, engagementId, payload: { expectedRevision, expectedSessionEpoch } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot issue a credential for this engagement.' }))
+  if (!actor.roles.some((role) => ['engagement_partner', 'system_admin'].includes(role))) return finish(commandResult('DENIED', { code: 'CREDENTIAL_AUTHORITY_REQUIRED', message: 'Only the scoped partner or system administrator can issue a synthetic credential.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  const blockers = activationBlockers(engagementId)
+  if (blockers.length) return finish(commandResult('BLOCKED', { code: 'G4_BLOCKED', message: 'Resolve the portal-eligibility prerequisites before issuing onboarding credentials.', blockers, revision: engagement.revision }))
+  const existing = (scenario.credentialBootstraps || []).find((item) => item.engagementId === engagementId && item.state !== 'EXPIRED' && item.state !== 'REVOKED')
+  if (existing) return finish(commandResult('COMMITTED', { data: existing, revision: engagement.revision, operationId: existing.id }))
+  const index = (scenario.credentialBootstraps || []).length + 1
+  const id = `CRED-${String(index).padStart(4, '0')}`
+  const username = `${engagement.clientId.toLowerCase()}-${String(engagement.period).toLowerCase()}@demo.auditflow`
+  const temporaryPassword = `AF-${String(2026 + index).slice(-2)}-${String(engagement.clientId).replace(/\D/g, '').padStart(4, '0')}-Demo!`
+  const credential = { id, engagementId, username, credentialState: 'ISSUED', issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), firstLoginRequired: true, firstLoginAt: null, issuedBy: actor.id, passwordDigest: `sha256:synthetic-${id.toLowerCase()}`, evidenceLevel: EVIDENCE_LEVEL }
+  if (!Array.isArray(scenario.credentialBootstraps)) scenario.credentialBootstraps = []
+  scenario.credentialBootstraps.push(credential)
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'SYNTHETIC_CREDENTIAL_ISSUED', engagementId, credentialId: id, username, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  const stored = finish(commandResult('COMMITTED', { data: credential, revision: engagement.revision, operationId: id }))
+  return { ...stored, temporaryPassword }
+}
+
+export function completeSyntheticCredentialSetup({ credentialId, actorPersonaId = scenario.activePersonaId, expectedSessionEpoch, idempotencyKey } = {}) {
+  const credential = (scenario.credentialBootstraps || []).find((item) => item.id === credentialId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'COMPLETE_SYNTHETIC_CREDENTIAL_SETUP', targetId: credentialId, engagementId: credential?.engagementId, payload: { expectedSessionEpoch } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!credential || !actor?.active || !canViewEngagement(actor.id, credential.engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot complete this credential setup.' }))
+  if (!actor.roles.some((role) => ['client_contributor', 'client_finance', 'management_approver'].includes(role))) return finish(commandResult('DENIED', { code: 'CLIENT_SETUP_AUTHORITY_REQUIRED', message: 'Only the named client contact can complete the first-login setup.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (credential.credentialState !== 'ISSUED' || !credential.firstLoginRequired) return finish(commandResult('BLOCKED', { code: 'CREDENTIAL_NOT_PENDING', message: 'This credential is not awaiting first-login setup.' }))
+  credential.firstLoginRequired = false
+  credential.firstLoginAt = new Date().toISOString()
+  credential.credentialState = 'ACTIVE'
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'SYNTHETIC_CREDENTIAL_FIRST_LOGIN', engagementId: credential.engagementId, credentialId, actorId: actor.id, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: credential, operationId: credential.id }))
+}
+
+export function recordRoleTaskAction({ taskId, action = 'ACKNOWLEDGED', actorPersonaId = scenario.activePersonaId, expectedSessionEpoch, idempotencyKey, detail = '' } = {}) {
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'ROLE_TASK_ACTION', targetId: taskId, engagementId: scenario.selectedEngagementId, payload: { expectedSessionEpoch, action, detail } })
+  if (!actor?.active) return commandResult('DENIED', { code: 'ACTOR_INACTIVE', message: 'Sign in again before acknowledging a role task.' })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  const allowed = ['TIME_ENTRY', 'ADVANCE_VERIFY', 'TASK_ACKNOWLEDGED', 'TASK_ESCALATED']
+  if (!allowed.includes(action)) return finish(commandResult('DENIED', { code: 'TASK_ACTION_INVALID', message: 'That role action is not supported by the synthetic command contract.' }))
+  if (action === 'TIME_ENTRY' && !actor.roles.some((role) => ['preparer', 'audit_senior', 'audit_manager', 'finance_team'].includes(role))) return finish(commandResult('DENIED', { code: 'TIME_ENTRY_AUTHORITY_REQUIRED', message: 'Only assigned staff or finance can record time.' }))
+  if (action === 'ADVANCE_VERIFY' && !actor.roles.includes('finance_team')) return finish(commandResult('DENIED', { code: 'FINANCE_AUTHORITY_REQUIRED', message: 'Only finance can verify an advance.' }))
+  const task = { id: `TASK-${scenario.taskActions.length + 1}`, taskId: String(taskId || 'TASK'), action, actorId: actor.id, personaId: actor.personaId, engagementId: scenario.selectedEngagementId, detail: String(detail || '').trim(), recordedAt: new Date().toISOString(), evidenceLevel: EVIDENCE_LEVEL }
+  scenario.taskActions.push(task)
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'ROLE_TASK_ACTION', taskId: task.taskId, action, actorId: actor.id, engagementId: task.engagementId, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: task, operationId: task.id }))
+}
+
+/** Create an assigned working-paper draft without claiming it is submitted. */
+export function createWorkpaperDraft({ engagementId = scenario.selectedEngagementId, actorPersonaId = scenario.activePersonaId, expectedSessionEpoch, idempotencyKey, title = '', procedureId = '', reviewerActorId = 'ACT-OMAR', detail = '' } = {}) {
+  const engagement = engagementById(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'CREATE_WORKPAPER_DRAFT', targetId: engagementId, engagementId, payload: { title, procedureId, reviewerActorId, detail, expectedSessionEpoch } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot create a workpaper in this engagement.' }))
+  if (!actor.roles.some((role) => ['preparer', 'audit_senior', 'engagement_partner'].includes(role))) return finish(commandResult('DENIED', { code: 'WORKPAPER_AUTHORITY_REQUIRED', message: 'Only an assigned preparer, audit senior, or partner can open a workpaper draft.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  const cleanTitle = String(title || '').trim()
+  if (cleanTitle.length < 4) return finish(commandResult('BLOCKED', { code: 'WORKPAPER_TITLE_REQUIRED', message: 'A workpaper title is required.' }))
+  if (!Array.isArray(scenario.workpapers)) scenario.workpapers = []
+  const id = `WP-${engagementId.replace(/^ENG-/, '').replace(/[^A-Z0-9]+/g, '-')}-${String(scenario.workpapers.length + 1).padStart(2, '0')}`
+  const draft = { id, engagementId, title: cleanTitle, procedureId: String(procedureId || '').trim() || null, detail: String(detail || '').trim(), revision: 1, state: 'DRAFT', submittedSnapshotId: null, submittedBy: null, reviewerActorId: reviewerActorId || null, reviewState: 'OPEN', createdBy: actor.id, createdAt: new Date().toISOString() }
+  scenario.workpapers.push(draft)
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'WORKPAPER_DRAFT_CREATED', engagementId, workpaperId: id, actorId: actor.id, evidenceLevel: EVIDENCE_LEVEL })
+  const persisted = persistScenario()
+  if (!persisted.ok) return finish(commandResult('UNAVAILABLE', { code: persisted.error.code, message: persisted.error.message }))
+  return finish(commandResult('COMMITTED', { data: draft, revision: draft.revision, operationId: draft.id }))
+}
+
+/**
+ * Record that a client has prepared a physical (hard-copy) item. Readiness is
+ * deliberately distinct from receipt, suitability and custody: the portal
+ * records the client's declaration, while the assigned team later records
+ * the physical handover.
+ */
+export function recordHardCopyReadiness({ requestId, actorPersonaId = scenario.activePersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, state = 'READY_FOR_COLLECTION', note = '' } = {}) {
+  const request = (scenario.pbcRequests || []).find((item) => item.id === requestId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'RECORD_HARD_COPY_READINESS', targetId: requestId, engagementId: request?.engagementId, payload: { expectedRevision, expectedSessionEpoch, state, note } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!request || !actor?.active || !canViewEngagement(actor.id, request.engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot update this request.' }))
+  if (!actor.roles.some((role) => ['client_contributor', 'client_finance', 'management_approver'].includes(role))) return finish(commandResult('DENIED', { code: 'CLIENT_READINESS_AUTHORITY_REQUIRED', message: 'Only the assigned client contact can declare hard-copy readiness.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (expectedRevision != null && expectedRevision !== request.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected request revision ${expectedRevision}, current revision is ${request.revision}.`, revision: request.revision }))
+  if (!['READY_FOR_COLLECTION', 'NOT_AVAILABLE', 'RECEIVED_PHYSICAL'].includes(state)) return finish(commandResult('DENIED', { code: 'HARD_COPY_STATE_INVALID', message: 'Choose READY_FOR_COLLECTION, NOT_AVAILABLE, or RECEIVED_PHYSICAL.' }))
+  request.hardCopyState = state
+  request.hardCopyNote = String(note || '').trim()
+  request.hardCopyDeclaredBy = actor.id
+  request.hardCopyDeclaredAt = new Date().toISOString()
+  request.hardCopyReceiptId = state === 'RECEIVED_PHYSICAL' ? `HC-${request.id}-${request.revision + 1}` : null
+  request.revision += 1
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'HARD_COPY_READINESS_RECORDED', requestId, engagementId: request.engagementId, state, actorId: actor.id, revision: request.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: request, revision: request.revision, operationId: request.id }))
+}
+
+/** Create a scoped PBC request draft for the assigned audit team. */
+export function createPbcRequest({ engagementId = scenario.selectedEngagementId, actorPersonaId = scenario.activePersonaId, expectedSessionEpoch, idempotencyKey, title = '', classification = 'AUDIT_EVIDENCE', due = '', ownerActorId = 'ACT-NADIA', acceptanceCriteria = '' } = {}) {
+  const engagement = engagementById(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'CREATE_PBC_REQUEST', targetId: engagementId, engagementId, payload: { title, classification, due, ownerActorId, acceptanceCriteria, expectedSessionEpoch } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot create a request in this engagement.' }))
+  if (!actor.roles.some((role) => ['audit_senior', 'audit_manager', 'engagement_partner'].includes(role))) return finish(commandResult('DENIED', { code: 'PBC_REQUEST_AUTHORITY_REQUIRED', message: 'Only the assigned senior, manager, or partner can create a PBC request.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  const cleanTitle = String(title || '').trim()
+  if (cleanTitle.length < 4) return finish(commandResult('BLOCKED', { code: 'PBC_TITLE_REQUIRED', message: 'A request title is required.' }))
+  if (!Array.isArray(scenario.pbcRequests)) scenario.pbcRequests = []
+  const id = `PBC-${String(scenario.pbcRequests.length + 1).padStart(3, '0')}`
+  const request = { id, engagementId, title: cleanTitle, classification: String(classification || 'AUDIT_EVIDENCE'), period: engagement.period, ownerActorId: ownerActorId || null, reviewerActorId: actor.id, due: due || null, state: 'OPEN', receipts: [], hardCopyState: 'NOT_DECLARED', hardCopyReceiptId: null, acceptanceCriteria: String(acceptanceCriteria || '').trim() || 'Entity, period, completeness, usability and expected totals', revision: 1, createdBy: actor.id, createdAt: new Date().toISOString() }
+  scenario.pbcRequests.push(request)
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'PBC_REQUEST_CREATED', engagementId, requestId: id, actorId: actor.id, evidenceLevel: EVIDENCE_LEVEL })
+  const persisted = persistScenario()
+  if (!persisted.ok) return finish(commandResult('UNAVAILABLE', { code: persisted.error.code, message: persisted.error.message }))
+  return finish(commandResult('COMMITTED', { data: request, revision: request.revision, operationId: request.id }))
+}
+
+/** Record a client response to a management-information request. */
+export function recordClientInformationResponse({ informationRequestId, actorPersonaId = scenario.activePersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, response = '', decision = 'RESPONDED' } = {}) {
+  const request = (scenario.informationRequests || []).find((item) => item.id === informationRequestId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'RECORD_CLIENT_INFORMATION_RESPONSE', targetId: informationRequestId, engagementId: request?.engagementId, payload: { expectedRevision, expectedSessionEpoch, response, decision } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!request || !actor?.active || !canViewEngagement(actor.id, request.engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot respond to this information request.' }))
+  if (!actor.roles.some((role) => ['client_contributor', 'client_finance', 'management_approver'].includes(role))) return finish(commandResult('DENIED', { code: 'CLIENT_RESPONSE_AUTHORITY_REQUIRED', message: 'Only the named client contact can respond to this information request.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (expectedRevision != null && expectedRevision !== request.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected request revision ${expectedRevision}, current revision is ${request.revision}.`, revision: request.revision }))
+  const cleanResponse = String(response || '').trim()
+  if (cleanResponse.length < 8) return finish(commandResult('BLOCKED', { code: 'CLIENT_RESPONSE_REQUIRED', message: 'Add enough context for the assigned senior to evaluate the response.' }))
+  if (!['RESPONDED', 'PARTIAL', 'NOT_AVAILABLE'].includes(decision)) return finish(commandResult('DENIED', { code: 'DECISION_INVALID', message: 'Choose RESPONDED, PARTIAL, or NOT_AVAILABLE.' }))
+  request.response = { decision, body: cleanResponse, actorId: actor.id, recordedAt: new Date().toISOString(), version: request.revision + 1 }
+  request.state = decision === 'RESPONDED' ? 'RESPONDED' : 'FOLLOW_UP_REQUIRED'
+  request.revision += 1
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'CLIENT_INFORMATION_RESPONSE_RECORDED', informationRequestId, engagementId: request.engagementId, decision, actorId: actor.id, revision: request.revision, evidenceLevel: EVIDENCE_LEVEL })
+  if (!Array.isArray(scenario.outbox)) scenario.outbox = []
+  scenario.outbox.push({ id: `OUT-${informationRequestId}-${request.revision}`, engagementId: request.engagementId, channel: 'PORTAL', recipientPersonaId: actor.personaId, reference: informationRequestId, state: 'QUEUED_SIMULATION', preview: `Client response recorded for ${request.title}`, createdAt: new Date().toISOString(), correlationId: `sim-${informationRequestId.toLowerCase()}-${request.revision}` })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: request.response, revision: request.revision, operationId: request.id }))
+}
+
 function existingReceipt(idempotencyKey, fingerprint) {
   if (!idempotencyKey) return null
   const receipt = scenario.commandReceipts.find((item) => item.idempotencyKey === idempotencyKey)
@@ -877,6 +1131,11 @@ export function recordTerms({ engagementId = scenario.selectedEngagementId, acto
   terms.state = 'SIGNED'
   terms.signedBy = actor.id
   terms.signedAt = new Date().toISOString()
+  // Re-signing the same already-accepted version preserves its exact client
+  // decision. A new version or a first signature requires a fresh decision.
+  if (!(terms.clientDecision?.decision === 'ACCEPT' && terms.clientDecision.version === terms.version)) {
+    terms.clientDecision = { decision: 'PENDING', version: terms.version, actorId: null, recordedAt: null, rationale: '' }
+  }
   if (!scenario.terms) scenario.terms = []
   if (!scenario.terms.some((item) => item.engagementId === engagementId)) scenario.terms.push(terms)
   engagement.evidence.termsSigned = true
@@ -884,6 +1143,37 @@ export function recordTerms({ engagementId = scenario.selectedEngagementId, acto
   scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'TERMS_SIGNED', engagementId, termsId: terms.id, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
   return finish(commandResult('COMMITTED', { data: terms, revision: engagement.revision }))
+}
+
+export function recordTermsDecision({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, version, decision, rationale = '' } = {}) {
+  const engagement = engagementById(engagementId)
+  const terms = termsFor(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const normalizedDecision = String(decision || '').toUpperCase()
+  const exactVersion = String(version || terms?.version || '')
+  const fingerprint = commandFingerprint({ action: 'RECORD_TERMS_DECISION', targetId: terms?.id || engagementId, engagementId, payload: { expectedRevision, expectedSessionEpoch, version: exactVersion, decision: normalizedDecision, rationale } })
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  // Check current authority before replay so an inactive or revoked actor
+  // cannot retrieve a prior success with the same idempotency key.
+  if (!actor?.active) return finish(commandResult('DENIED', { code: 'ACTOR_INACTIVE', message: 'The current actor session is inactive; sign in again before recording terms.' }))
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  if (!engagement || !terms || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot decide terms for this engagement.' }))
+  if (!actorHasRole(actor, 'management_approver', engagementId)) return finish(commandResult('DENIED', { code: 'TERMS_ACCEPTANCE_AUTHORITY_REQUIRED', message: 'Only the named client management approver can accept or reject the exact Engagement Letter.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (expectedRevision != null && expectedRevision !== engagement.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected engagement revision ${expectedRevision}, current revision is ${engagement.revision}.`, revision: engagement.revision }))
+  if (!['ACCEPT', 'REJECT', 'REQUEST_CHANGES'].includes(normalizedDecision)) return finish(commandResult('BLOCKED', { code: 'TERMS_DECISION_INVALID', message: 'Choose ACCEPT, REJECT, or REQUEST_CHANGES.' }))
+  if (exactVersion !== terms.version) return finish(commandResult('BLOCKED', { code: 'EL_VERSION_MISMATCH', message: `This decision targets ${exactVersion || 'an unknown version'}, but the current Engagement Letter is ${terms.version}.`, revision: engagement.revision }))
+  const cleanRationale = String(rationale || '').trim()
+  if (normalizedDecision !== 'ACCEPT' && cleanRationale.length < 8) return finish(commandResult('BLOCKED', { code: 'TERMS_RATIONALE_REQUIRED', message: 'A rejection or change request needs a concise explanation.' }))
+  terms.clientDecision = { decision: normalizedDecision, version: terms.version, actorId: actor.id, recordedAt: new Date().toISOString(), rationale: cleanRationale }
+  terms.state = normalizedDecision === 'ACCEPT' ? 'ACCEPTED' : normalizedDecision === 'REJECT' ? 'REJECTED' : 'REVISION_REQUIRED'
+  engagement.evidence.termsSigned = normalizedDecision === 'ACCEPT'
+  engagement.revision += 1
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'TERMS_DECISION_RECORDED', engagementId, termsId: terms.id, decision: normalizedDecision, version: terms.version, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: terms.clientDecision, revision: engagement.revision, operationId: terms.id }))
 }
 
 export function activationBlockers(engagementId = scenario.selectedEngagementId) {
@@ -894,7 +1184,10 @@ export function activationBlockers(engagementId = scenario.selectedEngagementId)
   const evaluation = evaluateAssessment(assessment)
   if (!assessment?.decision || !['ACCEPT', 'CONTINUE'].includes(assessment.decision.decision)) blockers.push({ code: 'ACCEPTANCE_DECISION_REQUIRED', message: 'A scoped partner acceptance decision is required before activation.' })
   if (evaluation.holds.length) blockers.push(...evaluation.holds.map((hold) => ({ code: hold.code, message: hold.message })))
-  if (!termsFor(engagement.id)?.state || termsFor(engagement.id).state !== 'SIGNED' || !engagement.evidence.termsSigned) blockers.push({ code: 'SIGNED_TERMS_REQUIRED', message: 'Signed terms and management responsibilities must be recorded.' })
+  if (!termsFor(engagement.id)?.state || !['SIGNED', 'ACCEPTED'].includes(termsFor(engagement.id).state) || !engagement.evidence.termsSigned) blockers.push({ code: 'SIGNED_TERMS_REQUIRED', message: 'Signed terms and management responsibilities must be recorded.' })
+  if (!termsAcceptedFor(engagement.id)) blockers.push({ code: 'CLIENT_TERMS_ACCEPTANCE_REQUIRED', message: `Client management must accept the exact ${termsFor(engagement.id)?.version || 'Engagement Letter'} version before portal activation.` })
+  const commercial = commercialRecordFor(engagement.id)
+  if (commercial?.advanceRequired && commercial.advanceState !== 'VERIFIED') blockers.push({ code: 'ADVANCE_VERIFICATION_REQUIRED', message: `The required advance of QAR ${commercial.advanceRequired} must be verified and allocated before portal activation.` })
   if (!engagement.evidence.assignmentsEligible) blockers.push({ code: 'ASSIGNMENTS_INELIGIBLE', message: 'All assigned staff must be eligible for this service and scope.' })
   if (!engagement.evidence.workspaceVerified) blockers.push({ code: 'WORKSPACE_UNVERIFIED', message: 'The scoped working workspace must be verified before work starts.' })
   if (engagement.service === 'audit' && !engagement.evidence.firmReady) blockers.push({ code: 'FIRM_NOT_READY', message: 'Firm methods and access are not ready for the audit route.' })
@@ -923,6 +1216,8 @@ export function activateEngagement({ engagementId = scenario.selectedEngagementI
   if (!scenario.activation) scenario.activation = []
   if (!scenario.activation.some((item) => item.engagementId === engagementId)) scenario.activation.push(activation)
   engagement.evidence.accepted = true
+  engagement.evidence.advanceVerified = commercialRecordFor(engagementId)?.advanceState === 'VERIFIED'
+  engagement.evidence.portalEligible = Boolean(engagement.evidence.advanceVerified && engagement.evidence.termsSigned && engagement.evidence.assignmentsEligible && engagement.evidence.workspaceVerified)
   engagement.revision += 1
   scenario.events.push({ id: activation.eventId, type: 'ENGAGEMENT_ACTIVATED', engagementId, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
@@ -1034,26 +1329,30 @@ function openReviewBlockers(engagementId) {
 
 export function deriveGates(engagementId = scenario.selectedEngagementId) {
   const engagement = engagementById(engagementId) || selectedEngagement()
+  if (!engagement) return gateDefinitions.map((definition) => ({ ...definition, applicable: false, status: 'neutral', blockers: [], nextPeriodNote: definition.id === 'G10' ? 'No assigned engagement is selected for this persona.' : '' }))
   const evidence = engagement.evidence
   const reviewBlockers = openReviewBlockers(engagement.id)
   const acceptance = assessmentFor(engagement.id, 'acceptance')
   const acceptanceEvaluation = evaluateAssessment(acceptance)
   const acceptanceReady = Boolean(acceptance?.decision && ['ACCEPT', 'CONTINUE'].includes(acceptance.decision.decision) && !acceptanceEvaluation.holds.length)
   const auditChain = engagement.service === 'audit' ? auditChainSummary(engagement.id) : { blockers: [] }
+  const commercial = commercialRecordFor(engagement.id)
+  const renewal = renewalCaseFor(engagement.id)
   const commercialReady = evidence.commercialReady ?? Boolean(evidence.termsSigned && evidence.assignmentsEligible)
-  const portalEligible = evidence.portalEligible ?? Boolean(evidence.termsSigned && evidence.assignmentsEligible && evidence.workspaceVerified)
+  const portalEligible = Boolean(evidence.portalEligible && termsAcceptedFor(engagement.id) && (!commercial?.advanceRequired || commercial.advanceState === 'VERIFIED'))
+  const commercialClosed = Boolean(evidence.commercialClosed || ['CLOSED', 'CLOSED_SIMULATION'].includes(commercial?.commercialCloseState))
   const statuses = {
     G0: evidence.firmReady ? 'good' : 'danger',
     G1: acceptanceReady || (evidence.accepted && !acceptance) ? 'good' : 'danger',
     G2: commercialReady ? 'good' : 'danger',
-    G3: evidence.termsSigned ? 'good' : 'danger',
+    G3: termsAcceptedFor(engagement.id) ? 'good' : 'danger',
     G4: portalEligible ? 'good' : 'danger',
     G5: engagement.service === 'audit' ? (evidence.auditPlanReady && !auditChain.blockers.some((item) => item.code === 'RISK_RESPONSE_MISSING' || item.code === 'MATERIALITY_SELECTION_INCOMPLETE') ? 'good' : 'warn') : 'neutral',
     G6: engagement.service === 'audit' ? (evidence.conclusionsComplete && !reviewBlockers.length && !auditChain.blockers.length ? 'good' : 'danger') : 'neutral',
     G7: evidence.managementApproved && evidence.partnerApproved && (!evidence.eqrRequired || evidence.eqrComplete) ? 'good' : 'danger',
     G8: engagement.releaseEventId ? 'good' : 'danger',
-    G9: evidence.commercialClosed || evidence.archiveVerified ? 'good' : 'danger',
-    G10: 'neutral',
+    G9: commercialClosed ? 'good' : 'danger',
+    G10: evidence.archiveVerified ? (renewal?.decision ? 'good' : 'warn') : 'danger',
   }
   return gateDefinitions.map((definition) => ({
     ...definition,
@@ -1085,8 +1384,8 @@ function releaseBlockers(engagement) {
   const clientSafety = scenario.safety.client[engagement.clientId]
   if (clientSafety && clientSafety.state !== 'CURRENT') blockers.push({ code: 'CLIENT_SAFETY_UNEVALUATED', message: `Client Safety State is ${clientSafety.state.toLowerCase()}; linked impacts must be evaluated before release.` })
   if (engagement.holds.length) blockers.push(...engagement.holds.map((hold) => ({ code: hold.code, message: hold.message })))
-  const activeLegalHolds = (scenario.legalHolds || []).filter((hold) => hold.engagementId === engagement.id && hold.state === 'ACTIVE' && hold.blocksDisposal)
-  if (activeLegalHolds.length) blockers.push(...activeLegalHolds.map((hold) => ({ code: 'LEGAL_HOLD_ACTIVE', message: `${hold.id} is active; records disposal and final archive closeout remain held.` })))
+  const activeLegalHolds = (scenario.legalHolds || []).filter((hold) => hold.engagementId === engagement.id && hold.state === 'ACTIVE' && (hold.blocksActions || (hold.blocksDisposal ? ['DISPOSAL', 'ARCHIVE_CLOSE'] : [])).some((action) => ['DELIVERY', 'ISSUANCE'].includes(action)))
+  if (activeLegalHolds.length) blockers.push(...activeLegalHolds.map((hold) => ({ code: 'LEGAL_HOLD_ACTIVE', message: `${hold.id} is active and restricts issuance or delivery for this package.` })))
   if (openReviewBlockers(engagement.id).length) blockers.push(...openReviewBlockers(engagement.id))
   if (!candidate.managementApproved) blockers.push({ code: 'MANAGEMENT_APPROVAL_REQUIRED', message: 'Management responsibility is not bound to this exact candidate.' })
   if (!candidate.partnerApproved) blockers.push({ code: 'PARTNER_APPROVAL_REQUIRED', message: 'Partner conclusion is not bound to this exact candidate.' })
@@ -1249,10 +1548,11 @@ export async function assembleArchive({ candidateId, actorPersonaId, expectedRev
   return finish(commandResult('COMMITTED', { data: archive, revision: candidate.revision, operationId: archive.id }))
 }
 
-export function recordLegalHold({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, type = 'LITIGATION', reason = 'Synthetic preservation requirement' } = {}) {
+export function recordLegalHold({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, type = 'LITIGATION', reason = 'Synthetic preservation requirement', blocksActions } = {}) {
   const engagement = engagementById(engagementId)
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'RECORD_LEGAL_HOLD', targetId: engagementId, engagementId, payload: { expectedRevision, expectedSessionEpoch, type, reason } })
+  const normalizedActions = Array.isArray(blocksActions) && blocksActions.length ? [...new Set(blocksActions.map((action) => String(action).toUpperCase()))] : ['DISPOSAL', 'ARCHIVE_CLOSE']
+  const fingerprint = commandFingerprint({ action: 'RECORD_LEGAL_HOLD', targetId: engagementId, engagementId, payload: { expectedRevision, expectedSessionEpoch, type, reason, blocksActions: normalizedActions } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
@@ -1261,7 +1561,7 @@ export function recordLegalHold({ engagementId = scenario.selectedEngagementId, 
   const stale = sessionGuard(actor, expectedSessionEpoch)
   if (stale) return finish(stale)
   if (expectedRevision != null && expectedRevision !== engagement.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected engagement revision ${expectedRevision}, current revision is ${engagement.revision}.`, revision: engagement.revision }))
-  const hold = { id: `LH-${engagement.clientId}-${scenario.legalHolds.length + 1}`, engagementId, type: String(type), state: 'ACTIVE', blocksDisposal: true, reason: String(reason).trim(), createdBy: actor.id, createdAt: new Date().toISOString(), revision: 1, releasedBy: null, releasedAt: null }
+  const hold = { id: `LH-${engagement.clientId}-${scenario.legalHolds.length + 1}`, engagementId, type: String(type), state: 'ACTIVE', blocksDisposal: normalizedActions.includes('DISPOSAL'), blocksActions: normalizedActions, reason: String(reason).trim(), createdBy: actor.id, createdAt: new Date().toISOString(), revision: 1, releasedBy: null, releasedAt: null }
   scenario.legalHolds.push(hold)
   engagement.revision += 1
   scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LEGAL_HOLD_RECORDED', engagementId, holdId: hold.id, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
@@ -1285,6 +1585,7 @@ export function releaseLegalHold({ holdId, actorPersonaId, expectedRevision, exp
   if (hold.state !== 'ACTIVE') return finish(commandResult('COMMITTED', { data: hold, revision: hold.revision, operationId: hold.id }))
   hold.state = 'RELEASED'
   hold.blocksDisposal = false
+  hold.blocksActions = []
   hold.releasedBy = actor.id
   hold.releasedAt = new Date().toISOString()
   hold.rationale = String(rationale).trim()
@@ -1369,6 +1670,7 @@ export function advanceRelease({ candidateId, actorPersonaId, expectedRevision, 
   if (candidate.stepIndex === 7 && !candidate.checkpointId) {
     return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: 'CHECKPOINT_REQUIRED', message: 'Verify the independent checkpoint before first delivery.' }))
   }
+  if (candidate.stepIndex === 7 && candidate.checkpointId && blockers.length) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: blockers[0].code, message: blockers[0].message, blockers }))
   if (candidate.stepIndex === 8 && !candidate.checkpointId) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: 'CHECKPOINT_REQUIRED', message: 'Delivery is blocked until the release checkpoint is verified.' }))
   if (candidate.stepIndex === 8 && blockers.length) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: blockers[0].code, message: blockers[0].message, blockers }))
   candidate.stepIndex = Math.min(candidate.stepIndex + 1, releaseSteps.length - 1)
@@ -1634,6 +1936,49 @@ export function submitAccountingStatement({ engagementId = scenario.selectedEnga
   return finish(commandResult('COMMITTED', { data: packageRecord.statement, revision: packageRecord.revision, operationId: packageRecord.statement.id }))
 }
 
+/**
+ * Record an exact-version management decision for the Draft FS. Rejection and
+ * requested changes are durable records that create a preparer revision task;
+ * neither outcome is reported as a silent success.
+ */
+export function recordDraftFsDecision({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, decision = 'APPROVE', rationale = '' } = {}) {
+  const engagement = engagementById(engagementId)
+  const packageRecord = accountingPackageFor(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'RECORD_DRAFT_FS_DECISION', targetId: packageRecord?.statement?.id, engagementId, payload: { expectedRevision, expectedSessionEpoch, decision, rationale } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !packageRecord || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot decide this Draft FS.' }))
+  if (!actorHasRole(actor, 'management_approver', engagementId)) return finish(commandResult('DENIED', { code: 'MANAGEMENT_AUTHORITY_REQUIRED', message: 'Only the scoped client management approver can decide the Draft FS.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (expectedRevision != null && expectedRevision !== packageRecord.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected package revision ${expectedRevision}, current revision is ${packageRecord.revision}.`, revision: packageRecord.revision }))
+  if (!['APPROVE', 'REJECT', 'REQUEST_CHANGES'].includes(decision)) return finish(commandResult('DENIED', { code: 'DECISION_INVALID', message: 'Choose APPROVE, REJECT, or REQUEST_CHANGES.' }))
+  const cleanRationale = String(rationale || '').trim()
+  if (decision !== 'APPROVE' && cleanRationale.length < 8) return finish(commandResult('BLOCKED', { code: 'RATIONALE_REQUIRED', message: 'A rejection or requested-change decision needs a concise explanation.' }))
+  const statement = packageRecord.statement
+  const version = statement.revision
+  const record = { decision, rationale: cleanRationale, actorId: actor.id, recordedAt: new Date().toISOString(), statementId: statement.id, statementRevision: version }
+  statement.managementDecision = record
+  if (decision === 'APPROVE') {
+    statement.state = 'APPROVED'
+    statement.managementApproval = { ...record, snapshotId: statement.submittedSnapshotId || `SNAP-${statement.id}-R${version}`, snapshotHash: `sha256:synthetic-${statement.id.toLowerCase()}-${version}` }
+    engagement.evidence.managementApproved = true
+  } else {
+    statement.state = 'REVISION_REQUIRED'
+    statement.revision += 1
+    statement.revisionTasks = Array.isArray(statement.revisionTasks) ? statement.revisionTasks : []
+    statement.revisionTasks.push({ id: `FS-TASK-${engagementId}-${statement.revision}`, type: 'DRAFT_FS_REVISION', state: 'OPEN', ownerActorId: 'ACT-OMAR-SENIOR', sourceDecision: record })
+    engagement.evidence.managementApproved = false
+  }
+  packageRecord.revision += 1
+  packageRecord.history.push({ type: 'DRAFT_FS_MANAGEMENT_DECISION', actorId: actor.id, decision, statementRevision: version, packageRevision: packageRecord.revision, recordedAt: record.recordedAt })
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'DRAFT_FS_DECISION_RECORDED', engagementId, statementId: statement.id, decision, actorId: actor.id, statementRevision: version, revision: packageRecord.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: record, revision: packageRecord.revision, operationId: statement.id }))
+}
+
 export async function recordAccountingManagementApproval({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, decision = 'APPROVE', rationale = '' } = {}) {
   const engagement = engagementById(engagementId)
   const packageRecord = accountingPackageFor(engagementId)
@@ -1661,7 +2006,7 @@ export async function recordAccountingManagementApproval({ engagementId = scenar
   return finish(commandResult('COMMITTED', { data: packageRecord.statement.managementApproval, revision: packageRecord.revision, operationId: snapshot.id }))
 }
 
-export async function submitWorkpaper({ workpaperId, actorPersonaId, expectedRevision, content = 'synthetic-workpaper-fixture', idempotencyKey } = {}) {
+export async function submitWorkpaper({ workpaperId, actorPersonaId, expectedRevision, expectedSessionEpoch, content = 'synthetic-workpaper-fixture', idempotencyKey } = {}) {
   const workpaper = scenario.workpapers?.find((item) => item.id === workpaperId)
   const engagement = workpaper ? engagementById(workpaper.engagementId) : null
   const actor = actorForPersona(actorPersonaId)
@@ -1672,9 +2017,14 @@ export async function submitWorkpaper({ workpaperId, actorPersonaId, expectedRev
   if (!workpaper || !engagement) return finish(commandResult('DENIED', { code: 'WORKPAPER_NOT_FOUND', message: 'That workpaper does not exist in this scope.' }))
   if (!actor?.active || !canViewEngagement(actor.id, engagement.id)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot submit this workpaper.' }))
   if (!actor.roles.includes('preparer') && !actor.roles.includes('engagement_partner')) return finish(commandResult('DENIED', { code: 'WORKPAPER_AUTHORITY_REQUIRED', message: 'Only the assigned preparer or engagement partner can submit a workpaper snapshot.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
   if (expectedRevision != null && expectedRevision !== workpaper.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected workpaper revision ${expectedRevision}, current revision is ${workpaper.revision}.`, revision: workpaper.revision }))
   try {
     const snapshot = await createSnapshot({ receiptId: `WP-${workpaper.id}-R${workpaper.revision + 1}`, engagementId: engagement.id, entityId: engagement.clientId, period: engagement.period, classification: 'AUDIT_WORKPAPER', providerVersion: `office-sim-${workpaper.id}-${workpaper.revision + 1}`, content })
+    if (expectedRevision != null && workpaper.revision !== expectedRevision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: 'The workpaper changed while its snapshot was being captured; the snapshot remains unsubmitted.', revision: workpaper.revision }))
+    const postCaptureStale = sessionGuard(actor, expectedSessionEpoch)
+    if (postCaptureStale) return finish(postCaptureStale)
     workpaper.revision += 1
     workpaper.state = 'SUBMITTED'
     workpaper.submittedSnapshotId = snapshot.id

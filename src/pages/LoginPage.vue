@@ -2,7 +2,6 @@
 import { computed, ref } from 'vue'
 import { demoUsers, findDemoUser } from '../auth'
 import Icon from '../components/Icon.vue'
-import SyntheticDemoBanner from '../components/SyntheticDemoBanner.vue'
 
 const emit = defineEmits(['login'])
 const selectedId = ref(demoUsers[0].id)
@@ -36,10 +35,9 @@ function enterDemo(user) {
 
 <template>
   <main class="login-shell">
-    <SyntheticDemoBanner />
     <section class="login-intro">
       <div class="login-brand"><span class="brand-mark"><Icon name="workflow" :size="22" /></span><span><strong>AuditFlow</strong><small>Practice platform</small></span></div>
-      <div class="login-copy"><span class="eyebrow">STE AuditFlow QTS</span><h1>Choose how you want to walk through the workflow.</h1><p>Three fictional personas make the boundaries clear: the client submits and communicates, the accountant prepares, and the admin supervises every control.</p></div>
+      <div class="login-copy"><span class="eyebrow">STE AuditFlow QTS</span><h1>Choose how you want to walk through the workflow.</h1><p>Separate fictional personas make the boundaries clear: clients submit and approve, audit and accounting teams prepare and review, finance closes the commercial record, and records/admin roles protect the control chain.</p></div>
       <div class="login-boundary"><Icon name="info" :size="18" /><span><strong>Prototype only</strong> These are dummy credentials for a safe walkthrough. No production identity or decision is created.</span></div>
     </section>
 

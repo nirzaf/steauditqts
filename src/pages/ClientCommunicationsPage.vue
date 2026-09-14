@@ -1,9 +1,10 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { client, workflowGuides } from '../data'
+import { activeActor, recordClientInformationResponse, scenario, selectedClient, selectedEngagement } from '../domain/scenario.js'
 
 const emit = defineEmits(['navigate'])
 const topics = [
@@ -11,10 +12,27 @@ const topics = [
   { label: 'Explain an exception', detail: 'Give context when a requested item is not available.', tone: 'amber' },
   { label: 'Confirm a handoff', detail: 'Agree the owner and due date for the next action.', tone: 'green' },
 ]
-const messagePolicy = computed(() => `Messages are attached to ${client.name} · ${client.period}.`)
+const scopedClient = computed(() => selectedClient() || client)
+const messagePolicy = computed(() => `Messages are attached to ${scopedClient.value.name} · ${selectedEngagement()?.periodLabel || scopedClient.value.period}.`)
+const informationRequests = computed(() => (scenario.informationRequests || []).filter((item) => item.engagementId === selectedEngagement()?.id))
+const selectedInformationRequest = computed(() => informationRequests.value[0] || null)
+const responseBody = ref('')
+const responseStatus = ref('')
+const responding = ref(false)
 
 function navigate(route) {
   emit('navigate', route)
+}
+
+function submitInformationResponse() {
+  const request = selectedInformationRequest.value
+  const actor = activeActor()
+  if (!request || responding.value) return
+  responding.value = true
+  const result = recordClientInformationResponse({ informationRequestId: request.id, actorPersonaId: actor?.personaId, expectedRevision: request.revision, expectedSessionEpoch: actor?.sessionEpoch, idempotencyKey: `mir-response-${request.id}-${request.revision}`, response: responseBody.value, decision: 'RESPONDED' })
+  responseStatus.value = result.outcome === 'COMMITTED' ? `Response ${request.id} recorded against revision ${result.revision}. The assigned senior can now evaluate it.` : `${result.outcome}: ${result.code} — ${result.message}`
+  if (result.outcome === 'COMMITTED') responseBody.value = ''
+  responding.value = false
 }
 </script>
 
@@ -23,7 +41,9 @@ function navigate(route) {
     <PageHeader eyebrow="Client portal · communication" title="Portal communications" description="Keep questions, clarifications, and delivery updates in one shared thread with the engagement team." />
     <WorkflowGuide :guide="workflowGuides['client-communications']" />
 
-    <section class="panel portal-thread-banner"><span class="thread-icon"><Icon name="message" :size="20" /></span><div><span class="eyebrow">Shared portal thread</span><h2>Northstar Trading · Engagement team</h2><p>{{ messagePolicy }} Use the comment composer above for the next message.</p></div><span class="thread-policy"><strong>Portal only</strong><small>No email side-channel in this prototype</small></span></section>
+    <section class="panel portal-thread-banner"><span class="thread-icon"><Icon name="message" :size="20" /></span><div><span class="eyebrow">Shared portal thread</span><h2>{{ scopedClient.name }} · Engagement team</h2><p>{{ messagePolicy }} Use the response composer below for the next message.</p></div><span class="thread-policy"><strong>Portal only</strong><small>No email side-channel in this prototype</small></span></section>
+
+    <section class="panel information-response-panel"><div class="panel-heading"><div><span class="eyebrow">MIR · exact response record</span><h2>{{ selectedInformationRequest?.title || 'No information request in scope' }}</h2></div><StatusPill :label="selectedInformationRequest?.state || 'NOT_AVAILABLE'" :tone="selectedInformationRequest?.state === 'RESPONDED' ? 'good' : 'warn'" /></div><p class="panel-copy">Respond to the Management Information Request separately from the Draft FS decision. The response is versioned, assigned to this engagement, and never marks the financial statements approved by itself.</p><form v-if="selectedInformationRequest" class="portal-form" @submit.prevent="submitInformationResponse"><label>Response for {{ selectedInformationRequest.id }}<textarea v-model="responseBody" rows="4" maxlength="1600" placeholder="Explain the balance, attach the evidence reference, or state why the item is unavailable." required></textarea></label><div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />Use a concise explanation and reference the exact reporting period.</span><button type="submit" class="button primary" :disabled="responding || !responseBody.trim()">{{ responding ? 'Saving…' : 'Submit information response' }}<Icon name="arrow-right" :size="17" /></button></div></form><p v-if="responseStatus" class="portal-status" role="status" aria-live="polite">{{ responseStatus }}</p><div v-if="selectedInformationRequest?.response" class="request-note"><span class="eyebrow">Latest recorded response</span><p>{{ selectedInformationRequest.response.body }} · {{ selectedInformationRequest.response.decision }}</p></div></section>
 
     <div class="portal-communication-grid">
       <section class="panel communication-topics"><div class="panel-heading"><div><span class="eyebrow">Good messages include</span><h2>Choose a clear topic</h2></div></div><div class="topic-list"><div v-for="topic in topics" :key="topic.label" class="topic-row"><span class="topic-icon" :class="`tone-${topic.tone}`"><Icon :name="topic.tone === 'amber' ? 'warning' : topic.tone === 'green' ? 'check-circle' : 'info'" :size="17" /></span><span><strong>{{ topic.label }}</strong><small>{{ topic.detail }}</small></span></div></div></section>

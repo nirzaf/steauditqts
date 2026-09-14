@@ -9,6 +9,7 @@ import {
   advanceRelease,
   activateEngagement,
   accountingPackageFor,
+  engagementById,
   assessmentSummary,
   clearReviewPoint,
   createReviewPoint,
@@ -56,11 +57,18 @@ import {
   authorizeAccountingJournal,
   submitAccountingStatement,
   submitWorkpaper,
+  commercialRecordFor,
+  verifyAdvancePayment,
+  issueSyntheticCredential,
+  completeSyntheticCredentialSetup,
+  recordRoleTaskAction,
 } from '../src/domain/scenario.js'
 import { runSyntheticCycle } from '../src/domain/cycle.js'
 import { annualContinuanceQuestions, clientEvaluationQuestions, questionById } from '../src/domain/questionBanks.js'
 import { baselineFixture, fixtureRows } from '../src/domain/accounting.js'
 import { traceabilityCounts, traceabilitySummary } from '../src/domain/traceability.js'
+import { demoUsers } from '../src/auth.js'
+import { roleWorkspaceByPersona, roleRouteSets } from '../src/roleWorkspaces.js'
 
 test.beforeEach(() => {
   resetScenario()
@@ -76,8 +84,8 @@ test('normative question banks retain every stable identity and exact wording', 
   assert.equal(questionById('RV-030').question, 'Should the relationship continue?')
 })
 
-test('traceability inventory retains all normative AT, ET, VT and Phase 0 identities', () => {
-  assert.deepEqual(traceabilityCounts, { AT: 28, ET: 44, VT: 24, P0: 12, total: 108 })
+test('traceability inventory retains normative acceptance, engineering, business, verification and Phase 0 identities', () => {
+  assert.deepEqual(traceabilityCounts, { AT: 28, ET: 44, VT: 24, BT: 64, P0: 12, acceptanceTotal: 160, total: 172 })
   const summary = traceabilitySummary(['AT-01', 'ET-20', 'VT-24', 'P0-06', 'NOT-A-REAL-ID'])
   assert.deepEqual(summary.groups.AT, { total: 28, executed: 1, remaining: 27 })
   assert.deepEqual(summary.groups.ET, { total: 44, executed: 1, remaining: 43 })
@@ -549,9 +557,59 @@ test('full synthetic cycle records positive and negative-path evidence', async (
   assert.equal(run.steps.find((step) => step.id === 'P16-STALE-BLOCK').code, 'INPUTS_NOT_EVALUATED')
   assert.equal(run.steps.find((step) => step.id === 'P20-QUARANTINE').status, 'PASS')
   assert.equal(run.steps.find((step) => step.id === 'P20-RESUME').status, 'PASS')
-  assert.equal(run.traceability.total, 108)
+  assert.equal(run.traceability.total, 172)
   assert.equal(run.traceability.executed, 22)
   assert.equal(scenario.activePersonaId, 'admin-demo')
   assert.equal(scenario.cycleRuns.at(-1).id, run.id)
   assert.equal(scenario.recovery.outwardEffectsEnabled, false)
+})
+
+test('all required role personas expose a scoped workspace and route set', () => {
+  const required = ['client-demo', 'client-management-demo', 'preparer-demo', 'audit-senior-demo', 'audit-manager-demo', 'partner-demo', 'finance-demo', 'accountant-demo', 'accounting-reviewer-demo', 'eqr-demo', 'records-demo', 'system-admin-only-demo']
+  for (const id of required) {
+    const user = demoUsers.find((item) => item.id === id)
+    assert.ok(user, `${id} is selectable from the login personas`)
+    assert.ok(['role-workspace', 'client-home', 'accountant-home', 'dashboard'].includes(user.landing), `${id} has a reachable landing page`)
+    assert.ok(roleWorkspaceByPersona[id]?.tasks?.length >= 3, `${id} has a useful task queue`)
+    assert.ok(roleRouteSets[user.role]?.includes('role-workspace'), `${id} has a role route set`)
+    assert.ok(scenario.actors.some((actor) => actor.personaId === id), `${id} has an assigned scenario actor`)
+  }
+})
+
+test('advance verification, synthetic credential setup, and role task actions are guarded', () => {
+  setActivePersona('client-demo')
+  const deniedAdvance = verifyAdvancePayment({ engagementId: 'ENG-0018-AUD-2026', actorPersonaId: 'client-demo', expectedSessionEpoch: 1, idempotencyKey: 'role-advance-denied' })
+  assert.equal(deniedAdvance.outcome, 'DENIED')
+  assert.equal(deniedAdvance.code, 'FINANCE_AUTHORITY_REQUIRED')
+
+  setActivePersona('compliance-demo')
+  const response = assessmentSummary('ENG-0018-AUD-2026', 'acceptance')
+  const saved = saveAssessmentResponse({ engagementId: 'ENG-0018-AUD-2026', type: 'acceptance', questionId: 'CE-011', actorPersonaId: 'compliance-demo', expectedRevision: response.assessment.revision, expectedSessionEpoch: 1, idempotencyKey: 'role-ce-011', answer: 'YES', applicability: 'APPLICABLE', explanation: 'Synthetic UBO evidence reviewed.' })
+  assert.equal(saved.outcome, 'COMMITTED')
+  setActivePersona('partner-demo')
+  let current = assessmentSummary('ENG-0018-AUD-2026', 'acceptance')
+  const accepted = recordAssessmentDecision({ engagementId: 'ENG-0018-AUD-2026', type: 'acceptance', actorPersonaId: 'partner-demo', expectedRevision: current.assessment.revision, expectedSessionEpoch: 1, idempotencyKey: 'role-accept', decision: 'ACCEPT', rationale: 'Synthetic role-separation acceptance.' })
+  assert.equal(accepted.outcome, 'COMMITTED')
+  setActivePersona('client-management-demo')
+  current = engagementById('ENG-0018-AUD-2026')
+  const terms = recordTerms({ engagementId: current.id, actorPersonaId: 'client-management-demo', expectedRevision: current.revision, expectedSessionEpoch: 1, idempotencyKey: 'role-terms', scopeVersion: 'SCOPE-AUD-2026' })
+  assert.equal(terms.outcome, 'COMMITTED')
+  setActivePersona('finance-demo')
+  const finance = verifyAdvancePayment({ engagementId: current.id, actorPersonaId: 'finance-demo', expectedSessionEpoch: 1, idempotencyKey: 'role-advance', reference: 'PAY-SIM-ROLE' })
+  assert.equal(finance.outcome, 'COMMITTED')
+  assert.equal(commercialRecordFor(current.id).advanceState, 'VERIFIED')
+  setActivePersona('partner-demo')
+  current = engagementById('ENG-0018-AUD-2026')
+  const activated = activateEngagement({ engagementId: current.id, actorPersonaId: 'partner-demo', expectedRevision: current.revision, idempotencyKey: 'role-activate' })
+  assert.equal(activated.outcome, 'COMMITTED')
+  const issued = issueSyntheticCredential({ engagementId: current.id, actorPersonaId: 'partner-demo', expectedSessionEpoch: 1, idempotencyKey: 'role-credential' })
+  assert.equal(issued.outcome, 'COMMITTED')
+  assert.match(issued.temporaryPassword, /^AF-/)
+  assert.equal(scenario.events.some((event) => event.type === 'SYNTHETIC_CREDENTIAL_ISSUED' && event.temporaryPassword), false)
+  setActivePersona('client-demo')
+  const setup = completeSyntheticCredentialSetup({ credentialId: issued.data.id, actorPersonaId: 'client-demo', expectedSessionEpoch: 1, idempotencyKey: 'role-credential-setup' })
+  assert.equal(setup.outcome, 'COMMITTED')
+  assert.equal(setup.data.credentialState, 'ACTIVE')
+  const task = recordRoleTaskAction({ taskId: 'client-details', actorPersonaId: 'client-demo', expectedSessionEpoch: 1, idempotencyKey: 'role-task-client', action: 'TASK_ACKNOWLEDGED', detail: 'Submitted business details.' })
+  assert.equal(task.outcome, 'COMMITTED')
 })

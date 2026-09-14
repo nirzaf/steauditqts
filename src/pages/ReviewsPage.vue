@@ -9,7 +9,8 @@ import { activeActor, actorById, clearReviewPoint as clearReviewPointCommand, cr
 
 const emit = defineEmits(['navigate'])
 
-const points = computed(() => scenario.reviews.map((point) => ({
+const selectedEngagement = computed(() => scenarioEngagement())
+const points = computed(() => scenario.reviews.filter((point) => point.engagementId === selectedEngagement.value?.id).map((point) => ({
   ...point,
   status: point.status === 'CLEARED' ? 'Cleared' : 'Open',
   severity: point.severity === 'SIGNIFICANT' ? 'Significant' : 'Routine',
@@ -20,14 +21,14 @@ const points = computed(() => scenario.reviews.map((point) => ({
 const toast = ref('')
 const activeFilter = ref('All points')
 const filters = ['All points', 'Blocking', 'My queue']
-const filteredPoints = computed(() => points.value.filter((point) => activeFilter.value === 'All points' || (activeFilter.value === 'Blocking' && point.blocks) || (activeFilter.value === 'My queue' && point.assignee === 'Omar Aziz')))
+const filteredPoints = computed(() => points.value.filter((point) => activeFilter.value === 'All points' || (activeFilter.value === 'Blocking' && point.blocks) || (activeFilter.value === 'My queue' && point.assigneeActorId === activeActor()?.id)))
 const openCount = computed(() => points.value.filter((point) => point.status !== 'Cleared').length)
 const selectedApproval = ref(null)
 const dependencyLogOpen = ref(false)
 const reviewDraftOpen = ref(false)
 const reviewDraft = ref({ title: '', detail: '', severity: 'ROUTINE', assigneeActorId: 'ACT-OMAR', due: '2026-09-20' })
 const reviewDraftWorking = ref(false)
-const scopedReviewers = computed(() => scenario.actors.filter((actor) => actor.active && actor.assignments.includes(scenarioEngagement()?.id) && actor.roles.some((role) => ['independent_reviewer', 'accounting_reviewer', 'engagement_partner'].includes(role))))
+const scopedReviewers = computed(() => scenario.actors.filter((actor) => actor.active && actor.assignments.includes(selectedEngagement.value?.id) && actor.roles.some((role) => ['independent_reviewer', 'accounting_reviewer', 'engagement_partner'].includes(role))))
 
 function clearPoint(point) {
   if (point.status === 'Cleared') return

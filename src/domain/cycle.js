@@ -34,6 +34,7 @@ import {
   setActivePersona,
   setProviderSimulation,
   saveAssessmentResponse,
+  verifyAdvancePayment,
   submitWorkpaper,
 } from './scenario.js'
 import { baselineFixture, fixtureRows, replacementFixture } from './accounting.js'
@@ -164,6 +165,16 @@ export async function runSyntheticCycle({ reset = true } = {}) {
     expectedRevision: engagement.revision,
     idempotencyKey: 'cycle-terms',
     scopeVersion: 'SCOPE-AUD-2026',
+  }))
+
+  actor('finance-demo')
+  engagement = engagementById('ENG-0018-AUD-2026')
+  addStep(steps, 'P07-ADVANCE', 'Finance verifies the required advance', verifyAdvancePayment({
+    engagementId: engagement.id,
+    actorPersonaId: 'finance-demo',
+    expectedRevision: 1,
+    idempotencyKey: 'cycle-advance-verification',
+    reference: 'PAY-SIM-0018',
   }))
 
   actor('admin-demo')
