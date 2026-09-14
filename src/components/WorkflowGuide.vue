@@ -33,6 +33,7 @@ const guideIcon = computed(() => ({
   'release-guide': 'lock',
   'integration-guide': 'pulse',
   'cycle-guide': 'workflow',
+  'pipeline-guide': 'workflow',
   'v5-blueprint-guide': 'layers',
   'client-portal-guide': 'building',
   'client-details-guide': 'user',

@@ -16,6 +16,7 @@ Vue + Vite multi-page prototype for a Frappe/Microsoft 365 accounting and audit 
 - Integration health
 - Architecture map (V5 systems of record, control planes and service routes)
 - V5 operating model (11 gates, 26 named outputs, commercial fixture, roles and notifications)
+- Audit portal pipeline visualizer (animated eight-stage client, portal, audit and finance swimlane)
 - Complete cycle walkthrough (§35.1 journey and §27–29 failure-boundary overlays)
 - Phase 0 readiness (12 synthetic proof experiments, vertical slice and feasibility decision)
 
@@ -72,7 +73,9 @@ The admin navigation includes architecture-focused prototype pages. **Architectu
 
 The **Phase 0 readiness** page also includes an explicit **Run clean synthetic rehearsal** action. It resets only the browser-local synthetic scenario (separate from every professional command), runs the small end-to-end acceptance/PBC/accounting/audit/release/recovery slice, exercises confirmed-prohibition and non-renewal branches, and retains a bounded step-by-step `SIMULATION` evidence record. Each run links its exercised steps to the source-derived 28 AT, 44 ET, 24 VT, and 12 P0 traceability identities. A passing rehearsal is not a Microsoft, Frappe/MariaDB, records-retention, provider exactly-once, or recovery-fencing proof.
 
-The **Complete cycle** page is the guided explanation layer for that rehearsal. It follows the v5 new-client route from G0 through G10 with 36 numbered actions, derived outcomes, control boundaries, destination links, and five cross-cutting failure checkpoints. It makes fee approval, EL/signature, advance-gated onboarding, paired Draft FS/information-letter response, final discussion, invoice/cost close and recovery visible; use **Phase 0 readiness** for the resulting evidence register.
+The **Pipeline visualizer** is the client-friendly high-level explanation layer. Its eight animated stages map the supplied portal flow from client details and acceptance through quote, activation, planning, PBC, Draft FS, opinion, final report, invoice, and archive. Playback is interruptible, keyboard-operable, pauses when hidden, and falls back to manual stepping for reduced-motion preferences. Each stage exposes the accountable owner, portal handoff, documents, visibility boundary, and a link to the detailed prototype page.
+
+The **Complete cycle** page is the guided explanation layer for the rehearsal. It follows the v5 new-client route from G0 through G10 with 36 numbered actions, derived outcomes, control boundaries, destination links, and five cross-cutting failure checkpoints. It makes fee approval, EL/signature, advance-gated onboarding, paired Draft FS/information-letter response, final discussion, invoice/cost close and recovery visible; use **Phase 0 readiness** for the resulting evidence register.
 
 ## Iconography and accessibility
 

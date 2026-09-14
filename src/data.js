@@ -26,6 +26,7 @@ export const navItems = [
   { key: 'architecture', label: 'Architecture map', icon: 'workflow', section: 'Operations' },
   { key: 'blueprint', label: 'V5 operating model', icon: 'layers', section: 'Operations', badge: '26' },
   { key: 'cycle', label: 'Complete cycle', icon: 'workflow', section: 'Operations' },
+  { key: 'pipeline', label: 'Pipeline visualizer', icon: 'workflow', section: 'Operations' },
   { key: 'readiness', label: 'Phase 0 readiness', icon: 'list-check', section: 'Operations', badge: '12' },
 ]
 
@@ -211,6 +212,21 @@ export const workflowGuides = {
     checks: ['The message names a request, file, or reporting period.', 'Attachments are shared through the requested evidence flow.', 'The final response and next action are visible to both sides.'],
     next: 'Portal overview',
     nextHint: 'Return to the overview to see whether a reply, upload, or detail submission is still outstanding.',
+  },
+  pipeline: {
+    id: 'pipeline-guide',
+    step: 'VISUALIZER 01',
+    phase: 'Explain',
+    title: 'Play the handoff, then open the supporting page',
+    summary: 'Use this page as the client-friendly map of the audit portal. It compresses the full workflow into eight accountable stages while keeping each document, owner, visibility boundary, and detailed workspace link explicit.',
+    steps: [
+      { title: 'Select a stage', body: 'Click a stage card or use the arrow keys to inspect the human action, portal handoff, documents, next owner, and client-visible boundary.' },
+      { title: 'Play or step', body: 'Use Play to move through the sequence at a steady teaching pace. Pause, Previous, Next, Reset, Home, and End keep the walkthrough interruptible and easy to present.' },
+      { title: 'Trace the lanes', body: 'Read down the highlighted column for the handoff, then across a role row to see who acts, what the portal stores, and what stays internal.' },
+    ],
+    checks: ['Every stage names a human owner and a destination page.', 'Client-visible documents are separated from internal review and professional decisions.', 'The animation is a synthetic explanation and never performs an external action.'],
+    next: 'Complete cycle',
+    nextHint: 'Open Complete cycle for the detailed v5 G0–G10 walkthrough, failure-boundary rehearsal, and 36-step chronology.',
   },
   blueprint: {
     id: 'v5-blueprint-guide',

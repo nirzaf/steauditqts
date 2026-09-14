@@ -41,6 +41,7 @@ const routes = {
   architecture: { label: 'Architecture map', title: 'Architecture map', roles: ['admin'], component: asyncPage(() => import('./pages/ArchitecturePage.vue'), 'Architecture map') },
   blueprint: { label: 'V5 operating model', title: 'V5 operating model', roles: ['admin'], component: asyncPage(() => import('./pages/V5BlueprintPage.vue'), 'V5 operating model') },
   cycle: { label: 'Complete cycle', title: 'Complete synthetic cycle', roles: ['admin'], component: asyncPage(() => import('./pages/CyclePage.vue'), 'Complete synthetic cycle') },
+  pipeline: { label: 'Pipeline visualizer', title: 'Audit portal pipeline', roles: ['admin', 'accountant', 'client'], component: asyncPage(() => import('./pages/PipelinePage.vue'), 'Audit portal pipeline') },
   'accountant-architecture': { label: 'Accountant architecture', title: 'Accountant architecture', roles: ['admin', 'accountant'], component: asyncPage(() => import('./pages/AccountantArchitecturePage.vue'), 'Accountant architecture') },
   'client-architecture': { label: 'Client architecture', title: 'Client architecture', roles: ['admin', 'client'], component: asyncPage(() => import('./pages/ClientArchitecturePage.vue'), 'Client architecture') },
   readiness: { label: 'Phase 0 readiness', title: 'Phase 0 readiness', roles: ['admin'], component: asyncPage(() => import('./pages/ReadinessPage.vue'), 'Phase 0 readiness') },
@@ -74,10 +75,10 @@ const systemLabel = computed(() => isClient.value ? 'Client portal · shared com
 const healthLabel = computed(() => isClient.value ? 'Synthetic portal projection' : 'Synthetic controls only')
 const healthDetail = computed(() => isClient.value ? 'Browser-local demo · SIMULATION' : 'No live integrations enabled')
 const helpCopy = computed(() => isClient.value
-  ? 'Use Client details to submit facts, Requests to see what is due, Communications for every question, and How the platform works to understand the handoff.'
+  ? 'Use Client details to submit facts, Requests to see what is due, Communications for every question, and Pipeline visualizer to understand the end-to-end handoff.'
   : isAccountant.value
-    ? 'Start with View client details, then follow PBC, Accounting, and Audit. Use How the platform works to see where your package moves; acceptance, review, release, and integration controls remain with the admin role.'
-    : 'Use the full navigation to trace acceptance, evidence, accounting, audit, approvals, release, architecture, and the role-specific architecture lenses before opening Phase 0 proof.')
+    ? 'Start with View client details, then follow PBC, Accounting, and Audit. Use Pipeline visualizer to see where your package moves; acceptance, review, release, and integration controls remain with the admin role.'
+    : 'Use the full navigation to trace the animated pipeline, acceptance, evidence, accounting, audit, approvals, release, architecture, and the role-specific architecture lenses before opening Phase 0 proof.')
 const visibleNavItems = computed(() => {
   if (!currentUser.value) return []
   if (currentUser.value.role === 'client') {
@@ -85,6 +86,7 @@ const visibleNavItems = computed(() => {
       { key: 'client-home', label: 'Portal overview', icon: 'grid', section: 'Client portal' },
       { key: 'client-details', label: 'Client details', icon: 'users', section: 'Client portal' },
       { key: 'client-communications', label: 'Communications', icon: 'message', section: 'Client portal', badge: '2' },
+      { key: 'pipeline', label: 'Pipeline visualizer', icon: 'workflow', section: 'Client portal' },
       { key: 'client-architecture', label: 'How the platform works', icon: 'workflow', section: 'Client portal' },
     ]
   }
@@ -92,6 +94,7 @@ const visibleNavItems = computed(() => {
     return [
       { key: 'accountant-home', label: 'Accountant overview', icon: 'grid', section: 'Accountant workspace' },
       { key: 'accountant-client', label: 'View client details', icon: 'users', section: 'Accountant workspace' },
+      { key: 'pipeline', label: 'Pipeline visualizer', icon: 'workflow', section: 'Accountant workspace' },
       { key: 'accountant-architecture', label: 'How the platform works', icon: 'workflow', section: 'Accountant workspace' },
       ...navItems.filter((item) => ['pbc', 'accounting', 'audit'].includes(item.key)),
     ]
