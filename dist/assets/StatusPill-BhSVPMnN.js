@@ -1,0 +1,1 @@
+import{o as a,c as r,b as s,e as l,t as n,n as o}from"./index-CkOLqnLZ.js";const p={__name:"StatusPill",props:{label:{type:String,required:!0},tone:{type:String,default:"neutral"}},setup(e){return(i,t)=>(a(),r("span",{class:o(["status-pill",`tone-${e.tone}`])},[t[0]||(t[0]=s("i",{"aria-hidden":"true"},null,-1)),l(n(e.label),1)],2))}};export{p as _};

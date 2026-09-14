@@ -1,6 +1,7 @@
 const DEFAULT_ENGAGEMENT_ID = 'ENG-2026-0018'
 const MAX_REQUEST_BYTES = 16_000
 const MAX_COMMENT_LENGTH = 1_200
+const MAX_CONTEXT_LENGTH = 1_200
 const MAX_PAGE_SIZE = 50
 const SAFE_KEY = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
 const SAFE_ENGAGEMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}$/
@@ -86,6 +87,69 @@ function serializeComment(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
+}
+
+function serializeProfile(row) {
+  return {
+    engagementId: row.engagement_id,
+    legalName: row.legal_name,
+    registration: row.registration,
+    contactName: row.contact_name,
+    contactEmail: row.contact_email,
+    phone: row.phone,
+    servicePeriod: row.service_period,
+    serviceRequested: row.service_requested,
+    context: row.context,
+    submittedBy: row.submitted_by,
+    submittedAt: row.submitted_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+const profileColumns = 'engagement_id, legal_name, registration, contact_name, contact_email, phone, service_period, service_requested, context, submitted_by, submitted_at, updated_at'
+
+async function getClientProfile(request, env, url) {
+  const engagementId = readEngagementId(url.searchParams.get('engagementId'))
+  if (!engagementId) return error(request, 'A valid engagementId is required.')
+  const profile = await env.DB.prepare(`SELECT ${profileColumns} FROM auditflow_client_profiles WHERE engagement_id = ?1`).bind(engagementId).first()
+  return json(request, { ok: true, profile: profile ? serializeProfile(profile) : null })
+}
+
+async function saveClientProfile(request, env) {
+  if (env.ALLOW_DEMO_WRITES === 'false') return error(request, 'Demo writes are currently disabled.', 403, 'WRITES_DISABLED')
+  const payload = await readJson(request)
+  if (!payload) return error(request, 'Send a JSON object in the request body.')
+  const engagementId = readEngagementId(payload.engagementId)
+  const legalName = cleanText(payload.legalName, 160)
+  const registration = cleanText(payload.registration, 80)
+  const contactName = cleanText(payload.contactName, 80)
+  const contactEmail = cleanText(payload.contactEmail, 160)
+  const phone = cleanText(payload.phone, 40)
+  const servicePeriod = cleanText(payload.servicePeriod, 120)
+  const serviceRequested = cleanText(payload.serviceRequested, 160)
+  const context = cleanText(payload.context, MAX_CONTEXT_LENGTH, '') ?? ''
+  const submittedBy = cleanText(payload.submittedBy, 80, 'Client contact')
+  if (!engagementId || !legalName || !registration || !contactName || !contactEmail || !phone || !servicePeriod || !serviceRequested || !submittedBy || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail)) {
+    return error(request, 'Complete each required client detail with a valid email address.')
+  }
+  await env.DB.prepare(
+    `INSERT INTO auditflow_client_profiles
+      (engagement_id, legal_name, registration, contact_name, contact_email, phone, service_period, service_requested, context, submitted_by)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+     ON CONFLICT (engagement_id) DO UPDATE SET
+       legal_name = excluded.legal_name,
+       registration = excluded.registration,
+       contact_name = excluded.contact_name,
+       contact_email = excluded.contact_email,
+       phone = excluded.phone,
+       service_period = excluded.service_period,
+       service_requested = excluded.service_requested,
+       context = excluded.context,
+       submitted_by = excluded.submitted_by,
+       updated_at = datetime('now')`,
+  ).bind(engagementId, legalName, registration, contactName, contactEmail, phone, servicePeriod, serviceRequested, context, submittedBy).run()
+  const saved = await env.DB.prepare(`SELECT ${profileColumns} FROM auditflow_client_profiles WHERE engagement_id = ?1`).bind(engagementId).first()
+  return json(request, { ok: true, profile: serializeProfile(saved) })
 }
 
 async function listComments(request, env, url) {
@@ -197,6 +261,8 @@ async function handle(request, env) {
   if (path === '/api/comments' && request.method === 'POST') return createComment(request, env)
   if (path === '/api/step-preferences' && request.method === 'GET') return listStepPreferences(request, env, url)
   if (path === '/api/step-preferences' && request.method === 'PUT') return saveStepPreference(request, env)
+  if (path === '/api/client-profile' && request.method === 'GET') return getClientProfile(request, env, url)
+  if (path === '/api/client-profile' && request.method === 'PUT') return saveClientProfile(request, env)
   return error(request, 'That AuditFlow API endpoint does not exist.', 404, 'NOT_FOUND')
 }
 
@@ -210,4 +276,3 @@ export default {
     }
   },
 }
-

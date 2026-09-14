@@ -94,3 +94,25 @@ export async function saveWorkflowPreference(payload) {
   }
 }
 
+export async function loadClientProfile(engagementId = DEMO_ENGAGEMENT_ID) {
+  try {
+    const result = await request(`/client-profile?engagementId=${encodeURIComponent(engagementId)}`)
+    return { source: 'd1', profile: result.profile }
+  } catch {
+    const state = readLocalState()
+    return { source: 'local', profile: state.profile?.engagementId === engagementId ? state.profile : null }
+  }
+}
+
+export async function saveClientProfile(payload) {
+  try {
+    const result = await request('/client-profile', { method: 'PUT', body: JSON.stringify(payload) })
+    return { source: 'd1', profile: result.profile }
+  } catch (error) {
+    const state = readLocalState()
+    const profile = { ...payload, updatedAt: new Date().toISOString(), submittedAt: state.profile?.submittedAt || new Date().toISOString() }
+    state.profile = profile
+    writeLocalState(state)
+    return { source: 'local', profile, error }
+  }
+}

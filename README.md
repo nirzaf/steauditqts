@@ -53,3 +53,15 @@ npx wrangler pages deploy dist --project-name ste-quadrate-lk --branch main
 ```
 
 The Worker is intentionally a demo API: inputs are length- and key-validated, writes are scoped to the selected engagement and step, and the interface keeps fictional data and professional decision boundaries visible.
+
+## Demo personas
+
+The sign-in screen exposes three fictional accounts so a stakeholder can walk the same engagement from different perspectives:
+
+| Persona | Login | Main scope |
+| --- | --- | --- |
+| Client portal | `nadia@northstar.demo` / `client123` | Submit client details, review requests, and keep all communication in the portal thread |
+| Admin portal | `maya@quadrate.demo` / `admin123` | Full workflow visibility plus the admin console and persona matrix |
+| Accountant portal | `leila@quadrate.demo` / `accountant123` | View client details and continue PBC, accounting, and audit preparation |
+
+These credentials are for the prototype only. The browser session is a local demo switch, not an authentication system.
