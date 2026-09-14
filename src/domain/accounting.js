@@ -1,6 +1,9 @@
 import { addMoney, moneyString, subtractMoney, sumMoney } from './money.js'
 
 export const ACCOUNTING_FIXTURE_VERSION = 'TB-FIXTURE-2026-01'
+export const MAX_CSV_BYTES = 2_000_000
+export const MAX_CSV_ROWS = 5_000
+export const MAX_CSV_CELL_LENGTH = 240
 export const baselineFixture = [
   ['100101', 'Bank', 'Cash', '150000.00', '0.00'],
   ['110100', 'Trade receivables', 'Receivables', '300000.00', '0.00'],
@@ -39,18 +42,25 @@ export function fixtureRows(rows = baselineFixture, { entityId = 'CLI-0018', per
 
 export function parseCsv(csv, { entityId, period, currency, sourceId = 'TB-CSV' } = {}) {
   if (typeof csv !== 'string' || !csv.trim()) return { ok: false, code: 'EMPTY_SOURCE', message: 'CSV source is empty.' }
-  if (/[=+\-@]\s*/.test(csv.split(/\r?\n/).find((line) => line && !line.startsWith('account_code')) || '')) return { ok: false, code: 'FORMULA_INPUT', message: 'Formula-like CSV input is not accepted.' }
+  if (!String(entityId || '').trim() || !String(period || '').trim() || !String(currency || '').trim()) return { ok: false, code: 'SOURCE_METADATA_REQUIRED', message: 'Entity, reporting period and ISO currency are required before intake.' }
+  if (!/^[A-Z]{3}$/.test(String(currency))) return { ok: false, code: 'CURRENCY_INVALID', message: 'Currency must be a three-letter uppercase code.' }
+  if (new TextEncoder().encode(csv).byteLength > MAX_CSV_BYTES) return { ok: false, code: 'SOURCE_TOO_LARGE', message: `CSV intake is limited to ${MAX_CSV_BYTES} bytes in this prototype.` }
   const lines = csv.trim().split(/\r?\n/)
   const header = lines.shift().split(',').map((cell) => cell.trim())
   const expected = ['account_code', 'account_name', 'area', 'debit', 'credit']
   if (header.join('|') !== expected.join('|')) return { ok: false, code: 'UNSUPPORTED_SCHEMA', message: 'CSV must use account_code, account_name, area, debit, credit columns.' }
+  const formulaLike = (cell) => /^[=+@]/.test(cell.trim()) || /^-\s*(?:=|\+|@)/.test(cell.trim())
+  if (lines.some((line) => line.split(',').some(formulaLike))) return { ok: false, code: 'FORMULA_INPUT', message: 'Formula-like CSV input is not accepted.' }
+  if (lines.length > MAX_CSV_ROWS) return { ok: false, code: 'ROW_LIMIT_EXCEEDED', message: `CSV intake is limited to ${MAX_CSV_ROWS} data rows in this prototype.` }
   const rows = []
   const keys = new Set()
   for (const [index, line] of lines.entries()) {
     const cells = line.split(',').map((cell) => cell.trim())
     if (cells.length !== expected.length) return { ok: false, code: 'ROW_SHAPE_INVALID', message: `Row ${index + 2} has an unexpected number of columns.` }
+    if (cells.some((cell) => cell.length > MAX_CSV_CELL_LENGTH)) return { ok: false, code: 'CELL_LIMIT_EXCEEDED', message: `Row ${index + 2} contains a cell longer than ${MAX_CSV_CELL_LENGTH} characters.` }
     const [accountCode, account, area, debit, credit] = cells
     if (!/^\d{1,20}$/.test(accountCode) || !account || !area) return { ok: false, code: 'ROW_INVALID', message: `Row ${index + 2} has an invalid account identity.` }
+    if (/^-/.test(debit) || /^-/.test(credit)) return { ok: false, code: 'SIGN_CONVENTION_INVALID', message: `Row ${index + 2} must use non-negative debit and credit columns.` }
     if (keys.has(accountCode)) return { ok: false, code: 'DUPLICATE_SOURCE_ROW', message: `Account ${accountCode} appears more than once.` }
     keys.add(accountCode)
     try {

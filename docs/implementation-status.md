@@ -1,7 +1,7 @@
 # AuditFlow prototype implementation status
 
 **Track:** P — architecture-faithful synthetic prototype  
-**Current milestone:** M4 — coherent walkthrough and evidence register (M0/M1 complete; M2–M4 slices implemented)  
+**Current milestone:** M4 — coherent walkthrough and evidence register (M0/M1 complete; M2–M4 slices implemented; end-to-end rehearsal runnable)
 **Environment:** Vue/Vite browser build; no live Frappe, Microsoft tenant, ledger, records policy, or production release is enabled.
 
 This is an evidence register, not a production-readiness claim. The complete `docs/v4-handoff/` source bundle is not present in this repository. The normative copies used for this pass are `C:\Users\DELL\Downloads\audit_platform_v4_final_specification_and_feasibility.md`, `C:\Users\DELL\Downloads\consolidated_accounting_audit_workflow_v2.md`, and `C:\Users\DELL\Downloads\02_USER_STORIES.md`; source-derived accounting fixtures are checked in under `fixtures/`.
@@ -29,7 +29,7 @@ This is an evidence register, not a production-readiness claim. The complete `do
 | P15 — exact workpaper submission and independent review | `src/domain/scenario.js`, `src/pages/AuditPage.vue`, `src/pages/ReviewsPage.vue` | `tests/scenario.test.js`; browser smoke | Submission freezes an exact snapshot and revision. Reviewer commands enforce assignment, supported response, expected revision and separation of duties; an author cannot self-clear. **Implemented for the synthetic slice.** |
 | P16 — synchronous generations and stale-input blocking | `src/domain/scenario.js`, `src/pages/AccountingPage.vue`, `src/pages/ReleasePage.vue` | `tests/scenario.test.js` | Linked accounting mutation increments input/safety generations and records an impact case synchronously, even with impact processing paused. A stale candidate returns `INPUTS_NOT_EVALUATED` before release. **Implemented in the browser simulation; MariaDB/CAS proof NOT_RUN.** |
 | P17 — guarded release, checkpoint-before-delivery | `src/domain/scenario.js`, `src/pages/ReleasePage.vue` | `tests/scenario.test.js`; browser smoke | Blocked RC-026 cannot advance. RC-READY-001 follows the ordered synthetic release event → independent records checkpoint → delivery → archive path with one release identity. **Implemented for the synthetic slice.** |
-| P19/P22 subset — deterministic operation state and runnable negative paths | `src/domain/scenario.js`, `src/pages/IntegrationPage.vue`, `tests/scenario.test.js` | `npm test`; browser smoke | Reconciliation creates a unique scoped operation and reports `NOT_CONNECTED` rather than manufacturing provider success. Focused negative-path tests cover authority, idempotency, stale revisions, reflection and release guards. **Subset implemented; full fault/fence/recovery cycle remains partial.** |
+| P19/P22 subset — deterministic operation state and runnable negative paths | `src/domain/scenario.js`, `src/pages/IntegrationPage.vue`, `tests/scenario.test.js` | `npm test`; browser smoke | Reconciliation creates a unique scoped operation and reports `NOT_CONNECTED` rather than manufacturing provider success. Provider fault configuration now also requires the active system-admin simulation authority. Focused negative-path tests cover authority, idempotency, stale revisions, reflection and release guards. **Subset implemented; full fault/fence/recovery cycle remains partial.** |
 
 ## M2 — lifecycle and accounting slice
 
@@ -53,15 +53,16 @@ This is an evidence register, not a production-readiness claim. The complete `do
 
 | Story | Code | Test / command | Evidence and status |
 |---|---|---|---|
-| P21–P22 — role-aware walkthrough and evidence register | `src/pages/ReadinessPage.vue`, `src/components/WorkflowGuide.vue`, `src/domain/scenario.js` | `npm test`; local route smoke | Readiness now projects the selected engagement’s live gates, accounting package, audit-chain blockers, workpaper snapshots, release candidate, records state, operations and recovery epoch into one M4 register. Every row is labelled READY, HELD, SIMULATION, NOT RUN or NOT APPLICABLE. **Implemented for the synthetic walkthrough; full AT/ET/VT catalogue remains partial.** |
+| P21–P22 — role-aware walkthrough and evidence register | `src/pages/ReadinessPage.vue`, `src/components/WorkflowGuide.vue`, `src/domain/scenario.js`, `src/domain/traceability.js` | `npm test`; local route smoke | Readiness now projects the selected engagement’s live gates, accounting package, audit-chain blockers, workpaper snapshots, release candidate, records state, operations and recovery epoch into one M4 register. Every row is labelled READY, HELD, SIMULATION, NOT RUN or NOT APPLICABLE. The normative 108-entry AT/ET/VT/P0 inventory is retained and linked to executed cycle steps; **live proof remains partial.** |
+| P22 — runnable full synthetic cycle | `src/domain/cycle.js`, `src/domain/traceability.js`, `src/pages/ReadinessPage.vue`, `src/domain/scenario.js` | `npm test`; `node --input-type=module -e "import {runSyntheticCycle} from './src/domain/cycle.js'; console.log(await runSyntheticCycle())"` | The explicit **Run clean synthetic rehearsal** action resets only browser-local synthetic state, executes 41 scoped commands/observations across acceptance, prohibition, PBC, accounting re-upload, snapshots, stale generations, continuance, provider retry, release/checkpoint/archive and recovery, then retains a bounded evidence record in `scenario.cycleRuns`. Latest run: **41/41 PASS, SIMULATION only**, with traceability links for the exercised subset. **Implemented for the browser slice; real-system proof remains NOT_RUN.** |
 
 ## Verification run
 
 ```text
-npm test                 PASS — 32 tests
-npm run build            PASS — Vite production build (53 modules)
+npm test                 PASS — 35 tests
+npm run build            PASS — Vite production build (55 modules)
 git diff --check         PASS — whitespace check (line-ending warnings only)
-browser smoke            PASS — 19 local admin routes, 6 accountant routes, and 4 client routes; each exposed main-content, SYNTHETIC DEMO, and a heading; no console warn/error
+browser smoke            PASS — local readiness rehearsal completed 41/41 steps; 19 local admin routes, 6 accountant routes, and 4 client routes remain covered by the prior route smoke; no console warn/error
 live smoke               PASS — prior deployed bundle exposed all permitted client/admin/accountant routes; role-ineligible deep links redirected to the landing page; no console warn/error
 ```
 
@@ -73,8 +74,8 @@ Read-only live check: `https://ste.quadrate.lk/` is still serving the prior shel
 
 - **M2 (P06–P08, P11–P13):** acceptance/terms/activation, continuance shell, PBC suitability, source replacement, journal authorization, statement submission and management snapshot approval now have a runnable synthetic slice. The exact CE-001…CE-093 and RV-001…RV-030 identities are present. A complete policy catalogue, full renewal UI, disclosure/cash-flow inputs, and a complete financial-statement package remain partial; the miniature TB stays explicitly incomplete for cash flow, comparatives and disclosures.
 - **M3 (P14, P18–P20):** the synthetic audit chain, archive/legal-hold/amendment controls, provider fault matrix and recovery rehearsal are implemented. Full real-system evidence (records policy, provider exactly-once, restore fencing and external checkpoints) remains NOT_RUN.
-- **M4 (P21–P22):** changed pages have local route and negative-path coverage, but the complete §39.2 end-to-end cycle, all 28 AT + 44 ET + 24 VT entries and all 12 Phase 0 experiments are not yet recorded as executable evidence.
+- **M4 (P21–P22):** the 41-step synthetic cycle and complete 108-entry traceability inventory are now retained in the browser slice. Only the linked subset is exercised by the cycle; the remaining AT/ET/VT/P0 entries and all real-system proofs stay `NOT RUN`.
 
 Real-system proof is **NOT_RUN/BLOCKED**: Frappe/MariaDB transactions and locks, Entra identity, Microsoft Graph/SharePoint/Purview permissions and retention, provider exactly-once behavior, Cloudflare Access/JWT verification, external delivery, records enforcement and restore fencing. No remote database migration, Worker deployment or Pages deployment was performed for this pass.
 
-**Next runnable task:** add the reviewed `docs/v4-handoff/` source bundle, then finish the remaining M2 package fields and M4 end-to-end evidence matrix. Keep all live integrations disabled and update this register with each runnable story and its evidence.
+**Next runnable task:** add the reviewed `docs/v4-handoff/` source bundle, then finish the remaining M2 package fields and extend the cycle evidence matrix to every AT/ET/VT/P0 identity. Keep all live integrations disabled and update this register with each runnable story and its evidence.

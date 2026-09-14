@@ -38,7 +38,7 @@ function reconcile() {
 }
 
 function applyProviderSimulation() {
-  const result = setProviderSimulation({ connected: connectedDraft.value, nextFault: selectedFault.value })
+  const result = setProviderSimulation({ actorPersonaId: activeActor()?.personaId, connected: connectedDraft.value, nextFault: selectedFault.value, idempotencyKey: `provider-${connectedDraft.value ? 'on' : 'off'}-${selectedFault.value}` })
   toast.value = result.outcome === 'COMMITTED' ? `Provider simulation set to ${result.data.connected ? 'connected' : 'not connected'} · next fault ${result.data.nextFault}.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 3500)
 }

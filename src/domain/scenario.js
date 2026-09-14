@@ -308,6 +308,7 @@ function initialScenario() {
     checkpoints: [],
     events: [],
     commandReceipts: [],
+    cycleRuns: [],
     provider: { connected: false, nextFault: '429_RETRY_AFTER', cursor: 'cursor-41', enableExternalEffects: false },
     recovery: { state: 'NOT_RUN', externalCheckpointIndependent: true, outwardEffectsEnabled: false, activeEpoch: 1, backup: null, externalCheckpointStore: [{ releaseEventId: 'REL-EXTERNAL-001', candidateId: 'RC-READY-001', manifestDigest: 'sha256:ready-accounting-candidate', artifactHash: 'sha256:issued-simulated-artifact', state: 'VERIFIED_SIMULATION', preservedAt: '2026-09-06T11:00:00.000Z' }], reconciliation: null, case: null },
   }
@@ -339,7 +340,7 @@ function mergeScenarioState(defaults, parsed) {
     const additions = (defaultsList || []).filter((entry) => entry?.id && !currentIds.has(entry.id)).map(clone)
     return [...currentList, ...additions]
   }
-  for (const key of ['clients', 'engagements', 'actors', 'assessments', 'terms', 'activation', 'accountingPackages', 'renewalCases', 'documents', 'workpapers', 'reviews', 'releaseCandidates', 'snapshots', 'operations', 'checkpoints', 'events', 'commandReceipts', 'legalHolds', 'amendments']) {
+  for (const key of ['clients', 'engagements', 'actors', 'assessments', 'terms', 'activation', 'accountingPackages', 'renewalCases', 'documents', 'workpapers', 'reviews', 'releaseCandidates', 'snapshots', 'operations', 'checkpoints', 'events', 'commandReceipts', 'cycleRuns', 'legalHolds', 'amendments']) {
     merged[key] = appendMissingById(defaults[key], merged[key])
   }
   merged.audit.risks = appendMissingById(defaults.audit.risks, merged.audit.risks)
@@ -813,7 +814,7 @@ export function recordRenewalDecision({ shellEngagementId, actorPersonaId, expec
   renewalCase.state = decision === 'RENEW' ? 'RENEWED_PENDING_TERMS' : 'NON_RENEWED'
   renewalCase.closeout = decision === 'RENEW' ? null : { state: 'REQUIRED', preserveRecords: true, deletion: 'DISABLED', ownerActorId: actor.id }
   shell.revision += 1
-  shell.holds = shell.holds.filter((hold) => hold.code !== 'CONTINUANCE_DECISION_REQUIRED')
+  shell.holds = shell.holds.filter((hold) => !['CONTINUANCE_REQUIRED', 'CONTINUANCE_DECISION_REQUIRED'].includes(hold.code))
   scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: decision === 'RENEW' ? 'RENEWAL_APPROVED' : 'RELATIONSHIP_CLOSEOUT_REQUIRED', shellEngagementId, sourceEngagementId: renewalCase.sourceEngagementId, actorId: actor.id, decision, revision: shell.revision, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
   return finish(commandResult('COMMITTED', { data: renewalCase, revision: shell.revision, operationId: renewalCase.id }))
@@ -1112,9 +1113,10 @@ export function advanceRelease({ candidateId, actorPersonaId, expectedRevision, 
   if (!actorHasRole(actor, 'signatory', engagement.id)) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'SIGNATORY_AUTHORITY_REQUIRED', message: 'Only the scoped signatory can run the release command.' }))
   if (expectedRevision != null && expectedRevision !== candidate.revision) return rememberReceipt(idempotencyKey, fingerprint, commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected candidate revision ${expectedRevision}, current revision is ${candidate.revision}.`, revision: candidate.revision }))
   const blockers = releaseCandidateBlockers(candidate.id)
-  // A candidate cannot advance from its initial state until every current guard
-  // is satisfied. Rail clicks are intentionally not represented by this command.
-  if (candidate.stepIndex < 6 && blockers.length) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: blockers[0].code, message: blockers[0].message, blockers }))
+  // A candidate cannot advance until every current guard is satisfied. This
+  // check also runs at the release-event boundary: a new hold or generation
+  // change cannot slip through merely because the candidate reached step 6.
+  if (candidate.stepIndex <= 6 && blockers.length) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: blockers[0].code, message: blockers[0].message, blockers }))
   if (candidate.stepIndex === 6 && !candidate.releaseEventId) {
     const releaseEvent = { id: `REL-${scenario.events.length + 1}`, candidateId: candidate.id, engagementId: engagement.id, revision: candidate.revision, manifestDigest: candidate.manifestDigest, createdBy: actor.id, state: 'COMMITTED', evidenceLevel: EVIDENCE_LEVEL }
     scenario.events.push(releaseEvent)
@@ -1127,9 +1129,10 @@ export function advanceRelease({ candidateId, actorPersonaId, expectedRevision, 
     return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: 'CHECKPOINT_REQUIRED', message: 'Verify the independent checkpoint before first delivery.' }))
   }
   if (candidate.stepIndex === 8 && !candidate.checkpointId) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: 'CHECKPOINT_REQUIRED', message: 'Delivery is blocked until the release checkpoint is verified.' }))
+  if (candidate.stepIndex === 8 && blockers.length) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: blockers[0].code, message: blockers[0].message, blockers }))
   candidate.stepIndex = Math.min(candidate.stepIndex + 1, releaseSteps.length - 1)
   candidate.revision += 1
-  if (candidate.stepIndex === 9) { candidate.archiveState = 'VERIFIED'; engagement.evidence.archiveVerified = true }
+  if (candidate.stepIndex === 9) candidate.archiveState = 'PENDING_ASSEMBLY'
   if (candidate.stepIndex === 8) candidate.deliveryState = 'DELIVERED_SIMULATION'
   scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'RELEASE_STEP_ADVANCED', candidateId: candidate.id, stepIndex: candidate.stepIndex, actorId: actor.id, revision: candidate.revision, evidenceLevel: EVIDENCE_LEVEL })
   const result = commandResult('COMMITTED', { data: candidate, revision: candidate.revision, operationId: candidate.releaseEventId })
@@ -1148,6 +1151,8 @@ export function createReleaseCheckpoint({ candidateId, actorPersonaId, expectedR
   if (!candidate.releaseEventId) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: 'RELEASE_EVENT_REQUIRED', message: 'The release event must exist before a checkpoint can be created.' }))
   if (candidate.checkpointId) return rememberReceipt(idempotencyKey, fingerprint, commandResult('COMMITTED', { data: candidate, revision: candidate.revision, operationId: candidate.checkpointId }))
   if (expectedRevision != null && expectedRevision !== candidate.revision) return rememberReceipt(idempotencyKey, fingerprint, commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: 'The release candidate changed while the checkpoint was being prepared.', revision: candidate.revision }))
+  const blockers = releaseCandidateBlockers(candidate.id)
+  if (blockers.length) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: blockers[0].code, message: blockers[0].message, blockers }))
   const checkpoint = { id: `CHK-${scenario.checkpoints.length + 1}`, releaseEventId: candidate.releaseEventId, manifestDigest: candidate.manifestDigest, state: 'VERIFIED_SIMULATION', createdBy: actor.id, evidenceLevel: EVIDENCE_LEVEL }
   scenario.checkpoints.push(checkpoint)
   candidate.checkpointId = checkpoint.id
@@ -1465,11 +1470,18 @@ export function reviewWorkpaper({ workpaperId, actorPersonaId, expectedRevision,
 
 export const providerFaults = ['NONE', '429_RETRY_AFTER', '403_FORBIDDEN', '500_SERVER_ERROR', 'TIMEOUT_AFTER_UPLOAD_SUCCESS', 'EXPIRED_LEASE', 'CURSOR_EXPIRED']
 
-export function setProviderSimulation({ connected, nextFault } = {}) {
+export function setProviderSimulation({ actorPersonaId = scenario.activePersonaId, connected, nextFault, idempotencyKey } = {}) {
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'SET_PROVIDER_SIMULATION', targetId: 'provider', engagementId: null, payload: { actorId: actor?.id || null, connected: Boolean(connected), nextFault } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!actor?.active || !actor.roles.includes('system_admin')) return finish(commandResult('DENIED', { code: 'SYSTEM_AUTHORITY_REQUIRED', message: 'Only the system-admin simulation actor can change provider fault scenarios.' }))
+  if (nextFault != null && !providerFaults.includes(nextFault)) return finish(commandResult('DENIED', { code: 'PROVIDER_FAULT_INVALID', message: `Unsupported provider fault: ${nextFault}.` }))
   scenario.provider.connected = Boolean(connected)
-  if (nextFault && providerFaults.includes(nextFault)) scenario.provider.nextFault = nextFault
+  if (nextFault != null) scenario.provider.nextFault = nextFault
   persistScenario()
-  return commandResult('COMMITTED', { data: clone(scenario.provider) })
+  return finish(commandResult('COMMITTED', { data: clone(scenario.provider) }))
 }
 
 export function retryIntegrationOperation({ operationId, actorPersonaId, expectedAttempt, idempotencyKey } = {}) {

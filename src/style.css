@@ -979,6 +979,34 @@ tfoot th { color: var(--primary); background: #f7faff; }
 .toast { position: fixed; z-index: 80; top: 85px; right: 26px; display: flex; align-items: center; gap: 8px; max-width: min(390px, calc(100vw - 32px)); padding: 11px 14px; color: var(--primary); border: 1px solid #b8d4f2; border-radius: 9px; background: #f4f9ff; box-shadow: var(--shadow); font-size: .78rem; animation: toast-in 220ms ease both; }
 .toast svg { width: 17px; height: 17px; color: var(--good); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* End-to-end synthetic rehearsal evidence */
+.vertical-slice-footer { flex-wrap: wrap; }
+.vertical-slice-footer .button { margin-left: auto; }
+.cycle-run-panel { margin-top: 18px; }
+.cycle-run-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 18px; }
+.cycle-run-summary > div { display: flex; flex-direction: column; gap: 4px; padding: 13px 15px; border: 1px solid var(--border); border-radius: 10px; background: #f8fbff; }
+.cycle-run-summary span, .cycle-run-summary small { color: var(--muted); font-size: .72rem; }
+.cycle-run-summary strong { color: var(--primary); font-size: .9rem; }
+.traceability-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: -2px 0 18px; }
+.traceability-grid article { min-width: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+.traceability-grid span, .traceability-grid small { display: block; color: var(--muted); font-size: .7rem; }
+.traceability-grid strong { display: block; margin: 4px 0 2px; color: var(--primary); font-size: 1.05rem; }
+.traceability-grid p { min-height: 30px; margin: 8px 0 0; color: var(--ink); font-size: .7rem; line-height: 1.45; overflow-wrap: anywhere; }
+.cycle-run-step-list { display: grid; gap: 7px; max-height: 460px; overflow: auto; padding-right: 4px; }
+.cycle-run-step { display: grid; grid-template-columns: 25px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: #fff; }
+.cycle-run-step-state { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 50%; }
+.cycle-run-step-state.state-pass { color: #16794c; background: #e6f6ed; }
+.cycle-run-step-state.state-fail { color: #b42318; background: #ffebe8; }
+.cycle-run-step strong { display: block; color: var(--primary); font-size: .78rem; }
+.cycle-run-step small { display: block; margin-top: 3px; color: var(--muted); font-size: .7rem; line-height: 1.45; }
+@media (max-width: 760px) {
+  .cycle-run-summary { grid-template-columns: 1fr; }
+  .traceability-grid { grid-template-columns: 1fr 1fr; }
+  .vertical-slice-footer .button { width: 100%; margin-left: 0; }
+  .cycle-run-step { grid-template-columns: 25px minmax(0, 1fr); }
+  .cycle-run-step .status-pill { grid-column: 2; justify-self: start; }
+}
 .help-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(15,23,42,.48); animation: fade-in 160ms ease both; }
 .help-dialog { width: min(590px, 100%); max-height: min(720px, calc(100dvh - 48px)); overflow-y: auto; padding: 23px; border: 1px solid #c8d8ea; border-radius: 16px; background: #fff; box-shadow: 0 24px 70px rgba(15,23,42,.22); animation: dialog-in 200ms ease both; }
 .help-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }

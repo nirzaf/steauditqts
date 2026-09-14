@@ -52,8 +52,10 @@ import {
   submitAccountingStatement,
   submitWorkpaper,
 } from '../src/domain/scenario.js'
+import { runSyntheticCycle } from '../src/domain/cycle.js'
 import { annualContinuanceQuestions, clientEvaluationQuestions, questionById } from '../src/domain/questionBanks.js'
 import { baselineFixture, fixtureRows } from '../src/domain/accounting.js'
+import { traceabilityCounts, traceabilitySummary } from '../src/domain/traceability.js'
 
 test.beforeEach(() => {
   resetScenario()
@@ -67,6 +69,16 @@ test('normative question banks retain every stable identity and exact wording', 
   assert.equal(new Set(annualContinuanceQuestions.map((item) => item.id)).size, 30)
   assert.equal(questionById('CE-032').question, 'Are there sanctions matches requiring legal/compliance action?')
   assert.equal(questionById('RV-030').question, 'Should the relationship continue?')
+})
+
+test('traceability inventory retains all normative AT, ET, VT and Phase 0 identities', () => {
+  assert.deepEqual(traceabilityCounts, { AT: 28, ET: 44, VT: 24, P0: 12, total: 108 })
+  const summary = traceabilitySummary(['AT-01', 'ET-20', 'VT-24', 'P0-06', 'NOT-A-REAL-ID'])
+  assert.deepEqual(summary.groups.AT, { total: 28, executed: 1, remaining: 27 })
+  assert.deepEqual(summary.groups.ET, { total: 44, executed: 1, remaining: 43 })
+  assert.deepEqual(summary.groups.VT, { total: 24, executed: 1, remaining: 23 })
+  assert.deepEqual(summary.groups.P0, { total: 12, executed: 1, remaining: 11 })
+  assert.equal(summary.executed, 4)
 })
 
 test('assessment projection keeps unknown evidence held and partner decisions guarded', () => {
@@ -292,7 +304,7 @@ test('workpaper review sees an exact submitted snapshot and enforces separation 
   assert.equal(reviewed.data.reviewState, 'CLEARED')
 })
 
-test('valid candidate requires release event, independent checkpoint, then delivery and archive', () => {
+test('valid candidate requires release event, independent checkpoint, then delivery and archive', async () => {
   assert.equal(selectEngagement('ENG-0009-ACC-2026', { actorPersonaId: 'admin-demo' }).outcome, 'COMMITTED')
   let candidate = scenario.releaseCandidates.find((item) => item.id === 'RC-READY-001')
   for (let index = 0; index < 6; index += 1) {
@@ -318,8 +330,29 @@ test('valid candidate requires release event, independent checkpoint, then deliv
   assert.equal(candidate.deliveryState, 'DELIVERED_SIMULATION')
   const archive = advanceRelease({ candidateId: candidate.id, actorPersonaId: 'admin-demo', expectedRevision: candidate.revision, idempotencyKey: 'archive-1' })
   assert.equal(archive.outcome, 'COMMITTED')
+  assert.equal(candidate.archiveState, 'PENDING_ASSEMBLY')
+  setActivePersona('compliance-demo')
+  const archivePackage = await assembleArchive({ candidateId: candidate.id, actorPersonaId: 'compliance-demo', expectedRevision: candidate.revision, idempotencyKey: 'archive-1-assemble' })
+  assert.equal(archivePackage.outcome, 'COMMITTED')
   assert.equal(candidate.archiveState, 'VERIFIED')
   assert.equal(deriveGates('ENG-0009-ACC-2026').find((gate) => gate.id === 'G9').status, 'good')
+})
+
+test('release event and delivery boundaries recheck current blockers', () => {
+  assert.equal(selectEngagement('ENG-0009-ACC-2026', { actorPersonaId: 'admin-demo' }).outcome, 'COMMITTED')
+  let candidate = scenario.releaseCandidates.find((item) => item.id === 'RC-READY-001')
+  for (let index = 0; index < 6; index += 1) {
+    assert.equal(advanceRelease({ candidateId: candidate.id, actorPersonaId: 'admin-demo', expectedRevision: candidate.revision, idempotencyKey: `boundary-${index}` }).outcome, 'COMMITTED')
+    candidate = scenario.releaseCandidates.find((item) => item.id === candidate.id)
+  }
+  const engagement = scenario.engagements.find((item) => item.id === 'ENG-0009-ACC-2026')
+  engagement.holds.push({ id: 'HOLD-LATE-BOUNDARY', code: 'LATE_HOLD', message: 'Synthetic hold added after candidate preparation.' })
+  const blockedEvent = advanceRelease({ candidateId: candidate.id, actorPersonaId: 'admin-demo', expectedRevision: candidate.revision, idempotencyKey: 'boundary-blocked-event' })
+  assert.equal(blockedEvent.outcome, 'BLOCKED')
+  assert.equal(blockedEvent.code, 'LATE_HOLD')
+  engagement.holds = engagement.holds.filter((hold) => hold.id !== 'HOLD-LATE-BOUNDARY')
+  const event = advanceRelease({ candidateId: candidate.id, actorPersonaId: 'admin-demo', expectedRevision: candidate.revision, idempotencyKey: 'boundary-event' })
+  assert.equal(event.outcome, 'COMMITTED')
 })
 
 test('archive, legal hold and amendment commands preserve durable records', async () => {
@@ -390,6 +423,11 @@ test('records custody and recovery stay scoped to the exact backup checkpoint', 
 })
 
 test('integration faults keep retry, uncertainty and fencing explicit', () => {
+  setActivePersona('client-demo')
+  const deniedConfiguration = setProviderSimulation({ actorPersonaId: 'client-demo', connected: true, nextFault: 'NONE' })
+  assert.equal(deniedConfiguration.outcome, 'DENIED')
+  assert.equal(deniedConfiguration.code, 'SYSTEM_AUTHORITY_REQUIRED')
+
   setActivePersona('admin-demo')
   setProviderSimulation({ connected: true, nextFault: '429_RETRY_AFTER' })
   const retryable = runIntegrationReconciliation({ actorPersonaId: 'admin-demo', engagementId: 'ENG-0009-ACC-2026', idempotencyKey: 'fault-429' })
@@ -420,4 +458,22 @@ test('integration faults keep retry, uncertainty and fencing explicit', () => {
   const notRetryable = retryIntegrationOperation({ operationId: fenced.operationId, actorPersonaId: 'admin-demo', expectedAttempt: 1, idempotencyKey: 'fault-lease-retry' })
   assert.equal(notRetryable.outcome, 'BLOCKED')
   assert.equal(notRetryable.code, 'OPERATION_NOT_RETRYABLE')
+})
+
+test('full synthetic cycle records positive and negative-path evidence', async () => {
+  const run = await runSyntheticCycle({ reset: true })
+  assert.equal(run.state, 'PASSED_SIMULATION')
+  assert.equal(run.evidenceLevel, 'SIMULATION')
+  assert.equal(run.summary.failed, 0)
+  assert.ok(run.summary.total >= 40)
+  assert.equal(run.steps.find((step) => step.id === 'P06-HOLD').code, 'ASSESSMENT_HOLDS')
+  assert.equal(run.steps.find((step) => step.id === 'P07-PROHIBITION-BLOCK').code, 'CONFIRMED_PROHIBITION')
+  assert.equal(run.steps.find((step) => step.id === 'P16-STALE-BLOCK').code, 'INPUTS_NOT_EVALUATED')
+  assert.equal(run.steps.find((step) => step.id === 'P20-QUARANTINE').status, 'PASS')
+  assert.equal(run.steps.find((step) => step.id === 'P20-RESUME').status, 'PASS')
+  assert.equal(run.traceability.total, 108)
+  assert.equal(run.traceability.executed, 22)
+  assert.equal(scenario.activePersonaId, 'admin-demo')
+  assert.equal(scenario.cycleRuns.at(-1).id, run.id)
+  assert.equal(scenario.recovery.outwardEffectsEnabled, false)
 })

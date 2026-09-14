@@ -50,7 +50,11 @@ test('supplied trial-balance fixtures preserve exact Decimal results', () => {
 test('accounting intake rejects unsafe or ambiguous source rows', () => {
   const baseline = fixture('baseline_tb.csv')
   assert.equal(parseCsv('', { entityId: 'CLI-0009', period: 'FY2026', currency: 'QAR' }).code, 'EMPTY_SOURCE')
+  assert.equal(parseCsv(baseline, { entityId: 'CLI-0009', period: 'FY2026' }).code, 'SOURCE_METADATA_REQUIRED')
+  assert.equal(parseCsv(baseline, { entityId: 'CLI-0009', period: 'FY2026', currency: 'Qatar' }).code, 'CURRENCY_INVALID')
   assert.equal(parseCsv(baseline.replace('100101,Bank', '100101,=SUM(Bank)'), { entityId: 'CLI-0009', period: 'FY2026', currency: 'QAR' }).code, 'FORMULA_INPUT')
+  assert.equal(parseCsv(baseline.replace('300100,Share capital', '300100,Share capital').replace('200100,Trade payables', '200100,=SUM(Trade payables)'), { entityId: 'CLI-0009', period: 'FY2026', currency: 'QAR' }).code, 'FORMULA_INPUT')
+  assert.equal(parseCsv(baseline.replace('150000.00,0.00', '-1.00,0.00'), { entityId: 'CLI-0009', period: 'FY2026', currency: 'QAR' }).code, 'SIGN_CONVENTION_INVALID')
   assert.equal(parseCsv(`${baseline.trimEnd()}\n100101,Bank,Cash,0.00,0.00`, { entityId: 'CLI-0009', period: 'FY2026', currency: 'QAR' }).code, 'DUPLICATE_SOURCE_ROW')
   assert.equal(parseCsv(baseline.replace('150000.00,0.00', '150001.00,0.00'), { entityId: 'CLI-0009', period: 'FY2026', currency: 'QAR' }).code, 'UNBALANCED_SOURCE')
   const partial = fixtureRows(baselineFixture)

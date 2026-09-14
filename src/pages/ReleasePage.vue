@@ -15,7 +15,8 @@ const selectedClient = computed(() => scenarioClient())
 const candidate = computed(() => scenario.releaseCandidates.find((item) => item.engagementId === selectedEngagement.value?.id && item.state !== 'ARCHIVED') || scenario.releaseCandidates[0])
 const releaseIndex = computed(() => candidate.value?.stepIndex || 0)
 const blockers = computed(() => releaseCandidateBlockers(candidate.value?.id))
-const releaseStatus = computed(() => releaseIndex.value >= releaseSteps.length - 1 ? 'Archive verified' : releaseIndex.value >= 8 ? 'Delivered' : releaseIndex.value >= 6 ? 'Release event committed' : blockers.value.length ? 'Blocked' : 'Ready to advance')
+const releaseStatus = computed(() => candidate.value?.archiveState === 'VERIFIED' ? 'Archive verified' : releaseIndex.value >= releaseSteps.length - 1 ? 'Archive assembly required' : releaseIndex.value >= 8 ? 'Delivered' : releaseIndex.value >= 6 ? 'Release event committed' : blockers.value.length ? 'Blocked' : 'Ready to advance')
+const releaseTone = computed(() => candidate.value?.archiveState === 'VERIFIED' ? 'good' : blockers.value.length ? 'danger' : releaseIndex.value >= 8 ? 'good' : 'warn')
 const nextStep = computed(() => releaseSteps[Math.min(releaseIndex.value + 1, releaseSteps.length - 1)])
 const archivePackage = computed(() => scenario.archivePackages?.find((item) => item.candidateId === candidate.value?.id) || null)
 const legalHolds = computed(() => (scenario.legalHolds || []).filter((item) => item.engagementId === selectedEngagement.value?.id))
@@ -80,7 +81,7 @@ function openAmendment() {
     <WorkflowGuide :guide="workflowGuides.release" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 
-    <section class="release-hero panel"><div><span class="eyebrow">Release candidate {{ candidate.id }} · {{ selectedClient.name }}</span><h2>Version-bound synthetic package</h2><p>Period {{ selectedEngagement.periodLabel }} · {{ selectedEngagement.currency }} · manifest digest <code>{{ candidate.manifestDigest }}</code></p></div><div class="release-hero-meta"><StatusPill :label="releaseStatus" :tone="releaseIndex >= 8 ? 'good' : blockers.length ? 'danger' : 'warn'" /><strong>{{ formatMoney(745000) }}</strong><span>illustrative total assets · SIMULATION</span></div></section>
+    <section class="release-hero panel"><div><span class="eyebrow">Release candidate {{ candidate.id }} · {{ selectedClient.name }}</span><h2>Version-bound synthetic package</h2><p>Period {{ selectedEngagement.periodLabel }} · {{ selectedEngagement.currency }} · manifest digest <code>{{ candidate.manifestDigest }}</code></p></div><div class="release-hero-meta"><StatusPill :label="releaseStatus" :tone="releaseTone" /><strong>{{ formatMoney(745000) }}</strong><span>illustrative total assets · SIMULATION</span></div></section>
 
     <section class="release-safety-strip" aria-label="Release safety checks">
       <article v-for="check in safetyChecks" :key="check.label" class="release-safety-card panel"><div class="release-safety-card-top"><span class="release-safety-icon" :class="`tone-${check.tone}`"><Icon :name="check.icon" :size="16" /></span><StatusPill :label="check.state" :tone="check.tone" /></div><span class="release-safety-label">{{ check.label }}</span><strong>{{ check.value }}</strong><small>{{ check.detail }}</small></article>
