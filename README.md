@@ -13,6 +13,8 @@ Vue + Vite multi-page prototype for a Frappe/Microsoft 365 accounting and audit 
 - Reviews and approvals
 - Release and archive
 - Integration health
+- Architecture map (V4 systems of record, control planes and service routes)
+- Phase 0 readiness (12 synthetic proof experiments, vertical slice and feasibility decision)
 
 The UI uses fictional QAR data based on the supplied workflow architecture. It demonstrates workflow controls and versioning; it is not a production accounting system or an audit opinion engine.
 
@@ -53,6 +55,10 @@ npx wrangler pages deploy dist --project-name ste-quadrate-lk --branch main
 ```
 
 The Worker is intentionally a demo API: inputs are length- and key-validated, writes are scoped to the selected engagement and step, and the interface keeps fictional data and professional decision boundaries visible.
+
+## V4 architecture views
+
+The admin navigation includes two architecture-focused prototype pages. **Architecture map** explains the Frappe-first modular-monolith boundary, Entra identity, MariaDB/outbox records, SharePoint document ownership, Purview protection and independent recovery checkpoints. **Phase 0 readiness** turns the specification's 12 experiments into a filterable register with owners, pass criteria, a small complete vertical slice and the conditional feasibility decision. All values are synthetic planning examples; these pages do not claim that a tenant capability, production approval, or regulatory control has been proven.
 
 ## Iconography and accessibility
 

@@ -4,7 +4,7 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
-import { integrationOperations, workflowGuides } from '../data'
+import { capabilityMatrix, integrationIdentities, integrationOperations, workflowGuides } from '../data'
 
 const operations = ref(integrationOperations.map((item) => ({ ...item })))
 const running = ref(false)
@@ -37,5 +37,24 @@ function reconcile() {
     <section class="split-grid"><article class="panel"><div class="panel-heading"><div><span class="eyebrow">Durable outbox</span><h2>Recent operations</h2></div><span class="muted-label">{{ operations.length }} records</span></div><div class="operation-list"><div v-for="operation in operations.slice(0, 5)" :key="operation.id" class="operation-row"><span class="operation-icon" :class="`tone-${operation.tone}`"><Icon name="database" :size="16" /></span><div><div class="operation-title"><strong>{{ operation.name }}</strong><code>{{ operation.id }}</code></div><small>{{ operation.system }} · {{ operation.started }} · {{ operation.duration }}</small><p>{{ operation.detail }}</p></div><StatusPill :label="operation.status" :tone="operation.tone" /></div></div></article><article class="panel"><div class="panel-heading"><div><span class="eyebrow">Control boundaries</span><h2>What health means</h2></div></div><ul class="check-list"><li><span class="list-icon good"><Icon name="check" :size="14" /></span><span><strong>Database intent is durable</strong><small>Each external write has an operation ID and retry state.</small></span></li><li><span class="list-icon good"><Icon name="check" :size="14" /></span><span><strong>Poll / delta is the baseline</strong><small>Notifications can be lost without bypassing reconciliation.</small></span></li><li><span class="list-icon warn"><Icon name="warning" :size="14" /></span><span><strong>Purview is a separate control plane</strong><small>Desired labels are not reported as enforced until observed.</small></span></li><li><span class="list-icon danger"><Icon name="lock" :size="14" /></span><span><strong>Tokens never enter download URLs</strong><small>Portal routes re-check scope for every delivery request.</small></span></li></ul></article></section>
 
     <section class="panel"><div class="panel-heading"><div><span class="eyebrow">Recovery posture</span><h2>Environment boundaries</h2></div><StatusPill label="Staging and production separated" tone="good" /></div><div class="environment-grid"><div><span class="environment-label">Development</span><strong>Synthetic client records</strong><small>Test Graph app · no production identities</small></div><div><span class="environment-label">Staging</span><strong>Production-like, sanitized</strong><small>Separate secrets, site and SharePoint storage</small></div><div><span class="environment-label">Production</span><strong>Restricted deployment rights</strong><small>Backups, monitoring and administrator evidence</small></div></div></section>
+
+    <section class="integration-v4-grid">
+      <article class="panel integration-identities-panel">
+        <div class="panel-heading"><div><span class="eyebrow">Credential separation</span><h2>Who is allowed to do what</h2></div><span class="muted-label">V4 execution groups</span></div>
+        <div class="integration-identity-list">
+          <div v-for="identity in integrationIdentities" :key="identity.id" class="integration-identity-row">
+            <span class="integration-identity-icon" :class="`tone-${identity.tone}`"><Icon :name="identity.icon" :size="16" /></span>
+            <div><div class="integration-identity-title"><strong>{{ identity.id }}</strong><StatusPill :label="identity.state" :tone="identity.state === 'Bounded' || identity.state === 'Ready for proof' ? 'good' : identity.state === 'Restricted' || identity.state === 'Manual first' ? 'warn' : 'neutral'" /></div><small>{{ identity.purpose }} · {{ identity.scope }}</small><p>{{ identity.note }}</p></div>
+          </div>
+        </div>
+      </article>
+      <article class="panel capability-panel">
+        <div class="panel-heading"><div><span class="eyebrow">Capability matrix</span><h2>What is enabled, held, or optional</h2></div><span class="muted-label">Proof required before activation</span></div>
+        <div class="capability-list">
+          <div v-for="capability in capabilityMatrix" :key="capability.capability" class="capability-row"><span class="capability-state" :class="`state-${capability.tone}`"><Icon :name="capability.tone === 'good' ? 'check' : capability.tone === 'warn' ? 'warning' : 'clock'" :size="14" /></span><div><strong>{{ capability.capability }}</strong><small>{{ capability.route }} · {{ capability.evidence }}</small></div><StatusPill :label="capability.state" :tone="capability.tone === 'good' ? 'good' : capability.tone === 'warn' ? 'warn' : 'neutral'" /></div>
+        </div>
+        <div class="capability-footnote"><Icon name="lock" :size="16" /><span>The baseline stays safe when an optional webhook, preview, signing, or tenant capability is unavailable: keep it disabled and show the owner the evidence needed to enable it.</span></div>
+      </article>
+    </section>
   </div>
 </template>

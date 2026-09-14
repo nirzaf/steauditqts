@@ -23,6 +23,8 @@ export const navItems = [
   { key: 'reviews', label: 'Reviews & approvals', icon: 'check-circle', section: 'Control', badge: '3' },
   { key: 'release', label: 'Release & archive', icon: 'lock', section: 'Control' },
   { key: 'integration', label: 'Integration health', icon: 'pulse', section: 'Operations' },
+  { key: 'architecture', label: 'Architecture map', icon: 'workflow', section: 'Operations' },
+  { key: 'readiness', label: 'Phase 0 readiness', icon: 'list-check', section: 'Operations', badge: '12' },
 ]
 
 // The guide copy is intentionally part of the demo data so every page can
@@ -253,6 +255,36 @@ export const workflowGuides = {
     next: 'Overview',
     nextHint: 'Return to Overview for the portfolio queue, or select any workspace page from the full admin navigation.',
   },
+  architecture: {
+    id: 'architecture-guide',
+    step: 'ARCH 01',
+    phase: 'Architecture',
+    title: 'Read the platform as connected control planes',
+    summary: 'Use this map to understand which system owns each fact, how work crosses the Frappe boundary, and where identity, documents, records, and recovery are deliberately separated.',
+    steps: [
+      { title: 'Start with identity', body: 'Entra authenticates staff and invited clients. Frappe then checks the firm, client, engagement, role, visibility, state, and separation-of-duties rules before revealing a record.' },
+      { title: 'Follow the source of truth', body: 'MariaDB owns structured business records and durable outbox intent. SharePoint owns Office files, evidence, snapshots, and issued artifacts.' },
+      { title: 'Trace the control planes', body: 'Graph workers reconcile external changes, Purview observes records protection, and independent checkpoints make recovery and release evidence reconstructable.' },
+    ],
+    checks: ['A client, engagement, Entra tenant, Frappe site, and SharePoint site are separate identifiers.', 'The public web process never receives a broad records credential or arbitrary Graph target.', 'A SharePoint status projection never becomes a second approval authority.'],
+    next: 'Phase 0 readiness',
+    nextHint: 'Use the proof register to see which architecture assumptions must be tested with synthetic records before production capability is enabled.',
+  },
+  readiness: {
+    id: 'readiness-guide',
+    step: 'PROOF 01',
+    phase: 'Phase 0 proof',
+    title: 'Turn architecture into evidence before production',
+    summary: 'Use this register as the sponsor-friendly view of the v4 decision: a small synthetic vertical slice, explicit failure tests, and a go/no-go decision before expanding the service scope.',
+    steps: [
+      { title: 'Run the smallest complete slice', body: 'Use two synthetic clients and separate preparer, reviewer, partner, records, and client identities to exercise intake, accounting, audit, release, archive, and renewal.' },
+      { title: 'Inject the hard failures', body: 'Pause workers, expire leases, change a source during evaluation, revoke access, simulate provider timeouts, and restore an older database without allowing duplicate release.' },
+      { title: 'Record the decision', body: 'Keep the capability matrix, evidence package, defects, retests, owner approvals, measured costs, and known gaps together. A green screen is not readiness evidence.' },
+    ],
+    checks: ['Identity and client isolation negative tests pass.', 'Exact snapshots, journal source reflection, release guards, records protection, and recovery are evidenced.', 'Unsupported service routes remain disabled instead of being enabled by a renamed template.'],
+    next: 'Architecture map',
+    nextHint: 'Return to the architecture map when a proof result needs a clear system owner or boundary explanation.',
+  },
 }
 
 export const client = {
@@ -298,6 +330,69 @@ export const gateMeta = [
 ]
 
 export const gateStatuses = ['good', 'good', 'good', 'good', 'warn', 'warn', 'danger', 'danger', 'danger', 'danger', 'neutral']
+
+// V4 architecture map: each node is a deliberately small, human-readable
+// description of the system of record, boundary, and control it represents.
+// These are synthetic demo values, not live tenant configuration.
+export const architectureNodes = [
+  { id: 'actors', label: 'Staff + invited clients', kind: 'People', icon: 'users', tone: 'blue', detail: 'Firm staff use the Desk workspace; invited B2B clients use only the restricted portal surface.', owner: 'Entra identity + Frappe assignment', rule: 'A login is not professional acceptance or a document permission.' },
+  { id: 'entra', label: 'Microsoft Entra ID', kind: 'Identity plane', icon: 'key', tone: 'blue', detail: 'Tenant-scoped OIDC authentication, MFA/Conditional Access and stable object mappings.', owner: 'Microsoft Entra', rule: 'Validate issuer, tenant, audience, state, nonce and session epoch.' },
+  { id: 'frappe', label: 'Frappe + audit_practice', kind: 'Application plane', icon: 'workflow', tone: 'navy', detail: 'One custom modular app owns commands, assignments, gates, approvals, findings and projections.', owner: 'Firm-managed application', rule: 'Authorize scope and operation before resolving any provider file.' },
+  { id: 'mariadb', label: 'MariaDB + durable outbox', kind: 'Structured records', icon: 'database', tone: 'navy', detail: 'Versioned professional records, safety generations, command receipts, events and retryable intent.', owner: 'Frappe database', rule: 'Structured client data never mixes with the firm ledger.' },
+  { id: 'workers', label: 'Frappe workers', kind: 'Execution groups', icon: 'pulse', tone: 'green', detail: 'General, processing and restricted records jobs run with bounded scopes and attempt fencing.', owner: 'Scheduler + workers', rule: 'Long work is leased and reconciled; Redis is not the only copy of intent.' },
+  { id: 'graph', label: 'Microsoft Graph adapter', kind: 'Integration boundary', icon: 'link', tone: 'blue', detail: 'Allowlisted metadata, upload, version and delta calls with selected-resource grants.', owner: 'Dedicated integration identity', rule: 'No arbitrary URL, path, token or consent expansion from the browser.' },
+  { id: 'sharepoint', label: 'SharePoint Online', kind: 'Document plane', icon: 'folder', tone: 'amber', detail: 'Working files, raw receipts, evidence snapshots, issued packages and completed-file artifacts.', owner: 'Microsoft document repository', rule: 'Stable site/drive/item IDs and exact hashes outrank filenames or “latest”.' },
+  { id: 'office', label: 'Microsoft 365 Office', kind: 'Human editing', icon: 'file', tone: 'blue', detail: 'Word and Excel open in an authenticated separate tab for controlled human editing.', owner: 'User session + SharePoint', rule: 'Saved Office edits are submitted as a new revision; Office is not the unattended calculation engine.' },
+  { id: 'purview', label: 'Purview records plane', kind: 'Records control', icon: 'shield', tone: 'purple', detail: 'Retention labels, records policy and protection observations are administered separately.', owner: 'Records administrator', rule: 'Desired protection is not reported as enforced until observed and verified.' },
+  { id: 'recovery', label: 'Protected recovery checkpoints', kind: 'Recovery plane', icon: 'archive', tone: 'green', detail: 'Independent manifests and release checkpoints support restore reconciliation across MariaDB and Microsoft stores.', owner: 'Recovery / records custodians', rule: 'Restored deployments start quarantined with outward effects disabled.' },
+]
+
+export const architectureFlowRows = [
+  { id: 'access', label: 'Access', icon: 'users', hint: 'Authenticate, then authorize', nodeIds: ['actors', 'entra', 'frappe'], arrows: ['OIDC + PKCE', 'Scoped commands'] },
+  { id: 'records', label: 'Structured records', icon: 'database', hint: 'Own business state locally', nodeIds: ['frappe', 'mariadb', 'workers'], arrows: ['Guarded transaction', 'Durable jobs'] },
+  { id: 'documents', label: 'Documents', icon: 'folder', hint: 'Preserve and reconcile content', nodeIds: ['workers', 'graph', 'sharepoint'], arrows: ['Selected Graph calls', 'Versioned artifacts'] },
+  { id: 'editing', label: 'Office editing', icon: 'file', hint: 'Human edits stay outside the app', nodeIds: ['frappe', 'office', 'sharepoint'], arrows: ['Authenticated launch', 'Saved revision'] },
+  { id: 'protection', label: 'Protection + recovery', icon: 'shield', hint: 'Observe and reconstruct', nodeIds: ['purview', 'sharepoint', 'recovery'], arrows: ['Policy observation', 'Protected checkpoint'] },
+]
+
+export const systemsOfRecord = [
+  { information: 'Staff and invited identity', system: 'Microsoft Entra ID', icon: 'key', tone: 'blue', projection: 'Frappe keeps stable issuer / tenant / object mappings and session state.' },
+  { information: 'Client, engagement and professional authority', system: 'Frappe audit_practice', icon: 'workflow', tone: 'navy', projection: 'Assignments and commands define business access; a customer or invoice never implies acceptance.' },
+  { information: 'TB, GL imports, mappings and approvals', system: 'MariaDB structured records', icon: 'database', tone: 'navy', projection: 'Rows, revisions, safety generations and manifests are versioned with Decimal arithmetic.' },
+  { information: 'Office files and evidence', system: 'SharePoint Online', icon: 'folder', tone: 'amber', projection: 'Frappe stores IDs, versions, hashes and links—not a competing document repository.' },
+  { information: 'Retention and record protection', system: 'Purview + records admin', icon: 'shield', tone: 'purple', projection: 'Observed protection is stored separately from desired labels and application status.' },
+  { information: 'Recovery evidence', system: 'Independent checkpoint store', icon: 'archive', tone: 'green', projection: 'Release identity and canonical manifest bytes remain reconstructable after restore.' },
+]
+
+export const architectureGuardrails = [
+  { title: 'One firm site, explicit client scope', icon: 'building', tone: 'navy', detail: 'The initial topology is one Frappe site for the operating firm; client and engagement IDs remain first-class confidentiality boundaries.' },
+  { title: 'Authorize before resolving files', icon: 'lock', tone: 'blue', detail: 'Role, assignment, object visibility, current state, holds and separation of duties are checked before a SharePoint reference is read.' },
+  { title: 'Three Microsoft repositories', icon: 'folder', tone: 'amber', detail: 'Working, restricted compliance and records sites are separately administered; the routine document worker has no records credential.' },
+  { title: 'No automatic professional decisions', icon: 'user', tone: 'green', detail: 'Rules calculate, flag and route. Partners, reviewers, management and records owners retain their named authority.' },
+]
+
+export const serviceRoutes = [
+  { name: 'Accounting only', icon: 'calculator', tone: 'green', state: 'Enabled in slice', detail: 'Management and technical accounting approval with service-specific release wording; no audit opinion.' },
+  { name: 'Financial-statement audit only', icon: 'clipboard', tone: 'blue', state: 'Supported route', detail: 'Use a versioned management-prepared accounting package; do not force bookkeeping into the practice ledger.' },
+  { name: 'Accounting + external auditor', icon: 'users', tone: 'blue', state: 'Controlled handoff', detail: 'Accounting and audit scopes remain separate, sharing only an explicitly authorized package or snapshot.' },
+  { name: 'Same firm accounting + audit', icon: 'shield', tone: 'amber', state: 'Professional gate', detail: 'Both tracks activate only after an affirmative service-permissibility decision; separate teams alone are not enough.' },
+]
+
+export const integrationIdentities = [
+  { id: 'audit-web-login', purpose: 'Interactive OIDC sign-in', scope: 'Identity scopes only', icon: 'key', tone: 'blue', state: 'Ready for proof', note: 'No automatic document-wide access.' },
+  { id: 'audit-doc-worker', purpose: 'Working upload / read / delta', scope: 'Selected working sites', icon: 'folder', tone: 'green', state: 'Bounded', note: 'Routine content operations only.' },
+  { id: 'audit-records-worker', purpose: 'Snapshots + release artifacts', scope: 'Restricted records site', icon: 'shield', tone: 'amber', state: 'Restricted', note: 'Separate process and credential.' },
+  { id: 'provisioning-admin', purpose: 'Groups, grants and exceptional records setup', scope: 'Admin-run tooling', icon: 'settings', tone: 'purple', state: 'Manual first', note: 'Time-limited reviewed privilege.' },
+]
+
+export const capabilityMatrix = [
+  { capability: 'Working file upload + exact version read', route: 'Routine Graph adapter', state: 'Synthetic proof path', tone: 'good', evidence: 'Selected-resource grant and receipt hash' },
+  { capability: 'Office opening', route: 'User browser → Microsoft 365', state: 'Separate tab', tone: 'good', evidence: 'Human permission and license check' },
+  { capability: 'Snapshot creation + readback', route: 'Restricted records executor', state: 'Gate before release', tone: 'warn', evidence: 'Stored bytes, manifest and protection attestation' },
+  { capability: 'Record label / protection', route: 'Records-admin route', state: 'Manual verification', tone: 'warn', evidence: 'Observed edit, move, unlock and delete behavior' },
+  { capability: 'Webhook notifications', route: 'Optional acceleration', state: 'Disabled baseline', tone: 'neutral', evidence: 'Scheduled delta remains the safety control' },
+  { capability: 'App-only Excel calculation', route: 'Not required', state: 'Intentionally excluded', tone: 'neutral', evidence: 'Server-side Decimal engine is authoritative' },
+]
 
 export const pbcRequests = [
   { id: 'PBC-014', title: 'Bank statements and reconciliations', area: 'Cash & bank', owner: 'Sara Khan', due: '09 Sep 2026', status: 'Accepted', tone: 'good', files: 6, progress: 100, note: 'Accepted against QAR 150,000 closing balance.' },
@@ -380,6 +475,51 @@ export const integrationOperations = [
   { id: 'OP-879', name: 'PBC-023 upload transfer', system: 'Portal → SharePoint', started: '12 Sep 2026 · 16:10', duration: '—', status: 'Needs retry', tone: 'warn', detail: 'Client connection ended after 2 of 4 chunks.' },
   { id: 'OP-873', name: 'Entra group membership check', system: 'Microsoft Entra ID', started: '12 Sep 2026 · 12:05', duration: '3 sec', status: 'Succeeded', tone: 'good', detail: '12 staff roles and 4 portal users checked.' },
   { id: 'OP-861', name: 'Purview label observation', system: 'Purview / SharePoint', started: '11 Sep 2026 · 17:25', duration: '—', status: 'Awaiting admin', tone: 'neutral', detail: 'Records administrator action is outside the document worker.' },
+]
+
+export const phase0Experiments = [
+  { id: 'P0-01', title: 'Reproducible build', phase: 'Foundation', icon: 'workflow', tone: 'good', state: 'Fixture ready', owner: 'Technical lead', action: 'Build the pinned Frappe/app/runtime set from a clean environment.', pass: 'Clean build, migration smoke and restart evidence.' },
+  { id: 'P0-02', title: 'Identity and lifecycle', phase: 'Identity', icon: 'key', tone: 'warn', state: 'Needs evidence', owner: 'Identity + security', action: 'Exercise staff, invited client, unknown tenant, changed email and disabled actor.', pass: 'Stable mapping, no silent merge, session revocation.' },
+  { id: 'P0-03', title: 'Client isolation', phase: 'Security', icon: 'shield', tone: 'warn', state: 'Needs evidence', owner: 'QA + security', action: 'Guess IDs, filters, exports, direct links and realtime channels across two clients.', pass: 'No cross-client metadata, files, counts or links.' },
+  { id: 'P0-04', title: 'Microsoft capability matrix', phase: 'Microsoft', icon: 'link', tone: 'warn', state: 'In progress', owner: 'M365 owner', action: 'Test selected Graph metadata, upload, versions, delta and denied repositories.', pass: 'Exact grant, endpoint, license and denied-scope evidence.' },
+  { id: 'P0-05', title: 'Receipt and snapshot', phase: 'Documents', icon: 'archive', tone: 'good', state: 'Fixture ready', owner: 'Technical + records', action: 'Upload known bytes, create a native copy, capture a snapshot and read it back after a later edit.', pass: 'Original, stored and approved hashes are distinct and reconstructable.' },
+  { id: 'P0-06', title: 'Local release race', phase: 'Release safety', icon: 'lock', tone: 'neutral', state: 'Planned', owner: 'Technical + QA', action: 'Pause impact evaluation, change an input and authorize concurrently.', pass: 'Generation guard blocks stale release deterministically.' },
+  { id: 'P0-07', title: 'Accounting bridge', phase: 'Accounting', icon: 'calculator', tone: 'good', state: 'Fixture ready', owner: 'Accounting lead', action: 'Run Appendix D, apply AJ-001, then re-upload a source where AJ-001 is already reflected.', pass: 'Profit remains QAR 175,000; no double application.' },
+  { id: 'P0-08', title: 'Privileged execution', phase: 'Security', icon: 'shield', tone: 'neutral', state: 'Planned', owner: 'Security + records', action: 'Submit forged Graph paths, labels, targets and stale operations to the records executor.', pass: 'Typed operation and trusted binding deny the request.' },
+  { id: 'P0-09', title: 'Records enforcement', phase: 'Records', icon: 'folder', tone: 'danger', state: 'Blocked until tenant proof', owner: 'Records owner', action: 'Test edit, delete, move, unlock, label removal and role access on synthetic records.', pass: 'Protection meets the approved profile; no unsupported claim.' },
+  { id: 'P0-10', title: 'Retry and revocation', phase: 'Reliability', icon: 'refresh', tone: 'neutral', state: 'Planned', owner: 'Technical + QA', action: 'Fail after remote success, expire a lease and revoke the requester while an export is queued.', pass: 'Same artifact reconciles; stale attempt cannot publish or deliver.' },
+  { id: 'P0-11', title: 'Release and recovery', phase: 'Recovery', icon: 'archive', tone: 'danger', state: 'Blocked until checkpoint proof', owner: 'Operations', action: 'Restore an older database while the protected release checkpoint remains external.', pass: 'Quarantine holds outward effects; one release identity is reconstructed.' },
+  { id: 'P0-12', title: 'Scope and economics', phase: 'Decision', icon: 'chart', tone: 'neutral', state: 'Owner workshop', owner: 'Sponsor + product', action: 'Run the synthetic slice with professional leads and replace planning assumptions with measured values.', pass: 'Supported service profile, backlog and feasibility decision are signed.' },
+]
+
+export const phase0Tracks = [
+  { label: 'Experiments', value: '12', note: 'Named proof scenarios', icon: 'list-check', tone: 'blue' },
+  { label: 'Critical blockers', value: '3', note: 'Identity, isolation, records/recovery', icon: 'warning', tone: 'amber' },
+  { label: 'Live data', value: '0', note: 'Synthetic fixtures only', icon: 'shield', tone: 'green' },
+  { label: 'Effort range', value: '8–12', note: 'Focused person-weeks for Phase 0', icon: 'calendar', tone: 'navy' },
+]
+
+export const phase0Stages = [
+  { label: 'Proof setup', icon: 'settings', detail: 'Pin versions, identities, repositories and synthetic fixtures.', state: 'Current', tone: 'blue' },
+  { label: 'Complete vertical slice', icon: 'workflow', detail: 'Run intake → accounting → audit → release → archive → renewal.', state: 'Next', tone: 'amber' },
+  { label: 'Sponsor decision', icon: 'check-circle', detail: 'Proceed, narrow, rework or stop using evidence—not screen count.', state: 'Pending', tone: 'neutral' },
+]
+
+export const verticalSliceSteps = [
+  { gate: 'G0', title: 'Firm and method ready', detail: 'Synthetic users, capability profile, pinned build and repository bindings.', icon: 'settings' },
+  { gate: 'G1', title: 'Accept or hold relationship', detail: '62-question assessment, specialist clearance and partner decision.', icon: 'users' },
+  { gate: 'G2', title: 'Authorize work', detail: 'Terms, team, direct-access checks and recoverable provisioning.', icon: 'key' },
+  { gate: 'G3', title: 'Promote usable data', detail: 'Receipt, safe parsing, control totals, source bridge and validated TB.', icon: 'database' },
+  { gate: 'G4–G5', title: 'Prepare accounting and audit', detail: 'Mapping, AJ-001 reflection, statements, risks, materiality and samples.', icon: 'calculator' },
+  { gate: 'G6–G7', title: 'Review exact submissions', detail: 'Workpaper snapshots, findings, management responsibility, partner and EQR.', icon: 'check-circle' },
+  { gate: 'G8–G9', title: 'Release and archive', detail: 'Signed lineage, protection attestation, checkpoint, delivery and structured archive.', icon: 'lock' },
+  { gate: 'G10', title: 'Renew with fresh facts', detail: '30-question continuance and a new-period shell; no copied sign-offs.', icon: 'refresh' },
+]
+
+export const feasibilityCards = [
+  { label: 'Technical feasibility', value: 'Conditional positive', detail: 'Proceed with a bounded Phase 0 and synthetic vertical slice.', icon: 'workflow', tone: 'green' },
+  { label: 'Operational / professional', value: 'Owner validation required', detail: 'Methodology, records, access and reviewer evidence are still decision gates.', icon: 'users', tone: 'amber' },
+  { label: 'Financial feasibility', value: 'Not established', detail: 'Replace illustrative costs and benefits with measured firm inputs before funding.', icon: 'chart', tone: 'blue' },
 ]
 
 export const timeline = [

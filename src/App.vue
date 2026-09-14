@@ -15,6 +15,8 @@ const routes = {
   reviews: { label: 'Reviews & approvals', title: 'Reviews & approvals', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ReviewsPage.vue')) },
   release: { label: 'Release & archive', title: 'Release & archive', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ReleasePage.vue')) },
   integration: { label: 'Integration health', title: 'Integration health', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/IntegrationPage.vue')) },
+  architecture: { label: 'Architecture map', title: 'Architecture map', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ArchitecturePage.vue')) },
+  readiness: { label: 'Phase 0 readiness', title: 'Phase 0 readiness', roles: ['admin'], component: defineAsyncComponent(() => import('./pages/ReadinessPage.vue')) },
   'client-home': { label: 'Portal overview', title: 'Client portal', roles: ['admin', 'client'], component: defineAsyncComponent(() => import('./pages/ClientPortalPage.vue')) },
   'client-details': { label: 'Client details', title: 'Client details', roles: ['admin', 'client'], component: defineAsyncComponent(() => import('./pages/ClientDetailsPage.vue')) },
   'client-communications': { label: 'Communications', title: 'Portal communications', roles: ['admin', 'client'], component: defineAsyncComponent(() => import('./pages/ClientCommunicationsPage.vue')) },
@@ -45,7 +47,7 @@ const helpCopy = computed(() => isClient.value
   ? 'Use Client details to submit facts, Requests to see what is due, and Communications for every question or clarification.'
   : isAccountant.value
     ? 'Start with View client details, then follow PBC, Accounting, and Audit. Acceptance, review, release, and integration controls remain with the admin role.'
-    : 'Use the full navigation to trace acceptance, evidence, accounting, audit, approvals, release, and integration controls.')
+    : 'Use the full navigation to trace acceptance, evidence, accounting, audit, approvals, release, architecture, and Phase 0 proof controls.')
 const visibleNavItems = computed(() => {
   if (!currentUser.value) return []
   if (currentUser.value.role === 'client') {
