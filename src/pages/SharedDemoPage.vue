@@ -10,6 +10,7 @@ import { loadDemoSession } from '../auth.js'
 import { pipelineStages } from '../pipelineData.js'
 import {
   SHARED_ENGAGEMENT_ID,
+  createDemoSession,
   getDemoMe,
   getSharedArtifacts,
   getSharedOutbox,
@@ -55,6 +56,7 @@ const selectedAction = ref('')
 const form = ref({})
 const busy = ref(false)
 const actionMessage = ref(null)
+const lastActionResponse = ref(null)
 const artifacts = ref([])
 const outbox = ref([])
 const pbc = ref({ requests: [], receipts: [] })
@@ -75,13 +77,22 @@ function setAction(key) {
   for (const [field, _label, placeholder] of definition?.fields || []) next[field] = placeholder
   form.value = next
   actionMessage.value = null
+  lastActionResponse.value = null
 }
 
 function navigate(route) { emit('navigate', route) }
 
 async function refreshExtras() {
   if (!sharedEnabled) return
-  const [artifactResult, outboxResult, pbcResult, meResult] = await Promise.all([getSharedArtifacts(engagementId), getSharedOutbox(engagementId), getSharedPbc(engagementId), getDemoMe()])
+  const [artifactResult, outboxResult, pbcResult] = await Promise.all([getSharedArtifacts(engagementId), getSharedOutbox(engagementId), getSharedPbc(engagementId)])
+  let meResult = await getDemoMe()
+  // A first visit can race the App-level session bootstrap. Retry once by
+  // minting the same allow-listed persona session; no role is accepted from
+  // the browser and the Worker still decides the actor.
+  if (!meResult.ok && currentUser.value?.id) {
+    await createDemoSession(currentUser.value.id)
+    meResult = await getDemoMe()
+  }
   if (artifactResult.ok) artifacts.value = artifactResult.artifacts || []
   if (outboxResult.ok) outbox.value = outboxResult.messages || []
   if (pbcResult.ok) pbc.value = { requests: pbcResult.requests || [], receipts: pbcResult.receipts || [] }
@@ -98,9 +109,11 @@ async function submitAction() {
   busy.value = false
   if (result.ok) {
     actionMessage.value = { ok: true, text: `${activeAction.value.label} committed to the shared D1 demo record.` }
+    lastActionResponse.value = Object.fromEntries(Object.entries(result).filter(([key]) => !['ok', 'evidenceLevel'].includes(key)))
     await refreshExtras()
   } else {
     actionMessage.value = { ok: false, text: `${activeAction.value.label} was not committed: ${result.error?.message || result.error?.code || 'Worker rejected the request.'}` }
+    lastActionResponse.value = { error: result.error }
   }
 }
 
@@ -147,6 +160,7 @@ watch(availableActions, (items) => {
           <div class="shared-action-submit"><span><Icon name="shield" :size="16" />Synthetic only · no external message or binary file is sent.</span><button type="submit" class="button primary" :disabled="busy || generationChanged">{{ busy ? 'Committing…' : 'Commit shared action' }}<Icon name="arrow-right" :size="16" /></button></div>
         </form>
         <p v-if="actionMessage" class="shared-action-result" :class="actionMessage.ok ? 'success' : 'failure'" role="status"><Icon :name="actionMessage.ok ? 'check-circle' : 'warning'" :size="17" />{{ actionMessage.text }}</p>
+        <details v-if="lastActionResponse" class="shared-action-response"><summary>Show Worker response details</summary><pre>{{ JSON.stringify(lastActionResponse, null, 2) }}</pre></details>
       </article>
 
       <aside class="panel shared-demo-guide-panel">

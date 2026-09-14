@@ -96,6 +96,10 @@ function cleanText(value, maxLength, fallback = '') {
   return text && text.length <= maxLength ? text : null
 }
 
+function readBoolean(value) {
+  return value === true || String(value ?? '').trim().toLowerCase() === 'true';
+}
+
 function serializeComment(row) {
   return {
     id: row.id,
@@ -799,7 +803,7 @@ async function actionSubmitPbcReceipt(request, env, session, id, payload, correl
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) return error(request, 'Provide the PBC request ID this receipt answers.');
   const fileName = cleanText(payload.fileName, 240);
   if (!fileName) return error(request, 'Provide a file name or hard-copy label (maximum 240 characters).');
-  const hardCopy = Boolean(payload.hardCopy);
+  const hardCopy = readBoolean(payload.hardCopy);
   const fileSize = Number(payload.fileSize || 0);
   if (!hardCopy && (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > 50_000_000)) {
     return error(request, 'Provide a synthetic file size between 1 byte and 50 MB, or choose hard copy.');
@@ -874,7 +878,7 @@ async function actionRecordTbSource(request, env, session, id, payload, correlat
      ON CONFLICT (engagement_id, source_version) DO UPDATE SET source_id = excluded.source_id, period = excluded.period,
        currency = excluded.currency, row_count = excluded.row_count, debit_total = excluded.debit_total, credit_total = excluded.credit_total,
        validation_state = excluded.validation_state, mapping_complete = excluded.mapping_complete, replaces_version = excluded.replaces_version, created_by = excluded.created_by`,
-  ).bind(crypto.randomUUID(), id, sourceId, sourceVersion, cleanText(payload.period, 40, '') ?? '', currency, rowCount, debitTotal, creditTotal, validationState, payload.mappingComplete ? 1 : 0, replacesVersion, session.actorId).run();
+  ).bind(crypto.randomUUID(), id, sourceId, sourceVersion, cleanText(payload.period, 40, '') ?? '', currency, rowCount, debitTotal, creditTotal, validationState, readBoolean(payload.mappingComplete) ? 1 : 0, replacesVersion, session.actorId).run();
   const engagement = await touchEngagement(env, id, 'STAGE-05');
   await upsertTask(env, { taskId: `tb-review-${id}-${sourceVersion}`, engagementId: id, assigneeRole: 'accounting_reviewer', title: `Review TB ${sourceVersion} (${debitTotal})`, state: 'OPEN', linkedObjectType: 'tb_source', linkedObjectId: sourceVersion });
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'TB_SOURCE_RECORDED', objectType: 'tb_source', objectId: sourceVersion, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });

@@ -297,6 +297,9 @@ p { color: var(--muted); }
 .shared-action-result { display: flex; align-items: flex-start; gap: 8px; margin: 0 21px 17px; padding: 10px; border: 1px solid; border-radius: 8px; font-size: .72rem; line-height: 1.4; }
 .shared-action-result.success { color: #176b35; border-color: #b9dfc1; background: var(--soft-green); }
 .shared-action-result.failure { color: #8a381e; border-color: #efc2ae; background: #fff7f3; }
+.shared-action-response { margin: -4px 21px 17px; padding: 8px 10px; border: 1px solid #d7e2f0; border-radius: 8px; background: #fbfdff; }
+.shared-action-response summary { color: var(--secondary); cursor: pointer; font-size: .68rem; font-weight: 700; }
+.shared-action-response pre { max-height: 180px; margin: 9px 0 0; overflow: auto; color: var(--muted); font: .63rem/1.45 'Fira Code', monospace; white-space: pre-wrap; }
 .shared-demo-steps { display: grid; gap: 12px; margin: 0; padding: 0 21px 17px 40px; }
 .shared-demo-steps li { padding-left: 2px; color: var(--muted); font-size: .72rem; line-height: 1.42; }
 .shared-demo-steps strong { display: block; margin-bottom: 2px; color: var(--primary); font-size: .76rem; }
