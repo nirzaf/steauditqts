@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { demoUsers, findDemoUser } from '../auth'
+import Icon from '../components/Icon.vue'
 
 const emit = defineEmits(['login'])
 const selectedId = ref(demoUsers[0].id)
@@ -35,9 +36,9 @@ function enterDemo(user) {
 <template>
   <main class="login-shell">
     <section class="login-intro">
-      <div class="login-brand"><span class="brand-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5zM8 9h8M8 13h5M8 17h8"/></svg></span><span><strong>AuditFlow</strong><small>Practice platform</small></span></div>
+      <div class="login-brand"><span class="brand-mark"><Icon name="workflow" :size="22" /></span><span><strong>AuditFlow</strong><small>Practice platform</small></span></div>
       <div class="login-copy"><span class="eyebrow">STE AuditFlow QTS</span><h1>Choose how you want to walk through the workflow.</h1><p>Three fictional personas make the boundaries clear: the client submits and communicates, the accountant prepares, and the admin supervises every control.</p></div>
-      <div class="login-boundary"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6M12 7.5v.5"/></svg><span><strong>Prototype only</strong> These are dummy credentials for a safe walkthrough. No production identity or decision is created.</span></div>
+      <div class="login-boundary"><Icon name="info" :size="18" /><span><strong>Prototype only</strong> These are dummy credentials for a safe walkthrough. No production identity or decision is created.</span></div>
     </section>
 
     <section class="login-panel" aria-labelledby="login-title">
@@ -55,11 +56,10 @@ function enterDemo(user) {
         <label>Email<input v-model="email" type="email" autocomplete="username" /></label>
         <label>Password<input v-model="password" type="text" autocomplete="current-password" /></label>
         <p v-if="errorMessage" class="login-error" role="alert">{{ errorMessage }}</p>
-        <button type="submit" class="button primary full-width">Sign in as {{ selectedUser.name }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>
+        <button type="submit" class="button primary full-width">Sign in as {{ selectedUser.name }}<Icon name="arrow-right" :size="17" /></button>
       </form>
 
-      <div class="login-credentials"><span class="guide-label">Quick demo credentials</span><div v-for="user in demoUsers" :key="`${user.id}-credentials`" class="credential-row"><span><strong>{{ user.roleLabel }}</strong><small>{{ user.email }} · {{ user.password }}</small></span><button type="button" class="text-button" @click="enterDemo(user)">Enter demo <span aria-hidden="true">→</span></button></div></div>
+      <div class="login-credentials"><span class="guide-label"><Icon name="key" :size="14" />Quick demo credentials</span><div v-for="user in demoUsers" :key="`${user.id}-credentials`" class="credential-row"><span><strong>{{ user.roleLabel }}</strong><small>{{ user.email }} · {{ user.password }}</small></span><button type="button" class="text-button" @click="enterDemo(user)">Enter demo <Icon name="arrow-right" :size="15" /></button></div></div>
     </section>
   </main>
 </template>
-

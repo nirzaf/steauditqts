@@ -1,4 +1,6 @@
 <script setup>
+import Icon from './Icon.vue'
+
 defineProps({
   eyebrow: { type: String, default: '' },
   title: { type: String, required: true },
@@ -18,7 +20,7 @@ const emit = defineEmits(['action'])
     </div>
     <button v-if="actionLabel" type="button" class="button primary" @click="emit('action')">
       <span>{{ actionLabel }}</span>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+      <Icon name="plus" :size="16" />
     </button>
   </div>
 </template>

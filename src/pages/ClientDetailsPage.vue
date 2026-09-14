@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
+import Icon from '../components/Icon.vue'
 import { DEMO_ENGAGEMENT_ID, loadClientProfile, saveClientProfile } from '../api'
 import { client, workflowGuides } from '../data'
 
@@ -57,14 +58,14 @@ onMounted(loadProfile)
       <section class="panel portal-form-panel">
         <div class="panel-heading"><div><span class="eyebrow">Submission form</span><h2>Northstar Trading profile</h2></div><span class="portal-form-source" :class="{ local: source === 'local' }">{{ source === 'd1' ? 'Shared demo record' : 'Browser fallback' }}</span></div>
         <form class="portal-form" @submit.prevent="submitDetails">
-          <div class="form-section-heading"><span>Registered entity</span><small>Required for matching the engagement record</small></div>
+          <div class="form-section-heading"><span><Icon name="building" :size="16" />Registered entity</span><small>Required for matching the engagement record</small></div>
           <div class="form-field-grid"><label>Legal name<input v-model="form.legalName" required maxlength="160" /></label><label>Registration / CR number<input v-model="form.registration" required maxlength="80" /></label></div>
-          <div class="form-section-heading"><span>Primary contact</span><small>Who can answer follow-up questions?</small></div>
+          <div class="form-section-heading"><span><Icon name="user" :size="16" />Primary contact</span><small>Who can answer follow-up questions?</small></div>
           <div class="form-field-grid"><label>Contact name<input v-model="form.contactName" required maxlength="80" autocomplete="name" /></label><label>Email<input v-model="form.contactEmail" required type="email" maxlength="160" autocomplete="email" /></label><label>Phone<input v-model="form.phone" required maxlength="40" autocomplete="tel" /></label></div>
-          <div class="form-section-heading"><span>Service context</span><small>Confirm the period and service route</small></div>
+          <div class="form-section-heading"><span><Icon name="briefcase" :size="16" />Service context</span><small>Confirm the period and service route</small></div>
           <div class="form-field-grid"><label>Reporting period<input v-model="form.servicePeriod" required maxlength="120" /></label><label>Requested service<input v-model="form.serviceRequested" required maxlength="160" /></label></div>
           <label>What changed or needs context?<textarea v-model="form.context" maxlength="1200" rows="4" placeholder="Ownership, systems, locations, timing, or other context"></textarea></label>
-          <div class="portal-form-footer"><span class="form-safety-note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6M12 7.5v.5"/></svg>Never enter passwords, access tokens, or banking credentials.</span><button type="submit" class="button primary" :disabled="saving || loading">{{ saving ? 'Submitting…' : 'Submit client details' }}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button></div>
+          <div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />Never enter passwords, access tokens, or banking credentials.</span><button type="submit" class="button primary" :disabled="saving || loading">{{ saving ? 'Submitting…' : 'Submit client details' }}<Icon name="arrow-right" :size="17" /></button></div>
           <p v-if="statusMessage" class="portal-status" role="status" aria-live="polite">{{ statusMessage }}</p>
         </form>
       </section>
@@ -77,4 +78,3 @@ onMounted(loadProfile)
     </div>
   </div>
 </template>
-

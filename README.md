@@ -54,6 +54,10 @@ npx wrangler pages deploy dist --project-name ste-quadrate-lk --branch main
 
 The Worker is intentionally a demo API: inputs are length- and key-validated, writes are scoped to the selected engagement and step, and the interface keeps fictional data and professional decision boundaries visible.
 
+## Iconography and accessibility
+
+The interface uses the shared `src/components/Icon.vue` outline set for navigation, workflow steps, status pills, portal actions, and system feedback. Icons are decorative when nearby text already explains the action, while standalone controls keep an accessible label and tooltip. The set is SVG-only, token-sized, and paired with text/status copy so color is never the only signal.
+
 ## Demo personas
 
 The sign-in screen exposes three fictional accounts so a stakeholder can walk the same engagement from different perspectives:

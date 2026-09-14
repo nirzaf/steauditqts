@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { addWorkflowComment, DEMO_ENGAGEMENT_ID, loadWorkflowState, saveWorkflowPreference } from '../api'
+import Icon from './Icon.vue'
 
 const props = defineProps({
   guide: { type: Object, required: true },
@@ -19,6 +20,26 @@ const savingComment = ref(false)
 const savingPreference = ref(false)
 const source = ref('d1')
 const statusMessage = ref('')
+
+const guideIcon = computed(() => ({
+  'overview-guide': 'grid',
+  'clients-guide': 'users',
+  'engagement-guide': 'briefcase',
+  'pbc-guide': 'inbox',
+  'accounting-guide': 'calculator',
+  'audit-guide': 'clipboard',
+  'reviews-guide': 'check-circle',
+  'release-guide': 'lock',
+  'integration-guide': 'pulse',
+  'client-portal-guide': 'building',
+  'client-details-guide': 'user',
+  'client-communications-guide': 'message',
+  'accountant-portal-guide': 'calculator',
+  'accountant-client-guide': 'users',
+  'admin-console-guide': 'shield',
+}[props.guide.id] || 'workflow'))
+
+const stepIcons = ['list-check', 'file', 'arrow-right']
 
 const sourceLabel = computed(() => source.value === 'd1' ? 'Shared demo record' : 'Browser-only fallback')
 const sourceHint = computed(() => source.value === 'd1'
@@ -94,7 +115,7 @@ watch(() => props.guide.id, loadState)
   <aside class="workflow-guide panel" :aria-labelledby="`${guideId}-title`">
     <div class="guide-header">
       <div class="guide-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5M8 17h8"/></svg>
+        <Icon :name="guideIcon" :size="22" />
       </div>
       <div class="guide-intro">
         <div class="guide-kicker"><span class="eyebrow">How to use this step</span><span class="guide-step">{{ guide.step }}</span><span class="guide-phase">{{ guide.phase }}</span></div>
@@ -103,26 +124,26 @@ watch(() => props.guide.id, loadState)
       </div>
       <button type="button" class="guide-toggle" :aria-expanded="expanded" :aria-controls="guideId" @click="toggle">
         <span>{{ expanded ? 'Hide details' : 'Show details' }}</span>
-        <svg viewBox="0 0 24 24" aria-hidden="true" :class="{ rotated: expanded }"><path d="m6 9 6 6 6-6"/></svg>
+        <Icon name="chevron-down" :size="17" :class="{ rotated: expanded }" />
       </button>
     </div>
 
     <div v-if="expanded" :id="guideId" class="guide-content">
       <div class="guide-step-grid">
         <article v-for="(item, index) in guide.steps" :key="item.title" class="guide-step-card">
-          <span class="guide-number">{{ index + 1 }}</span>
+          <span class="guide-step-icon" aria-hidden="true"><Icon :name="stepIcons[index] || 'file'" :size="17" /></span>
           <div><h3>{{ item.title }}</h3><p>{{ item.body }}</p></div>
         </article>
       </div>
       <div class="guide-footer">
         <section class="guide-checks" aria-labelledby="guide-checks-title">
-          <span id="guide-checks-title" class="guide-label">Before you continue</span>
+          <span id="guide-checks-title" class="guide-label"><Icon name="check-circle" :size="14" />Before you continue</span>
           <ul>
-            <li v-for="check in guide.checks" :key="check"><span aria-hidden="true">✓</span>{{ check }}</li>
+            <li v-for="check in guide.checks" :key="check"><Icon name="check" :size="14" />{{ check }}</li>
           </ul>
         </section>
         <section class="guide-next" aria-labelledby="guide-next-title">
-          <span id="guide-next-title" class="guide-label">Next step</span>
+          <span id="guide-next-title" class="guide-label"><Icon name="arrow-right" :size="14" />Next step</span>
           <strong>{{ guide.next }}</strong>
           <p>{{ guide.nextHint }}</p>
         </section>
@@ -143,11 +164,11 @@ watch(() => props.guide.id, loadState)
             <label class="guide-comment-field">Comment<textarea v-model="commentBody" maxlength="1200" rows="3" placeholder="What should the team know before continuing?" required></textarea></label>
             <div class="guide-form-footer"><span class="guide-character-count">{{ commentBody.length }}/1,200</span><button type="submit" class="button primary" :disabled="savingComment || !authorName.trim() || !commentBody.trim()">{{ savingComment ? 'Saving…' : 'Add comment' }}</button></div>
           </form>
-          <div class="guide-persistence-note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6M12 7.5v.5"/></svg><span>{{ sourceHint }}</span></div>
+          <div class="guide-persistence-note"><Icon name="database" :size="16" /><span>{{ sourceHint }}</span></div>
         </section>
 
         <section class="guide-comments-card" :aria-labelledby="`${feedbackId}-comments-title`">
-          <div class="guide-feedback-heading"><div><span class="guide-label">Decision aid</span><h3 :id="`${feedbackId}-comments-title`">Step setting &amp; comments</h3></div><span class="guide-comment-count">{{ commentCountLabel }}</span></div>
+          <div class="guide-feedback-heading"><div><span class="guide-label"><Icon name="settings" :size="14" />Decision aid</span><h3 :id="`${feedbackId}-comments-title`">Step setting &amp; comments</h3></div><span class="guide-comment-count">{{ commentCountLabel }}</span></div>
           <label class="guide-optional-control"><input type="checkbox" :checked="stepOptional" :disabled="savingPreference || loadingState" @change="updateOptional" /><span><strong>{{ stepOptional ? 'Optional in this walkthrough' : 'Required in this walkthrough' }}</strong><small>{{ stepOptional ? 'You can continue without this step, but keep the reason visible.' : 'Use this when the engagement needs this control before handoff.' }}</small></span></label>
           <p class="guide-optional-warning">Optional status changes the demo path only. It never bypasses a real approval, independence check, or audit requirement.</p>
           <div class="guide-comment-list" aria-live="polite">
