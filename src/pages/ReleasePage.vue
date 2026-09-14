@@ -34,8 +34,8 @@ function advanceRelease() {
   if (releaseIndex.value >= releaseSteps.length - 1) return
   const actor = activeActor()
   const result = releaseIndex.value === 7 && !candidate.value.checkpointId
-    ? createReleaseCheckpoint({ candidateId: candidate.value.id, actorPersonaId: actor?.personaId, expectedRevision: candidate.value.revision, idempotencyKey: `checkpoint-${candidate.value.id}-${candidate.value.revision}` })
-    : advanceReleaseCommand({ candidateId: candidate.value.id, actorPersonaId: actor?.personaId, expectedRevision: candidate.value.revision, idempotencyKey: `release-${candidate.value.id}-${candidate.value.revision}-${releaseIndex.value}` })
+    ? createReleaseCheckpoint({ candidateId: candidate.value.id, actorPersonaId: actor?.personaId, expectedRevision: candidate.value.revision, expectedSessionEpoch: actor?.sessionEpoch, idempotencyKey: `checkpoint-${candidate.value.id}-${candidate.value.revision}` })
+    : advanceReleaseCommand({ candidateId: candidate.value.id, actorPersonaId: actor?.personaId, expectedRevision: candidate.value.revision, expectedSessionEpoch: actor?.sessionEpoch, idempotencyKey: `release-${candidate.value.id}-${candidate.value.revision}-${releaseIndex.value}` })
   toast.value = result.outcome === 'COMMITTED' ? `${releaseSteps[Math.min(candidate.value.stepIndex, releaseSteps.length - 1)][0]} recorded with ${result.evidenceLevel} evidence.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 3500)
 }
@@ -51,19 +51,19 @@ function inspectReleaseStep(index) {
 }
 
 async function assembleArchivePackage() {
-  const result = await assembleArchive({ candidateId: candidate.value?.id, actorPersonaId: activeActor()?.personaId, expectedRevision: candidate.value?.revision, idempotencyKey: `archive-${candidate.value?.id}-${candidate.value?.revision}` })
+  const result = await assembleArchive({ candidateId: candidate.value?.id, actorPersonaId: activeActor()?.personaId, expectedRevision: candidate.value?.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `archive-${candidate.value?.id}-${candidate.value?.revision}` })
   toast.value = result.outcome === 'COMMITTED' ? `Archive ${result.data.id} verified with manifest ${result.data.manifestDigest}.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4500)
 }
 
 function openLegalHold() {
-  const result = recordLegalHold({ engagementId: selectedEngagement.value?.id, actorPersonaId: activeActor()?.personaId, expectedRevision: selectedEngagement.value?.revision, idempotencyKey: `hold-${selectedEngagement.value?.id}-${scenario.legalHolds?.length || 0}`, type: 'LITIGATION', reason: 'Synthetic preservation hold recorded from the release workspace.' })
+  const result = recordLegalHold({ engagementId: selectedEngagement.value?.id, actorPersonaId: activeActor()?.personaId, expectedRevision: selectedEngagement.value?.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `hold-${selectedEngagement.value?.id}-${scenario.legalHolds?.length || 0}`, type: 'LITIGATION', reason: 'Synthetic preservation hold recorded from the release workspace.' })
   toast.value = result.outcome === 'COMMITTED' ? `Legal hold ${result.data.id} is active; disposal remains blocked.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4500)
 }
 
 function releaseHold(hold) {
-  const result = releaseLegalHold({ holdId: hold.id, actorPersonaId: activeActor()?.personaId, expectedRevision: hold.revision, idempotencyKey: `hold-release-${hold.id}-${hold.revision}`, rationale: 'Synthetic records custodian release recorded after the preservation need ended.' })
+  const result = releaseLegalHold({ holdId: hold.id, actorPersonaId: activeActor()?.personaId, expectedRevision: hold.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `hold-release-${hold.id}-${hold.revision}`, rationale: 'Synthetic records custodian release recorded after the preservation need ended.' })
   toast.value = result.outcome === 'COMMITTED' ? `Legal hold ${hold.id} released; the original hold event remains in the ledger.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4500)
 }

@@ -62,6 +62,8 @@ test('accounting intake rejects unsafe or ambiguous source rows', () => {
   changed[12].debit = '23000.00'
   assert.equal(sourceReflection(partial, changed), 'PARTIALLY_REFLECTED')
   assert.equal(sourceReflection(partial, partial), 'NOT_REFLECTED')
+  assert.equal(sourceReflection([], changed), 'UNKNOWN')
+  assert.equal(sourceReflection(partial.filter((row) => row.accountCode !== '520100'), changed), 'UNKNOWN')
 })
 
 test('money operations use exact base-10 values and reject floats', () => {

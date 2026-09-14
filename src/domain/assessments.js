@@ -53,11 +53,36 @@ export function evaluateAssessment(assessment) {
     }
     applicable += 1
     const answer = String(response.answer || 'UNKNOWN').toUpperCase()
-    if (!answer || answer === 'UNKNOWN' || answer === 'MISSING') {
+    const allowedAnswers = question.id === 'CE-032'
+      ? ['NO_MATCH', 'POSSIBLE_MATCH', 'MATCH_CONFIRMED', 'CONFIRMED_PROHIBITION', 'UNKNOWN']
+      : ['YES', 'NO', 'UNKNOWN']
+    if (!allowedAnswers.includes(answer)) {
+      holds.push({ questionId: question.id, code: 'ANSWER_INVALID', message: `${question.id} has an unsupported answer for the versioned question bank.` })
+    } else if (!answer || answer === 'UNKNOWN' || answer === 'MISSING') {
       holds.push({ questionId: question.id, code: 'RESPONSE_REQUIRED', message: `${question.id} has no favorable answer or supporting evidence.` })
     } else {
       answered += 1
       if (response.verification === 'VERIFIED') verified += 1
+    }
+    // The source catalogue contains directional rules. A negative response
+    // is not automatically a legal conclusion, but when the approved rule
+    // explicitly says the answer needs evidence, renegotiation, specialist
+    // review or a hard stop, keep that review visible to the partner instead
+    // of treating the response as a favorable completion.
+    const rule = String(question.rule || '')
+    const adverseDirection = (answer === 'NO' && /\bNo\s*=/i.test(rule))
+      // A positive-risk rule (for example, "Yes = EDD") is still shown to
+      // the professional, but a fixture response that already carries an
+      // explicit VERIFIED marker represents that review having occurred. New
+      // submitted answers remain held until somebody records the follow-up.
+      || (answer === 'YES' && /\bYes\s*=/i.test(rule) && response.verification !== 'VERIFIED')
+    if (adverseDirection) {
+      const hardStop = /hard\s*stop|cannot\s+start|do\s+not\s+start|decline/i.test(rule)
+      holds.push({
+        questionId: question.id,
+        code: hardStop ? 'HARD_STOP_RESPONSE' : 'ADVERSE_RESPONSE_REVIEW',
+        message: `${question.id} requires professional follow-up: ${rule.split('=').slice(1).join('=').trim() || 'review the response and supporting evidence.'}`,
+      })
     }
     if (answer === 'CONFIRMED_PROHIBITION' || (question.id === 'CE-032' && answer === 'MATCH_CONFIRMED')) {
       prohibitions.push({ questionId: question.id, code: 'CONFIRMED_PROHIBITION', message: `${question.id} is a confirmed prohibition and cannot be overridden.` })
@@ -83,9 +108,14 @@ export function updateAssessmentResponse(assessment, { questionId, actor, expect
   if (expectedRevision != null && expectedRevision !== assessment.revision) return { ok: false, code: 'REVISION_CONFLICT', message: `Expected assessment revision ${expectedRevision}, current revision is ${assessment.revision}.` }
   if (!['APPLICABLE', 'NOT_APPLICABLE'].includes(applicability)) return { ok: false, code: 'APPLICABILITY_INVALID', message: 'Applicability must be APPLICABLE or NOT_APPLICABLE.' }
   if (applicability === 'NOT_APPLICABLE' && !String(explanation).trim()) return { ok: false, code: 'NA_RATIONALE_REQUIRED', message: 'A not-applicable response requires a rationale.' }
+  const normalizedAnswer = String(answer || 'UNKNOWN').toUpperCase()
+  const allowedAnswers = question.id === 'CE-032'
+    ? ['NO_MATCH', 'POSSIBLE_MATCH', 'MATCH_CONFIRMED', 'CONFIRMED_PROHIBITION', 'UNKNOWN']
+    : ['YES', 'NO', 'UNKNOWN']
+  if (!allowedAnswers.includes(normalizedAnswer)) return { ok: false, code: 'ANSWER_INVALID', message: `${question.id} does not support the answer ${normalizedAnswer} in this question-bank version.` }
   const response = assessment.responses[questionId]
   response.applicability = applicability
-  response.answer = String(answer || 'UNKNOWN').toUpperCase()
+  response.answer = normalizedAnswer
   response.explanation = String(explanation || '').trim()
   response.evidenceSnapshotId = evidenceSnapshotId
   response.respondentActorId = actor.id

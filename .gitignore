@@ -1,4 +1,6 @@
 node_modules/
+.nuxt/
+.output/
 auditflow-site.tar.gz
 consolidated_accounting_audit_workflow_v2.md
 .wrangler/

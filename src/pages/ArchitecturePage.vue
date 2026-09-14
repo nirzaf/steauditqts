@@ -36,7 +36,7 @@ function statusTone(tone) {
 <template>
   <div class="page architecture-page">
     <PageHeader
-      eyebrow="V4 architecture · admin view"
+      eyebrow="V5 architecture · admin view"
       title="Frappe-first control planes"
       description="See where identity, structured records, Office documents, professional decisions, records protection, and recovery live—and how each boundary is tested before production."
       action-label="Open Phase 0 proof"
@@ -51,7 +51,7 @@ function statusTone(tone) {
         <p>AuditFlow is a synthetic demonstration of the proposed Frappe/ERPNext + <code>audit_practice</code> modular monolith. Each system below has one job, one owner, and a visible handoff.</p>
         <div class="architecture-status-stack" aria-label="Implementation status">
           <span class="architecture-status current"><strong>CURRENT IMPLEMENTATION</strong><small>Vue/Vite · browser-local synthetic state · SIMULATION evidence</small></span>
-          <span class="architecture-status target"><strong>TARGET V4 ARCHITECTURE</strong><small>Frappe + MariaDB + Microsoft 365 controls · not implemented or proven here</small></span>
+          <span class="architecture-status target"><strong>TARGET V5 ARCHITECTURE</strong><small>Frappe + MariaDB + bounded workers + Microsoft 365 controls · not implemented or proven here</small></span>
         </div>
       </div>
       <div class="architecture-chip-row" aria-label="Architecture decisions">
@@ -122,7 +122,7 @@ function statusTone(tone) {
         </div>
         <p class="architecture-detail-copy">{{ selectedNode.detail }}</p>
         <dl class="architecture-detail-list"><div><dt>Owner / source</dt><dd>{{ selectedNode.owner }}</dd></div><div><dt>Boundary rule</dt><dd>{{ selectedNode.rule }}</dd></div></dl>
-        <div class="architecture-detail-callout"><Icon name="shield" :size="16" /><span>V4 rule: a green status is useful only when its scope, revision, and evidence are visible to the person acting.</span></div>
+        <div class="architecture-detail-callout"><Icon name="shield" :size="16" /><span>V5 rule: a green status is useful only when its scope, revision, and evidence are visible to the person acting.</span></div>
       </aside>
     </section>
 

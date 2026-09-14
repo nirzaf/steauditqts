@@ -13,17 +13,17 @@ export const EVIDENCE_LEVEL = 'SIMULATION'
 const clone = (value) => JSON.parse(JSON.stringify(value))
 
 export const gateDefinitions = [
-  { id: 'G0', title: 'Firm ready', detail: 'Methods, access and repositories', scope: 'all', period: 'current' },
-  { id: 'G1', title: 'Accepted / continued', detail: 'Assessment, ethics and clearances', scope: 'all', period: 'current' },
-  { id: 'G2', title: 'Work authorized', detail: 'Terms, team, access and dates', scope: 'all', period: 'current' },
-  { id: 'G3', title: 'Data usable', detail: 'Validated source and control totals', scope: 'accounting-or-audit', period: 'current' },
-  { id: 'G4', title: 'Accounting ready', detail: 'Mapping, journals and statements', scope: 'accounting-or-audit', period: 'current' },
-  { id: 'G5', title: 'Audit plan ready', detail: 'Risks, materiality and procedures', scope: 'audit', period: 'current' },
-  { id: 'G6', title: 'Conclusions complete', detail: 'Evidence, exceptions and evaluation', scope: 'audit', period: 'current' },
-  { id: 'G7', title: 'Final package approved', detail: 'Management, partner and EQR', scope: 'all', period: 'current' },
-  { id: 'G8', title: 'Release authorized', detail: 'Matched report and recipients', scope: 'all', period: 'current' },
-  { id: 'G9', title: 'Archive complete', detail: 'Manifest, retention and recovery', scope: 'all', period: 'current' },
-  { id: 'G10', title: 'Next period allowed', detail: 'Fresh continuance and terms', scope: 'all', period: 'next' },
+  { id: 'G0', title: 'Firm ready', detail: 'Approved roles, templates, methodology, safe integrations and records controls', scope: 'all', period: 'current' },
+  { id: 'G1', title: 'Accept / continue', detail: 'Current assessment, evidence, clearances and partner decision', scope: 'all', period: 'current' },
+  { id: 'G2', title: 'Commercial ready', detail: 'Cost estimate, fee approval, quotation and scope assumptions', scope: 'all', period: 'current' },
+  { id: 'G3', title: 'Terms accepted', detail: 'Approved engagement letter and verified client acceptance', scope: 'all', period: 'current' },
+  { id: 'G4', title: 'Portal eligible', detail: 'Terms, assignments, workspace and controlled onboarding', scope: 'all', period: 'current' },
+  { id: 'G5', title: 'Fieldwork ready', detail: 'Approved plan, announcement, team and request readiness', scope: 'audit', period: 'current' },
+  { id: 'G6', title: 'Review submission ready', detail: 'Workpapers, conclusions and visible review blockers', scope: 'audit', period: 'current' },
+  { id: 'G7', title: 'Completion ready', detail: 'Management response, representations, review and EQR', scope: 'all', period: 'current' },
+  { id: 'G8', title: 'Release ready', detail: 'Exact report/FS pair, opinion, protection and release evidence', scope: 'all', period: 'current' },
+  { id: 'G9', title: 'Commercial close', detail: 'Invoice, advance allocation, time/cost snapshot and exceptions', scope: 'all', period: 'current' },
+  { id: 'G10', title: 'Archive / renewal', detail: 'Retained file, recovery evidence and next-period decision', scope: 'all', period: 'next' },
 ]
 
 const roleDefinitions = [
@@ -156,7 +156,9 @@ function initialScenario() {
         evidence: {
           firmReady: true,
           accepted: true,
+          commercialReady: true,
           termsSigned: true,
+          portalEligible: true,
           assignmentsEligible: true,
           workspaceVerified: true,
           sourceValidated: true,
@@ -170,6 +172,7 @@ function initialScenario() {
           eqrComplete: false,
           protection: 'UNKNOWN',
           archiveVerified: false,
+          commercialClosed: false,
         },
         holds: [
           { id: 'HOLD-AR-019', code: 'EVIDENCE_CONFLICT', message: 'AR-019 has contradictory ageing and subsequent-receipt evidence.', action: 'Independent reviewer disposition required.' },
@@ -190,7 +193,9 @@ function initialScenario() {
         evidence: {
           firmReady: true,
           accepted: true,
+          commercialReady: true,
           termsSigned: true,
+          portalEligible: true,
           assignmentsEligible: true,
           workspaceVerified: true,
           sourceValidated: true,
@@ -204,6 +209,7 @@ function initialScenario() {
           eqrComplete: null,
           protection: 'UNKNOWN',
           archiveVerified: false,
+          commercialClosed: false,
         },
         holds: [],
       },
@@ -222,7 +228,9 @@ function initialScenario() {
         evidence: {
           firmReady: true,
           accepted: true,
+          commercialReady: true,
           termsSigned: true,
+          portalEligible: true,
           assignmentsEligible: true,
           workspaceVerified: true,
           sourceValidated: true,
@@ -236,6 +244,7 @@ function initialScenario() {
           eqrComplete: null,
           protection: 'VERIFIED_SIMULATION',
           archiveVerified: false,
+          commercialClosed: true,
         },
         holds: [],
       },
@@ -251,6 +260,10 @@ function initialScenario() {
       { id: 'ACT-SARA', personaId: 'compliance-demo', name: 'Sara Khan', roles: ['compliance_reviewer', 'records_custodian'], assignments: ['ENG-0018-AUD-2026', 'ENG-0009-ACC-2026'], sessionEpoch: 1, active: true },
     ],
     activePersonaId: 'admin-demo',
+    // A browser tab receives a session epoch when it selects a persona. A
+    // later disable/enable cycle rotates the actor epoch so an older tab must
+    // re-authenticate before it can issue a protected command.
+    activeSessionEpoch: 1,
     selectedEngagementId: DEFAULT_SCENARIO_ENGAGEMENT_ID,
     assessments: [acceptanceAssessment, continuanceAssessment, cedarAssessment],
     terms: initialTerms,
@@ -284,6 +297,13 @@ function initialScenario() {
     pbcRequests: [
       { id: 'PBC-019', engagementId: 'ENG-0018-AUD-2026', title: 'Receivables ageing and subsequent receipts', classification: 'AUDIT_EVIDENCE', period: 'FY2026', ownerActorId: 'ACT-NADIA', reviewerActorId: 'ACT-OMAR', due: '2026-09-11', state: 'UNDER_REVIEW', receipts: ['REC-019-01'], revision: 2 },
       { id: 'PBC-023', engagementId: 'ENG-0018-AUD-2026', title: 'Inventory count sheets', classification: 'AUDIT_EVIDENCE', period: 'FY2026', ownerActorId: 'ACT-NADIA', reviewerActorId: 'ACT-OMAR', due: '2026-09-12', state: 'CLARIFICATION_REQUIRED', receipts: [], revision: 1 },
+    ],
+    // CRM-inspired relationship intake records. These are synthetic leads,
+    // deliberately separate from clients and engagements until a qualified
+    // human accepts the relationship and creates a scoped service period.
+    leads: [
+      { id: 'LEAD-0001', name: 'Al Noor Medical Supplies', company: 'Al Noor Medical Supplies W.L.L.', email: 'finance@alnoor.demo', phone: '+974 4400 1820', value: '85000.00', service: 'Financial-statement audit', source: 'Referral', assignedActorId: 'ACT-OMAR', status: 'PENDING', tags: ['Audit', 'High risk'], lastContact: '2026-09-08', createdAt: '2026-09-05T09:00:00.000Z', revision: 1 },
+      { id: 'LEAD-0002', name: 'Blue Dhow Hospitality Group', company: 'Blue Dhow Hospitality Group W.L.L.', email: 'controller@bluedhow.demo', phone: '+974 4412 7620', value: '42000.00', service: 'Internal audit', source: 'Website', assignedActorId: 'ACT-MAYA', status: 'QUALIFIED', tags: ['Internal audit'], lastContact: '2026-09-10', createdAt: '2026-09-02T11:30:00.000Z', revision: 2 },
     ],
     documents: [
       { id: 'DOC-AR-019', engagementId: 'ENG-0018-AUD-2026', requestId: 'PBC-019', sourceReceiptId: 'REC-019-01', workingHash: 'sha256:synthetic-ar-working', storedHash: 'sha256:synthetic-ar-stored', snapshotId: 'SNAP-AR-019-01', snapshotHash: 'sha256:synthetic-ar-snapshot', providerVersion: 'spv-019-01', captureState: 'STABLE', classification: 'AUDIT_EVIDENCE' },
@@ -340,7 +360,7 @@ function mergeScenarioState(defaults, parsed) {
     const additions = (defaultsList || []).filter((entry) => entry?.id && !currentIds.has(entry.id)).map(clone)
     return [...currentList, ...additions]
   }
-  for (const key of ['clients', 'engagements', 'actors', 'assessments', 'terms', 'activation', 'accountingPackages', 'renewalCases', 'documents', 'workpapers', 'reviews', 'releaseCandidates', 'snapshots', 'operations', 'checkpoints', 'events', 'commandReceipts', 'cycleRuns', 'legalHolds', 'amendments']) {
+  for (const key of ['clients', 'engagements', 'actors', 'assessments', 'terms', 'activation', 'accountingPackages', 'renewalCases', 'leads', 'documents', 'workpapers', 'reviews', 'releaseCandidates', 'snapshots', 'operations', 'checkpoints', 'events', 'commandReceipts', 'cycleRuns', 'legalHolds', 'amendments']) {
     merged[key] = appendMissingById(defaults[key], merged[key])
   }
   merged.audit.risks = appendMissingById(defaults.audit.risks, merged.audit.risks)
@@ -350,6 +370,10 @@ function mergeScenarioState(defaults, parsed) {
   if (!Array.isArray(merged.recovery.externalCheckpointStore)) merged.recovery.externalCheckpointStore = clone(defaults.recovery.externalCheckpointStore)
   if (!Number.isInteger(merged.recovery.activeEpoch) || merged.recovery.activeEpoch < 1) merged.recovery.activeEpoch = defaults.recovery.activeEpoch
   if (typeof merged.recovery.outwardEffectsEnabled !== 'boolean') merged.recovery.outwardEffectsEnabled = defaults.recovery.outwardEffectsEnabled
+  if (!Number.isInteger(merged.activeSessionEpoch) || merged.activeSessionEpoch < 1) {
+    const active = merged.actors?.find((actor) => actor.personaId === merged.activePersonaId)
+    merged.activeSessionEpoch = active?.sessionEpoch || defaults.activeSessionEpoch || 1
+  }
   return merged
 }
 
@@ -398,12 +422,22 @@ export function actorForPersona(personaId) {
 
 export function setActivePersona(personaId) {
   scenario.activePersonaId = personaId || null
+  const actor = actorForPersona(scenario.activePersonaId)
+  scenario.activeSessionEpoch = actor?.sessionEpoch || null
   persistScenario()
-  return actorForPersona(scenario.activePersonaId)
+  return actor
 }
 
 export function activeActor() {
-  return actorForPersona(scenario.activePersonaId)
+  const actor = actorForPersona(scenario.activePersonaId)
+  if (!actor?.active) return null
+  if (scenario.activeSessionEpoch != null && actor.sessionEpoch !== scenario.activeSessionEpoch) return null
+  return actor
+}
+
+export function actorSession(personaId = scenario.activePersonaId) {
+  const actor = actorForPersona(personaId)
+  return actor ? { actorId: actor.id, personaId: actor.personaId, active: Boolean(actor.active), sessionEpoch: actor.sessionEpoch } : null
 }
 
 export function actorById(actorId) {
@@ -416,6 +450,125 @@ export function engagementById(engagementId) {
 
 export function clientById(clientId) {
   return scenario.clients.find((client) => client.id === clientId) || null
+}
+
+export function leadById(leadId) {
+  return (scenario.leads || []).find((lead) => lead.id === leadId) || null
+}
+
+function leadScope(leadId = null) {
+  return { firmId: scenario.firm.id, leadId }
+}
+
+function leadInputError({ name, company, email, phone, service, source, value } = {}) {
+  const cleanName = String(name || '').trim()
+  const cleanCompany = String(company || '').trim()
+  const cleanEmail = String(email || '').trim().toLowerCase()
+  const cleanPhone = String(phone || '').trim()
+  const cleanService = String(service || '').trim()
+  const cleanSource = String(source || '').trim()
+  const cleanValue = String(value ?? '0').trim().replace(/,/g, '')
+  if (cleanName.length < 2 || cleanName.length > 160) return { code: 'LEAD_NAME_INVALID', message: 'Lead name must be between 2 and 160 characters.' }
+  if (cleanCompany.length < 2 || cleanCompany.length > 180) return { code: 'LEAD_COMPANY_INVALID', message: 'Company must be between 2 and 180 characters.' }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) || cleanEmail.length > 254) return { code: 'LEAD_EMAIL_INVALID', message: 'Enter a valid company email address.' }
+  if (cleanPhone.length > 40) return { code: 'LEAD_PHONE_INVALID', message: 'Phone number is too long.' }
+  if (!cleanService || cleanService.length > 100) return { code: 'LEAD_SERVICE_INVALID', message: 'Choose a service route.' }
+  if (!cleanSource || cleanSource.length > 80) return { code: 'LEAD_SOURCE_INVALID', message: 'Choose a lead source.' }
+  if (!/^\d{1,16}(?:\.\d{1,2})?$/.test(cleanValue)) return { code: 'LEAD_VALUE_INVALID', message: 'Estimated value must be a non-negative QAR amount with up to two decimals.' }
+  const [whole, fraction = ''] = cleanValue.split('.')
+  return { value: `${whole}.${(fraction + '00').slice(0, 2)}`, name: cleanName, company: cleanCompany, email: cleanEmail, phone: cleanPhone, service: cleanService, source: cleanSource }
+}
+
+function leadAuthority(actor) {
+  return Boolean(actor?.active && actor.roles?.some((role) => ['system_admin', 'engagement_partner', 'compliance_reviewer'].includes(role)))
+}
+
+function nextLeadId() {
+  const ids = new Set((scenario.leads || []).map((lead) => lead.id))
+  let index = (scenario.leads || []).length + 1
+  while (ids.has(`LEAD-${String(index).padStart(4, '0')}`)) index += 1
+  return `LEAD-${String(index).padStart(4, '0')}`
+}
+
+function createLeadRecord(input, actor, assignedActor) {
+  const lead = {
+    id: nextLeadId(),
+    name: input.name,
+    company: input.company,
+    email: input.email,
+    phone: input.phone,
+    value: input.value,
+    service: input.service,
+    source: input.source,
+    assignedActorId: assignedActor.id,
+    status: 'PENDING',
+    tags: [],
+    lastContact: null,
+    createdAt: new Date().toISOString(),
+    revision: 1,
+  }
+  if (!Array.isArray(scenario.leads)) scenario.leads = []
+  scenario.leads.push(lead)
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LEAD_CREATED', leadId: lead.id, actorId: actor.id, assignedActorId: assignedActor.id, revision: lead.revision, evidenceLevel: EVIDENCE_LEVEL })
+  return lead
+}
+
+/**
+ * Create a synthetic CRM lead. A lead is intentionally not a client or an
+ * engagement; qualification and professional acceptance remain separate.
+ */
+export function createLead({ actorPersonaId = scenario.activePersonaId, expectedSessionEpoch, idempotencyKey, name, company, email, phone = '', service = 'Financial-statement audit', source = 'Referral', value = '0.00', assignedActorId } = {}) {
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'CREATE_LEAD', targetId: null, engagementId: null, payload: { expectedSessionEpoch, name, company, email, phone, service, source, value, assignedActorId } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!leadAuthority(actor)) return finish(commandResult('DENIED', { code: 'LEAD_AUTHORITY_REQUIRED', message: 'Only an active administrator, engagement partner, or compliance reviewer can create a lead.', scope: leadScope() }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish({ ...stale, scope: leadScope() })
+  const normalized = leadInputError({ name, company, email, phone, service, source, value })
+  if (normalized.code) return finish(commandResult('BLOCKED', { code: normalized.code, message: normalized.message, scope: leadScope() }))
+  const duplicate = (scenario.leads || []).find((lead) => lead.email?.toLowerCase() === normalized.email || lead.company?.toLowerCase() === normalized.company.toLowerCase())
+  if (duplicate) return finish(commandResult('CONFLICT', { code: 'LEAD_DUPLICATE', message: `A lead already exists for ${duplicate.company}. Review it before creating another record.`, data: duplicate, scope: leadScope(duplicate.id), revision: duplicate.revision, operationId: duplicate.id }))
+  const assignedActor = actorById(assignedActorId) || actor
+  if (!assignedActor.active) return finish(commandResult('BLOCKED', { code: 'LEAD_ASSIGNEE_INACTIVE', message: 'The selected owner is inactive; choose an active named owner.', scope: leadScope() }))
+  const lead = createLeadRecord(normalized, actor, assignedActor)
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: lead, scope: leadScope(lead.id), revision: lead.revision, operationId: lead.id }))
+}
+
+/**
+ * Import a small synthetic fixture batch to demonstrate bounded CRM imports.
+ * No file is uploaded and no external system is contacted.
+ */
+export function importLeadFixtures({ actorPersonaId = scenario.activePersonaId, expectedSessionEpoch, idempotencyKey, rows = [] } = {}) {
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'IMPORT_LEAD_FIXTURES', targetId: null, engagementId: null, payload: { expectedSessionEpoch, rows } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!leadAuthority(actor)) return finish(commandResult('DENIED', { code: 'LEAD_AUTHORITY_REQUIRED', message: 'Only an active administrator, engagement partner, or compliance reviewer can import leads.', scope: leadScope() }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish({ ...stale, scope: leadScope() })
+  if (!Array.isArray(rows) || rows.length < 1 || rows.length > 25) return finish(commandResult('BLOCKED', { code: 'LEAD_IMPORT_LIMIT', message: 'Import between 1 and 25 synthetic lead rows at a time.', scope: leadScope() }))
+  const normalizedRows = []
+  for (let index = 0; index < rows.length; index += 1) {
+    const normalized = leadInputError(rows[index])
+    if (normalized.code) return finish(commandResult('BLOCKED', { code: 'LEAD_IMPORT_INVALID', message: `Row ${index + 1}: ${normalized.message}`, scope: leadScope() }))
+    const assignedActor = actorById(rows[index].assignedActorId) || actor
+    if (!assignedActor.active) return finish(commandResult('BLOCKED', { code: 'LEAD_ASSIGNEE_INACTIVE', message: `Row ${index + 1}: selected owner is inactive.`, scope: leadScope() }))
+    normalizedRows.push({ input: normalized, assignedActor })
+  }
+  const imported = []
+  const skipped = []
+  for (const row of normalizedRows) {
+    const duplicate = (scenario.leads || []).find((lead) => lead.email?.toLowerCase() === row.input.email || lead.company?.toLowerCase() === row.input.company.toLowerCase())
+    if (duplicate) skipped.push({ company: row.input.company, existingId: duplicate.id })
+    else imported.push(createLeadRecord(row.input, actor, row.assignedActor))
+  }
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LEADS_IMPORTED', actorId: actor.id, importedCount: imported.length, skippedCount: skipped.length, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: { imported, skipped, importedCount: imported.length, skippedCount: skipped.length }, scope: leadScope(), revision: scenario.leads.length, operationId: `LEAD-IMPORT-${scenario.events.length}` }))
 }
 
 export function selectedEngagement() { return engagementById(scenario.selectedEngagementId) || scenario.engagements[0] }
@@ -483,26 +636,30 @@ export function assessmentSummary(engagementId = scenario.selectedEngagementId, 
   return { assessment, ...evaluation }
 }
 
-export function saveAssessmentResponse({ engagementId = scenario.selectedEngagementId, type = 'acceptance', questionId, actorPersonaId, expectedRevision, idempotencyKey, answer, applicability, explanation, evidenceSnapshotId } = {}) {
+export function saveAssessmentResponse({ engagementId = scenario.selectedEngagementId, type = 'acceptance', questionId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, answer, applicability, explanation, evidenceSnapshotId } = {}) {
   const assessment = assessmentFor(engagementId, type)
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'SAVE_ASSESSMENT_RESPONSE', targetId: questionId, engagementId, payload: { type, expectedRevision, answer, applicability, explanation, evidenceSnapshotId } })
+  const fingerprint = commandFingerprint({ action: 'SAVE_ASSESSMENT_RESPONSE', targetId: questionId, engagementId, payload: { type, expectedRevision, expectedSessionEpoch, answer, applicability, explanation, evidenceSnapshotId } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   if (!assessment || !actor?.active || !canViewEngagement(actor.id, engagementId)) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot edit this assessment scope.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return rememberReceipt(idempotencyKey, fingerprint, stale)
   const result = updateAssessmentResponse(assessment, { questionId, actor, expectedRevision, answer, applicability, explanation, evidenceSnapshotId })
   if (!result.ok) return rememberReceipt(idempotencyKey, fingerprint, commandResult(result.code === 'REVISION_CONFLICT' ? 'CONFLICT' : 'DENIED', { code: result.code, message: result.message, revision: assessment.revision, data: result.evaluation || null }))
   persistScenario()
   return rememberReceipt(idempotencyKey, fingerprint, commandResult('COMMITTED', { data: result.response, revision: result.revision }))
 }
 
-export function recordAssessmentDecision({ engagementId = scenario.selectedEngagementId, type = 'acceptance', actorPersonaId, expectedRevision, idempotencyKey, decision, rationale } = {}) {
+export function recordAssessmentDecision({ engagementId = scenario.selectedEngagementId, type = 'acceptance', actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, decision, rationale } = {}) {
   const assessment = assessmentFor(engagementId, type)
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'RECORD_ASSESSMENT_DECISION', targetId: assessment?.id, engagementId, payload: { type, expectedRevision, decision, rationale } })
+  const fingerprint = commandFingerprint({ action: 'RECORD_ASSESSMENT_DECISION', targetId: assessment?.id, engagementId, payload: { type, expectedRevision, expectedSessionEpoch, decision, rationale } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   if (!assessment || !actor?.active || !canViewEngagement(actor.id, engagementId)) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot decide this assessment scope.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return rememberReceipt(idempotencyKey, fingerprint, stale)
   const result = recordAssessmentPartnerDecision(assessment, { actor, expectedRevision, decision, rationale })
   if (!result.ok) return rememberReceipt(idempotencyKey, fingerprint, commandResult(result.code === 'REVISION_CONFLICT' ? 'CONFLICT' : 'BLOCKED', { code: result.code, message: result.message, data: result.evaluation || null, revision: assessment.revision, blockers: result.evaluation?.holds || [] }))
   persistScenario()
@@ -631,6 +788,50 @@ function commandFingerprint({ action, targetId, engagementId, payload }) {
 
 function commandResult(outcome, { code = '', message = '', data = null, scope = selectedScope(), revision = null, operationId = null, receiptId = null, blockers = [] } = {}) {
   return { outcome, code, message, data, scope, revision, operationId, receiptId, blockers, evidenceLevel: EVIDENCE_LEVEL, correlationId: `sim-${Date.now()}-${Math.random().toString(16).slice(2)}` }
+}
+
+function sessionGuard(actor, expectedSessionEpoch) {
+  if (expectedSessionEpoch == null || !actor) return null
+  if (expectedSessionEpoch !== actor.sessionEpoch) {
+    return commandResult('CONFLICT', {
+      code: 'SESSION_EPOCH_STALE',
+      message: `The ${actor.name || actor.personaId} session is stale (expected epoch ${expectedSessionEpoch}, current epoch ${actor.sessionEpoch}). Sign in again before issuing this command.`,
+      revision: actor.sessionEpoch,
+    })
+  }
+  return null
+}
+
+/**
+ * Rotate a demo actor's session epoch and disable/enable the local persona.
+ * This is an explicit synthetic control used to demonstrate that role access
+ * and session validity are separate checks; it never changes a real account.
+ */
+export function setActorStatus({ targetActorId, actorPersonaId = scenario.activePersonaId, active, expectedSessionEpoch, idempotencyKey, reason = '' } = {}) {
+  const actor = actorForPersona(actorPersonaId)
+  const target = actorById(targetActorId) || actorForPersona(targetActorId)
+  const fingerprint = commandFingerprint({ action: 'SET_ACTOR_STATUS', targetId: targetActorId, engagementId: null, payload: { actorId: actor?.id || null, active: Boolean(active), expectedSessionEpoch, reason } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!actor?.active || !actor.roles.includes('system_admin')) return finish(commandResult('DENIED', { code: 'SYSTEM_AUTHORITY_REQUIRED', message: 'Only an active system administrator can change demo actor status.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (!target) return finish(commandResult('DENIED', { code: 'ACTOR_NOT_FOUND', message: 'That demo actor does not exist.' }))
+  if (target.id === actor.id && active === false) return finish(commandResult('DENIED', { code: 'SELF_DISABLE_NOT_ALLOWED', message: 'The current system administrator cannot disable its own active session.' }))
+  const nextActive = Boolean(active)
+  if (target.active === nextActive) return finish(commandResult('COMMITTED', { data: actorSession(target.personaId), revision: target.sessionEpoch, operationId: target.id }))
+  target.active = nextActive
+  target.sessionEpoch = Number.isInteger(target.sessionEpoch) ? target.sessionEpoch + 1 : 2
+  target.statusChangedAt = new Date().toISOString()
+  target.statusReason = String(reason || (nextActive ? 'Synthetic actor re-enabled.' : 'Synthetic actor disabled by administrator.')).trim()
+  if (!nextActive && scenario.activePersonaId === target.personaId) {
+    scenario.activePersonaId = null
+    scenario.activeSessionEpoch = null
+  }
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: nextActive ? 'ACTOR_ENABLED' : 'ACTOR_DISABLED', actorId: actor.id, targetActorId: target.id, targetSessionEpoch: target.sessionEpoch, reason: target.statusReason, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: actorSession(target.personaId), revision: target.sessionEpoch, operationId: target.id }))
 }
 
 function existingReceipt(idempotencyKey, fingerprint) {
@@ -769,7 +970,7 @@ export function createContinuanceShell({ sourceEngagementId = scenario.selectedE
     linkedEngagementId: null,
     isNextPeriodShell: true,
     sourceEngagementId,
-    evidence: { firmReady: source.evidence.firmReady, accepted: false, termsSigned: false, assignmentsEligible: false, workspaceVerified: false, sourceValidated: false, mappingReviewed: false, statementApproved: false, auditPlanReady: source.service === 'audit' ? false : null, conclusionsComplete: source.service === 'audit' ? false : null, managementApproved: false, partnerApproved: false, eqrRequired: source.evidence.eqrRequired, eqrComplete: source.evidence.eqrRequired ? false : null, protection: 'UNKNOWN', archiveVerified: false },
+    evidence: { firmReady: source.evidence.firmReady, accepted: false, commercialReady: false, termsSigned: false, portalEligible: false, assignmentsEligible: false, workspaceVerified: false, sourceValidated: false, mappingReviewed: false, statementApproved: false, auditPlanReady: source.service === 'audit' ? false : null, conclusionsComplete: source.service === 'audit' ? false : null, managementApproved: false, partnerApproved: false, eqrRequired: source.evidence.eqrRequired, eqrComplete: source.evidence.eqrRequired ? false : null, protection: 'UNKNOWN', archiveVerified: false, commercialClosed: false },
     holds: [{ id: `HOLD-${shellId}-CONT`, code: 'CONTINUANCE_REQUIRED', message: 'Fresh annual continuance responses and partner decision are required for this next-period shell.', action: 'Complete RV-001…RV-030 and record renewal outcome.' }],
   }
   const sourceContinuance = assessmentFor(sourceEngagementId, 'continuance')
@@ -838,22 +1039,20 @@ export function deriveGates(engagementId = scenario.selectedEngagementId) {
   const acceptance = assessmentFor(engagement.id, 'acceptance')
   const acceptanceEvaluation = evaluateAssessment(acceptance)
   const acceptanceReady = Boolean(acceptance?.decision && ['ACCEPT', 'CONTINUE'].includes(acceptance.decision.decision) && !acceptanceEvaluation.holds.length)
-  const packageRecord = accountingPackageFor(engagement.id)
   const auditChain = engagement.service === 'audit' ? auditChainSummary(engagement.id) : { blockers: [] }
-  const sourceReady = packageRecord ? packageRecord.source.validationState === 'VALIDATED' : evidence.sourceValidated
-  const mappingReady = packageRecord ? packageRecord.mappings.state === 'REVIEWED' : evidence.mappingReviewed
-  const statementReady = packageRecord ? packageRecord.statement.state === 'APPROVED' : evidence.statementApproved
+  const commercialReady = evidence.commercialReady ?? Boolean(evidence.termsSigned && evidence.assignmentsEligible)
+  const portalEligible = evidence.portalEligible ?? Boolean(evidence.termsSigned && evidence.assignmentsEligible && evidence.workspaceVerified)
   const statuses = {
     G0: evidence.firmReady ? 'good' : 'danger',
     G1: acceptanceReady || (evidence.accepted && !acceptance) ? 'good' : 'danger',
-    G2: evidence.termsSigned && evidence.assignmentsEligible && evidence.workspaceVerified ? 'good' : 'danger',
-    G3: sourceReady ? 'good' : 'danger',
-    G4: mappingReady && statementReady ? 'good' : mappingReady ? 'warn' : 'danger',
+    G2: commercialReady ? 'good' : 'danger',
+    G3: evidence.termsSigned ? 'good' : 'danger',
+    G4: portalEligible ? 'good' : 'danger',
     G5: engagement.service === 'audit' ? (evidence.auditPlanReady && !auditChain.blockers.some((item) => item.code === 'RISK_RESPONSE_MISSING' || item.code === 'MATERIALITY_SELECTION_INCOMPLETE') ? 'good' : 'warn') : 'neutral',
     G6: engagement.service === 'audit' ? (evidence.conclusionsComplete && !reviewBlockers.length && !auditChain.blockers.length ? 'good' : 'danger') : 'neutral',
     G7: evidence.managementApproved && evidence.partnerApproved && (!evidence.eqrRequired || evidence.eqrComplete) ? 'good' : 'danger',
     G8: engagement.releaseEventId ? 'good' : 'danger',
-    G9: evidence.archiveVerified ? 'good' : 'danger',
+    G9: evidence.commercialClosed || evidence.archiveVerified ? 'good' : 'danger',
     G10: 'neutral',
   }
   return gateDefinitions.map((definition) => ({
@@ -886,6 +1085,8 @@ function releaseBlockers(engagement) {
   const clientSafety = scenario.safety.client[engagement.clientId]
   if (clientSafety && clientSafety.state !== 'CURRENT') blockers.push({ code: 'CLIENT_SAFETY_UNEVALUATED', message: `Client Safety State is ${clientSafety.state.toLowerCase()}; linked impacts must be evaluated before release.` })
   if (engagement.holds.length) blockers.push(...engagement.holds.map((hold) => ({ code: hold.code, message: hold.message })))
+  const activeLegalHolds = (scenario.legalHolds || []).filter((hold) => hold.engagementId === engagement.id && hold.state === 'ACTIVE' && hold.blocksDisposal)
+  if (activeLegalHolds.length) blockers.push(...activeLegalHolds.map((hold) => ({ code: 'LEGAL_HOLD_ACTIVE', message: `${hold.id} is active; records disposal and final archive closeout remain held.` })))
   if (openReviewBlockers(engagement.id).length) blockers.push(...openReviewBlockers(engagement.id))
   if (!candidate.managementApproved) blockers.push({ code: 'MANAGEMENT_APPROVAL_REQUIRED', message: 'Management responsibility is not bound to this exact candidate.' })
   if (!candidate.partnerApproved) blockers.push({ code: 'PARTNER_APPROVAL_REQUIRED', message: 'Partner conclusion is not bound to this exact candidate.' })
@@ -944,19 +1145,21 @@ export function mutateAccountingInput({ engagementId = scenario.selectedEngageme
   return rememberReceipt(idempotencyKey, fingerprint, result)
 }
 
-export function clearReviewPoint({ pointId, actorPersonaId, expectedRevision, idempotencyKey, response = '' } = {}) {
+export function clearReviewPoint({ pointId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, response = '' } = {}) {
   const point = scenario.reviews.find((item) => item.id === pointId)
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'CLEAR_REVIEW_POINT', targetId: pointId, engagementId: point?.engagementId, payload: { expectedRevision, response } })
+  const fingerprint = commandFingerprint({ action: 'CLEAR_REVIEW_POINT', targetId: pointId, engagementId: point?.engagementId, payload: { expectedRevision, expectedSessionEpoch, response } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   if (!point) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'OBJECT_NOT_FOUND', message: 'That review point does not exist.' }))
   if (!actor?.active || !canViewEngagement(actor.id, point.engagementId)) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot view this review point.' }))
   if (!actorHasRole(actor, 'independent_reviewer', point.engagementId)) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'AUTHORITY_REQUIRED', message: 'An independent reviewer must clear a significant review point.' }))
   if (point.assigneeActorId === actor.id) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'SEGREGATION_OF_DUTIES', message: 'The assigned responder cannot self-clear this review point.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return rememberReceipt(idempotencyKey, fingerprint, stale)
   if (point.status === 'CLEARED') return rememberReceipt(idempotencyKey, fingerprint, commandResult('COMMITTED', { data: point, revision: point.revision }))
   if (expectedRevision != null && expectedRevision !== point.revision) return rememberReceipt(idempotencyKey, fingerprint, commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected revision ${expectedRevision}, current revision is ${point.revision}.`, revision: point.revision }))
-  if (!point.responseReady && !String(response).trim()) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: 'SUPPORTED_RESPONSE_REQUIRED', message: 'A supported response or alternative-work reference is required before clearance.' }))
+  if (!String(response).trim()) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: 'SUPPORTED_RESPONSE_REQUIRED', message: 'A supported response or alternative-work reference is required before clearance.' }))
   point.status = 'CLEARED'
   point.revision += 1
   point.clearedBy = actor.id
@@ -967,19 +1170,49 @@ export function clearReviewPoint({ pointId, actorPersonaId, expectedRevision, id
   return rememberReceipt(idempotencyKey, fingerprint, result)
 }
 
-export async function assembleArchive({ candidateId, actorPersonaId, expectedRevision, idempotencyKey, purpose = 'INTERNAL_RECORDS' } = {}) {
+export function createReviewPoint({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, title, detail, severity = 'ROUTINE', assigneeActorId, due = '' } = {}) {
+  const engagement = engagementById(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'CREATE_REVIEW_POINT', targetId: engagementId, engagementId, payload: { expectedRevision, expectedSessionEpoch, title, detail, severity, assigneeActorId, due } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot create a review point for this scope.' }))
+  if (!actor.roles.some((role) => ['preparer', 'accounting_reviewer', 'independent_reviewer', 'engagement_partner'].includes(role))) return finish(commandResult('DENIED', { code: 'REVIEW_POINT_AUTHORITY_REQUIRED', message: 'An assigned reviewer, preparer, or partner must create a review point.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (expectedRevision != null && expectedRevision !== engagement.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected engagement revision ${expectedRevision}, current revision is ${engagement.revision}.`, revision: engagement.revision }))
+  const cleanTitle = String(title || '').trim()
+  const cleanDetail = String(detail || '').trim()
+  if (!cleanTitle || !cleanDetail) return finish(commandResult('BLOCKED', { code: 'REVIEW_POINT_CONTENT_REQUIRED', message: 'A review point needs a title and a supported detail before it can be assigned.' }))
+  if (!['ROUTINE', 'SIGNIFICANT'].includes(severity)) return finish(commandResult('DENIED', { code: 'SEVERITY_INVALID', message: 'Review-point severity must be ROUTINE or SIGNIFICANT.' }))
+  const assignee = actorById(assigneeActorId) || scenario.actors.find((candidate) => candidate.assignments.includes(engagementId) && candidate.roles.includes('independent_reviewer'))
+  if (!assignee || !assignee.assignments.includes(engagementId)) return finish(commandResult('BLOCKED', { code: 'ASSIGNEE_REQUIRED', message: 'Assign the review point to an actor who is scoped to this engagement.' }))
+  const nextNumber = Math.max(0, ...scenario.reviews.map((point) => Number(String(point.id).replace(/\D/g, '')) || 0)) + 1
+  const point = { id: `RP-${String(nextNumber).padStart(3, '0')}`, engagementId, title: cleanTitle, severity, assigneeActorId: assignee.id, responseReady: false, status: 'OPEN', revision: 1, detail: cleanDetail, due: String(due || 'Not scheduled') }
+  scenario.reviews.push(point)
+  engagement.revision += 1
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'REVIEW_POINT_CREATED', pointId: point.id, engagementId, actorId: actor.id, assigneeActorId: assignee.id, revision: point.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: point, revision: engagement.revision, operationId: point.id }))
+}
+
+export async function assembleArchive({ candidateId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, purpose = 'INTERNAL_RECORDS' } = {}) {
   const candidate = candidateFor(candidateId)
   const engagement = candidate ? engagementById(candidate.engagementId) : null
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'ASSEMBLE_ARCHIVE', targetId: candidateId, engagementId: candidate?.engagementId, payload: { expectedRevision, purpose } })
+  const fingerprint = commandFingerprint({ action: 'ASSEMBLE_ARCHIVE', targetId: candidateId, engagementId: candidate?.engagementId, payload: { expectedRevision, expectedSessionEpoch, purpose } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
   if (!candidate || !engagement) return finish(commandResult('DENIED', { code: 'CANDIDATE_NOT_FOUND', message: 'No release candidate is selected.' }))
   if (!actor?.active || !canViewEngagement(actor.id, engagement.id)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot assemble this archive.' }))
   if (!actor.roles.includes('records_custodian')) return finish(commandResult('DENIED', { code: 'RECORDS_AUTHORITY_REQUIRED', message: 'A scoped records custodian must assemble the archive.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
   if (expectedRevision != null && expectedRevision !== candidate.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected candidate revision ${expectedRevision}, current revision is ${candidate.revision}.`, revision: candidate.revision }))
   if (!candidate.releaseEventId || candidate.stepIndex < 9) return finish(commandResult('BLOCKED', { code: 'RELEASE_NOT_ARCHIVE_READY', message: 'Archive assembly requires a committed release event and completed delivery state.' }))
+  if (candidate.protection !== 'VERIFIED_SIMULATION') return finish(commandResult('BLOCKED', { code: 'RECORD_PROTECTION_UNVERIFIED', message: 'Archive assembly cannot mark a candidate verified while signed artifacts lack observed protection evidence.' }))
   const docs = (scenario.documents || []).filter((item) => item.engagementId === engagement.id)
   const snapshots = (scenario.snapshots || []).filter((item) => item.engagementId === engagement.id)
   const dangling = docs.filter((doc) => doc.snapshotId && !snapshots.some((snapshot) => snapshot.id === doc.snapshotId))
@@ -1005,7 +1238,7 @@ export async function assembleArchive({ candidateId, actorPersonaId, expectedRev
     },
   }
   const manifestData = await canonicalManifestDigest(archiveManifest)
-  const archive = { id: `ARCH-${candidate.id}`, candidateId, engagementId: engagement.id, manifest: archiveManifest, canonicalManifest: manifestData.canonicalBytesBase64, manifestDigest: manifestData.digest, desiredProtection: 'RECORDS_LOCK', observedProtection: candidate.protection, protectionState: candidate.protection === 'VERIFIED_SIMULATION' ? 'OBSERVED_SIMULATION' : 'UNVERIFIED', state: 'VERIFIED_SIMULATION', assembledBy: actor.id, assembledAt: new Date().toISOString(), purpose: String(purpose), evidenceLevel: EVIDENCE_LEVEL }
+  const archive = { id: `ARCH-${candidate.id}`, candidateId, engagementId: engagement.id, manifest: archiveManifest, canonicalManifest: manifestData.canonicalBytesBase64, manifestDigest: manifestData.digest, desiredProtection: 'RECORDS_LOCK', observedProtection: candidate.protection, protectionState: 'OBSERVED_SIMULATION', state: 'VERIFIED_SIMULATION', assembledBy: actor.id, assembledAt: new Date().toISOString(), purpose: String(purpose), evidenceLevel: EVIDENCE_LEVEL }
   const existing = scenario.archivePackages?.find((item) => item.candidateId === candidateId)
   if (existing) return finish(commandResult('COMMITTED', { data: existing, revision: candidate.revision, operationId: existing.id }))
   scenario.archivePackages.push(archive)
@@ -1016,33 +1249,38 @@ export async function assembleArchive({ candidateId, actorPersonaId, expectedRev
   return finish(commandResult('COMMITTED', { data: archive, revision: candidate.revision, operationId: archive.id }))
 }
 
-export function recordLegalHold({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, idempotencyKey, type = 'LITIGATION', reason = 'Synthetic preservation requirement' } = {}) {
+export function recordLegalHold({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, type = 'LITIGATION', reason = 'Synthetic preservation requirement' } = {}) {
   const engagement = engagementById(engagementId)
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'RECORD_LEGAL_HOLD', targetId: engagementId, engagementId, payload: { expectedRevision, type, reason } })
+  const fingerprint = commandFingerprint({ action: 'RECORD_LEGAL_HOLD', targetId: engagementId, engagementId, payload: { expectedRevision, expectedSessionEpoch, type, reason } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
   if (!engagement || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot record a legal hold for this scope.' }))
   if (!actorHasRole(actor, 'records_custodian', engagementId)) return finish(commandResult('DENIED', { code: 'RECORDS_AUTHORITY_REQUIRED', message: 'A scoped records custodian must record a legal hold.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
   if (expectedRevision != null && expectedRevision !== engagement.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected engagement revision ${expectedRevision}, current revision is ${engagement.revision}.`, revision: engagement.revision }))
   const hold = { id: `LH-${engagement.clientId}-${scenario.legalHolds.length + 1}`, engagementId, type: String(type), state: 'ACTIVE', blocksDisposal: true, reason: String(reason).trim(), createdBy: actor.id, createdAt: new Date().toISOString(), revision: 1, releasedBy: null, releasedAt: null }
   scenario.legalHolds.push(hold)
-  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LEGAL_HOLD_RECORDED', engagementId, holdId: hold.id, actorId: actor.id, evidenceLevel: EVIDENCE_LEVEL })
+  engagement.revision += 1
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LEGAL_HOLD_RECORDED', engagementId, holdId: hold.id, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
   return finish(commandResult('COMMITTED', { data: hold, revision: engagement.revision, operationId: hold.id }))
 }
 
-export function releaseLegalHold({ holdId, actorPersonaId, expectedRevision, idempotencyKey, rationale = '' } = {}) {
+export function releaseLegalHold({ holdId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, rationale = '' } = {}) {
   const hold = scenario.legalHolds?.find((item) => item.id === holdId)
   const engagement = hold ? engagementById(hold.engagementId) : null
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'RELEASE_LEGAL_HOLD', targetId: holdId, engagementId: hold?.engagementId, payload: { expectedRevision, rationale } })
+  const fingerprint = commandFingerprint({ action: 'RELEASE_LEGAL_HOLD', targetId: holdId, engagementId: hold?.engagementId, payload: { expectedRevision, expectedSessionEpoch, rationale } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
   if (!hold || !engagement || !actor?.active || !canViewEngagement(actor.id, engagement.id)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot release this legal hold.' }))
   if (!actorHasRole(actor, 'records_custodian', engagement.id)) return finish(commandResult('DENIED', { code: 'RECORDS_AUTHORITY_REQUIRED', message: 'A scoped records custodian must release a legal hold.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
   if (expectedRevision != null && expectedRevision !== hold.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected hold revision ${expectedRevision}, current revision is ${hold.revision}.`, revision: hold.revision }))
   if (hold.state !== 'ACTIVE') return finish(commandResult('COMMITTED', { data: hold, revision: hold.revision, operationId: hold.id }))
   hold.state = 'RELEASED'
@@ -1051,9 +1289,10 @@ export function releaseLegalHold({ holdId, actorPersonaId, expectedRevision, ide
   hold.releasedAt = new Date().toISOString()
   hold.rationale = String(rationale).trim()
   hold.revision += 1
-  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LEGAL_HOLD_RELEASED', engagementId: engagement.id, holdId, actorId: actor.id, revision: hold.revision, evidenceLevel: EVIDENCE_LEVEL })
+  engagement.revision += 1
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LEGAL_HOLD_RELEASED', engagementId: engagement.id, holdId, actorId: actor.id, revision: engagement.revision, holdRevision: hold.revision, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
-  return finish(commandResult('COMMITTED', { data: hold, revision: hold.revision, operationId: hold.id }))
+  return finish(commandResult('COMMITTED', { data: hold, revision: engagement.revision, operationId: hold.id }))
 }
 
 export function createAmendmentCase({ candidateId, actorPersonaId, expectedRevision, idempotencyKey, reason = 'Post-issuance fact requires a new assessment.' } = {}) {
@@ -1101,16 +1340,18 @@ export function releaseCandidateBlockers(candidateId) {
   return candidate && engagement ? releaseBlockers(engagement) : [{ code: 'CANDIDATE_NOT_FOUND', message: 'No release candidate is selected.' }]
 }
 
-export function advanceRelease({ candidateId, actorPersonaId, expectedRevision, idempotencyKey } = {}) {
+export function advanceRelease({ candidateId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey } = {}) {
   const candidate = candidateFor(candidateId)
   const engagement = candidate ? engagementById(candidate.engagementId) : null
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'ADVANCE_RELEASE', targetId: candidateId, engagementId: candidate?.engagementId, payload: { expectedRevision } })
+  const fingerprint = commandFingerprint({ action: 'ADVANCE_RELEASE', targetId: candidateId, engagementId: candidate?.engagementId, payload: { expectedRevision, expectedSessionEpoch } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   if (!candidate || !engagement) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'CANDIDATE_NOT_FOUND', message: 'No release candidate is selected.' }))
   if (!actor?.active || !canViewEngagement(actor.id, engagement.id)) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot release this client scope.' }))
   if (!actorHasRole(actor, 'signatory', engagement.id)) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'SIGNATORY_AUTHORITY_REQUIRED', message: 'Only the scoped signatory can run the release command.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return rememberReceipt(idempotencyKey, fingerprint, stale)
   if (expectedRevision != null && expectedRevision !== candidate.revision) return rememberReceipt(idempotencyKey, fingerprint, commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected candidate revision ${expectedRevision}, current revision is ${candidate.revision}.`, revision: candidate.revision }))
   const blockers = releaseCandidateBlockers(candidate.id)
   // A candidate cannot advance until every current guard is satisfied. This
@@ -1139,15 +1380,17 @@ export function advanceRelease({ candidateId, actorPersonaId, expectedRevision, 
   return rememberReceipt(idempotencyKey, fingerprint, result)
 }
 
-export function createReleaseCheckpoint({ candidateId, actorPersonaId, expectedRevision, idempotencyKey } = {}) {
+export function createReleaseCheckpoint({ candidateId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey } = {}) {
   const candidate = candidateFor(candidateId)
   const engagement = candidate ? engagementById(candidate.engagementId) : null
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'CREATE_RELEASE_CHECKPOINT', targetId: candidateId, engagementId: candidate?.engagementId, payload: { expectedRevision } })
+  const fingerprint = commandFingerprint({ action: 'CREATE_RELEASE_CHECKPOINT', targetId: candidateId, engagementId: candidate?.engagementId, payload: { expectedRevision, expectedSessionEpoch } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   if (!candidate || !engagement) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'CANDIDATE_NOT_FOUND', message: 'No release candidate is selected.' }))
   if (!actor?.active || !canViewEngagement(actor.id, engagement.id) || !actor.roles.includes('records_custodian')) return rememberReceipt(idempotencyKey, fingerprint, commandResult('DENIED', { code: 'RECORDS_AUTHORITY_REQUIRED', message: 'A scoped records custodian must verify the checkpoint.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return rememberReceipt(idempotencyKey, fingerprint, stale)
   if (!candidate.releaseEventId) return rememberReceipt(idempotencyKey, fingerprint, commandResult('BLOCKED', { code: 'RELEASE_EVENT_REQUIRED', message: 'The release event must exist before a checkpoint can be created.' }))
   if (candidate.checkpointId) return rememberReceipt(idempotencyKey, fingerprint, commandResult('COMMITTED', { data: candidate, revision: candidate.revision, operationId: candidate.checkpointId }))
   if (expectedRevision != null && expectedRevision !== candidate.revision) return rememberReceipt(idempotencyKey, fingerprint, commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: 'The release candidate changed while the checkpoint was being prepared.', revision: candidate.revision }))
@@ -1341,16 +1584,18 @@ export function stageAccountingJournal({ engagementId = scenario.selectedEngagem
   return finish(commandResult('COMMITTED', { data: result.revisions.at(-1), revision: packageRecord.revision, operationId: requested.id }))
 }
 
-export function authorizeAccountingJournal({ engagementId = scenario.selectedEngagementId, journalId, actorPersonaId, expectedRevision, idempotencyKey, decision = 'AUTHORIZE', rationale = '' } = {}) {
+export function authorizeAccountingJournal({ engagementId = scenario.selectedEngagementId, journalId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, decision = 'AUTHORIZE', rationale = '' } = {}) {
   const engagement = engagementById(engagementId)
   const packageRecord = accountingPackageFor(engagementId)
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'AUTHORIZE_ACCOUNTING_JOURNAL', targetId: journalId, engagementId, payload: { expectedRevision, decision, rationale } })
+  const fingerprint = commandFingerprint({ action: 'AUTHORIZE_ACCOUNTING_JOURNAL', targetId: journalId, engagementId, payload: { expectedRevision, expectedSessionEpoch, decision, rationale } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
   if (!engagement || !packageRecord || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot authorize this journal.' }))
   if (!actorHasRole(actor, 'management_approver', engagementId)) return finish(commandResult('DENIED', { code: 'MANAGEMENT_AUTHORITY_REQUIRED', message: 'Management authorization must come from the scoped client approver.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
   if (expectedRevision != null && expectedRevision !== packageRecord.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected package revision ${expectedRevision}, current revision is ${packageRecord.revision}.`, revision: packageRecord.revision }))
   const revision = packageRecord.journalRevisions.find((item) => item.id === journalId)
   if (!revision) return finish(commandResult('DENIED', { code: 'JOURNAL_NOT_FOUND', message: 'That journal revision is not in the selected package.' }))
@@ -1389,16 +1634,18 @@ export function submitAccountingStatement({ engagementId = scenario.selectedEnga
   return finish(commandResult('COMMITTED', { data: packageRecord.statement, revision: packageRecord.revision, operationId: packageRecord.statement.id }))
 }
 
-export async function recordAccountingManagementApproval({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, idempotencyKey, decision = 'APPROVE', rationale = '' } = {}) {
+export async function recordAccountingManagementApproval({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, decision = 'APPROVE', rationale = '' } = {}) {
   const engagement = engagementById(engagementId)
   const packageRecord = accountingPackageFor(engagementId)
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'RECORD_ACCOUNTING_MANAGEMENT_APPROVAL', targetId: packageRecord?.statement?.id, engagementId, payload: { expectedRevision, decision, rationale } })
+  const fingerprint = commandFingerprint({ action: 'RECORD_ACCOUNTING_MANAGEMENT_APPROVAL', targetId: packageRecord?.statement?.id, engagementId, payload: { expectedRevision, expectedSessionEpoch, decision, rationale } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
   if (!engagement || !packageRecord || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot approve this statement package.' }))
   if (!actorHasRole(actor, 'management_approver', engagementId)) return finish(commandResult('DENIED', { code: 'MANAGEMENT_AUTHORITY_REQUIRED', message: 'Only the scoped client management approver can approve the presented package.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
   if (expectedRevision != null && expectedRevision !== packageRecord.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected package revision ${expectedRevision}, current revision is ${packageRecord.revision}.`, revision: packageRecord.revision }))
   if (packageRecord.statement.state !== 'READY_FOR_APPROVAL') return finish(commandResult('BLOCKED', { code: 'STATEMENT_SUBMISSION_REQUIRED', message: 'Submit the exact statement package before recording management approval.' }))
   if (decision !== 'APPROVE') return finish(commandResult('COMMITTED', { data: { decision, rationale: String(rationale).trim() }, revision: packageRecord.revision }))
@@ -1443,11 +1690,11 @@ export async function submitWorkpaper({ workpaperId, actorPersonaId, expectedRev
   }
 }
 
-export function reviewWorkpaper({ workpaperId, actorPersonaId, expectedRevision, idempotencyKey, decision = 'CLEAR', response = '' } = {}) {
+export function reviewWorkpaper({ workpaperId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, decision = 'CLEAR', response = '' } = {}) {
   const workpaper = scenario.workpapers?.find((item) => item.id === workpaperId)
   const engagement = workpaper ? engagementById(workpaper.engagementId) : null
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'REVIEW_WORKPAPER', targetId: workpaperId, engagementId: workpaper?.engagementId, payload: { expectedRevision, decision, response } })
+  const fingerprint = commandFingerprint({ action: 'REVIEW_WORKPAPER', targetId: workpaperId, engagementId: workpaper?.engagementId, payload: { expectedRevision, expectedSessionEpoch, decision, response } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
@@ -1455,6 +1702,8 @@ export function reviewWorkpaper({ workpaperId, actorPersonaId, expectedRevision,
   if (!actor?.active || !canViewEngagement(actor.id, engagement.id)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot review this workpaper.' }))
   if (!actor.roles.includes('independent_reviewer') && !actor.roles.includes('accounting_reviewer')) return finish(commandResult('DENIED', { code: 'REVIEW_AUTHORITY_REQUIRED', message: 'An assigned reviewer must record the workpaper decision.' }))
   if (workpaper.submittedBy === actor.id) return finish(commandResult('DENIED', { code: 'SEGREGATION_OF_DUTIES', message: 'The submitting preparer cannot independently clear the same workpaper.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
   if (!workpaper.submittedSnapshotId) return finish(commandResult('BLOCKED', { code: 'SNAPSHOT_REQUIRED', message: 'Review is blocked until an exact submitted snapshot exists.' }))
   if (expectedRevision != null && expectedRevision !== workpaper.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected workpaper revision ${expectedRevision}, current revision is ${workpaper.revision}.`, revision: workpaper.revision }))
   if (decision === 'CLEAR' && !String(response).trim()) return finish(commandResult('BLOCKED', { code: 'SUPPORTED_RESPONSE_REQUIRED', message: 'A supported reviewer response is required.' }))
@@ -1496,7 +1745,10 @@ export function retryIntegrationOperation({ operationId, actorPersonaId, expecte
   if (!['RETRY_REQUIRED', 'UNCERTAIN_REMOTE_SUCCESS', 'CURSOR_EXPIRED'].includes(operation.state)) return finish(commandResult('BLOCKED', { code: 'OPERATION_NOT_RETRYABLE', message: `Operation ${operation.id} is ${operation.state} and cannot be retried.` }))
   const nextAttempt = operation.attempt + 1
   const fault = scenario.provider.connected ? (scenario.provider.nextFault || 'NONE') : 'NOT_CONNECTED'
-  const shouldSucceed = operation.state === 'UNCERTAIN_REMOTE_SUCCESS' || fault === 'NONE'
+  // An uncertain timeout is only reconciled when the provider boundary is
+  // connected. A disconnected browser cannot turn a possible remote effect
+  // into a synthetic success merely because the prior attempt was uncertain.
+  const shouldSucceed = scenario.provider.connected && (operation.state === 'UNCERTAIN_REMOTE_SUCCESS' || fault === 'NONE')
   operation.attempt = nextAttempt
   operation.attemptId = `ATT-${operation.id}-${String(nextAttempt).padStart(2, '0')}`
   operation.attempts = [...(operation.attempts || []), { id: operation.attemptId, number: nextAttempt, state: shouldSucceed ? 'SUCCEEDED' : fault === 'NOT_CONNECTED' ? 'NOT_CONNECTED' : 'RETRY_REQUIRED', fence: operation.fence, code: shouldSucceed ? null : fault }]

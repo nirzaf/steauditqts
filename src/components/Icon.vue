@@ -55,6 +55,7 @@ const paths = {
   building: ['M4 21V5l8-2 8 2v16', 'M8 9h2M14 9h2M8 13h2M14 13h2M8 17h2M14 17h2'],
   chart: ['M4 19V5M4 19h16', 'm7 15 3-4 3 2 5-6'],
   workflow: ['M5 5h5v5H5zM14 14h5v5h-5z', 'M10 7h4a3 3 0 0 1 3 3v4', 'M14 17h-4a3 3 0 0 1-3-3v-4'],
+  layers: ['M12 3 3 8l9 5 9-5-9-5Z', 'm3 12 9 5 9-5', 'm3 16 9 5 9-5'],
 }
 
 const iconPaths = computed(() => paths[props.name] || paths.workflow)

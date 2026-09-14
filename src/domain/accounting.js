@@ -91,8 +91,10 @@ export function summarizeRows(rows) {
 }
 
 export function sourceReflection(baselineRows, replacementRows, adjustment = { debitAccount: '520100', creditAccount: '159100', amount: '5000.00' }) {
+  if (!Array.isArray(baselineRows) || !Array.isArray(replacementRows) || !baselineRows.length || !replacementRows.length) return 'UNKNOWN'
   const baseline = Object.fromEntries(baselineRows.map((row) => [row.accountCode, row]))
   const replacement = Object.fromEntries(replacementRows.map((row) => [row.accountCode, row]))
+  if (!baseline[adjustment.debitAccount] || !baseline[adjustment.creditAccount] || !replacement[adjustment.debitAccount] || !replacement[adjustment.creditAccount]) return 'UNKNOWN'
   const debitDelta = subtractMoney(replacement[adjustment.debitAccount]?.debit || '0.00', baseline[adjustment.debitAccount]?.debit || '0.00')
   const creditDelta = subtractMoney(replacement[adjustment.creditAccount]?.credit || '0.00', baseline[adjustment.creditAccount]?.credit || '0.00')
   if (debitDelta === '0.00' && creditDelta === '0.00') return 'NOT_REFLECTED'

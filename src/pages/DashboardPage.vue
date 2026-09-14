@@ -4,15 +4,29 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
-import { client, formatMoney, gateMeta, gateStatuses, pbcRequests, portfolioClients, timeline, workflowGuides } from '../data'
+import { client, formatMoney, portfolioClients, timeline, workflowGuides } from '../data'
+import { gateSummary, selectedClient, selectedEngagement, scenario } from '../domain/scenario.js'
 
 const emit = defineEmits(['navigate'])
 const range = ref('This period')
 const ranges = ['This period', 'Next 30 days', 'All clients']
 const openActions = ref(false)
 
-const activeGates = computed(() => gateStatuses.filter((status) => status === 'good').length)
-const openPbc = computed(() => pbcRequests.filter((request) => request.tone !== 'good').length)
+const dashboardEngagement = computed(() => selectedEngagement())
+const dashboardClient = computed(() => selectedClient())
+const gateState = computed(() => gateSummary(dashboardEngagement.value?.id))
+const currentGates = computed(() => gateState.value.gates.filter((gate) => gate.applicable && gate.period === 'current'))
+const nextPeriodGate = computed(() => gateState.value.gates.find((gate) => gate.id === 'G10'))
+const activeGates = computed(() => gateState.value.currentReady)
+const currentGateDenominator = computed(() => gateState.value.currentDenominator)
+const openPbc = computed(() => (scenario.pbcRequests || []).filter((request) => !['ACCEPTED', 'CLOSED'].includes(request.state)).length)
+const activeEngagements = computed(() => scenario.engagements.filter((engagement) => !engagement.isNextPeriodShell).length)
+const openBlockers = computed(() => currentGates.value.filter((gate) => gate.status !== 'good').length)
+const partnerBlockers = computed(() => currentGates.value.filter((gate) => ['G1', 'G7', 'G8'].includes(gate.id) && gate.status !== 'good').length)
+const syncRetries = computed(() => (scenario.operations || []).filter((operation) => ['RETRY_REQUIRED', 'UNCERTAIN_REMOTE_SUCCESS', 'CURSOR_EXPIRED'].includes(operation.state)).length)
+const integrationHealth = computed(() => scenario.provider?.connected ? (syncRetries.value ? '82%' : '100%') : 'Offline')
+const integrationDetail = computed(() => scenario.provider?.connected ? `${syncRetries.value ? syncRetries.value + ' retry pending' : 'No retry pending'} · SIMULATION` : 'Provider disconnected · SIMULATION')
+const dashboardStatus = computed(() => dashboardEngagement.value?.service === 'audit' ? 'Fieldwork in progress' : 'Preparation in progress')
 
 function navigate(route) {
   emit('navigate', route)
@@ -31,7 +45,7 @@ function navigate(route) {
     <WorkflowGuide :guide="workflowGuides.dashboard" />
 
     <div class="page-context-row">
-      <div class="context-chip"><span class="context-dot"></span><strong>Demo workspace</strong><span>Northstar Trading W.L.L.</span></div>
+      <div class="context-chip"><span class="context-dot"></span><strong>Demo workspace</strong><span>{{ dashboardClient?.name || 'No selected engagement' }}</span></div>
       <div class="range-toggle" aria-label="Dashboard time range">
         <button v-for="item in ranges" :key="item" type="button" :class="{ active: range === item }" @click="range = item">{{ item }}</button>
       </div>
@@ -40,19 +54,19 @@ function navigate(route) {
     <section class="metric-grid" aria-label="Practice metrics">
       <article class="metric-card accent-navy">
         <div class="metric-card-top"><span>Active engagements</span><span class="metric-icon"><Icon name="briefcase" :size="17" /></span></div>
-        <strong>12</strong><small>3 milestones due this week</small>
+        <strong>{{ activeEngagements }}</strong><small>{{ scenario.engagements.length - activeEngagements }} next-period shell(s) in planning</small>
       </article>
       <article class="metric-card accent-green">
         <div class="metric-card-top"><span>Gate progress</span><span class="metric-icon"><Icon name="check-circle" :size="17" /></span></div>
-        <strong>{{ activeGates }}/10</strong><small>Northstar’s current cycle</small>
+        <strong>{{ activeGates }}/{{ currentGateDenominator }}</strong><small>{{ dashboardClient?.name || 'Selected engagement' }} · current cycle</small>
       </article>
       <article class="metric-card accent-amber">
         <div class="metric-card-top"><span>Open blockers</span><span class="metric-icon"><Icon name="warning" :size="17" /></span></div>
-        <strong>4</strong><small>2 require partner attention</small>
+        <strong>{{ openBlockers }}</strong><small>{{ partnerBlockers }} require partner attention</small>
       </article>
       <article class="metric-card accent-blue">
         <div class="metric-card-top"><span>Integration health</span><span class="metric-icon"><Icon name="pulse" :size="17" /></span></div>
-        <strong>96%</strong><small>Last reconciliation 18 sec</small>
+        <strong>{{ integrationHealth }}</strong><small>{{ integrationDetail }}</small>
       </article>
     </section>
 
@@ -86,9 +100,10 @@ function navigate(route) {
       </article>
 
       <article class="panel gate-panel">
-        <div class="panel-heading"><div><span class="eyebrow">Northstar Trading W.L.L.</span><h2>Cycle control path</h2></div><StatusPill label="Fieldwork in progress" tone="warn" /></div>
-        <div class="gate-progress"><div v-for="(gate, index) in gateMeta.slice(0, 10)" :key="gate.id" class="gate-progress-item" :class="`gate-${gateStatuses[index]}`"><span class="gate-node">{{ gateStatuses[index] === 'good' ? '✓' : gateStatuses[index] === 'warn' ? '!' : gateStatuses[index] === 'danger' ? '×' : '•' }}</span><span>{{ gate.id }}</span></div></div>
-        <div class="gate-summary"><div><strong>4 of 10</strong><span>gates ready</span></div><div><strong>2</strong><span>approval blockers</span></div><div><strong>1</strong><span>sync retry</span></div><button type="button" class="text-button" @click="navigate('engagements')">Open engagement <Icon name="arrow-right" :size="15" /></button></div>
+        <div class="panel-heading"><div><span class="eyebrow">{{ dashboardClient?.name || 'Selected client' }}</span><h2>Cycle control path</h2></div><StatusPill :label="dashboardStatus" tone="warn" /></div>
+        <div class="gate-progress"><div v-for="gate in currentGates" :key="gate.id" class="gate-progress-item" :class="`gate-${gate.status}`"><span class="gate-node">{{ gate.status === 'good' ? '✓' : gate.status === 'warn' ? '!' : gate.status === 'danger' ? '×' : '•' }}</span><span>{{ gate.id }}</span></div></div>
+        <div class="gate-next-note"><span class="gate-next-node">{{ nextPeriodGate?.id }}</span><span><strong>{{ nextPeriodGate?.title }}</strong><small>Shown separately: {{ nextPeriodGate?.nextPeriodNote }}</small></span></div>
+        <div class="gate-summary"><div><strong>{{ activeGates }} of {{ currentGateDenominator }}</strong><span>current gates ready</span></div><div><strong>{{ partnerBlockers }}</strong><span>approval blockers</span></div><div><strong>{{ syncRetries }}</strong><span>sync retries</span></div><button type="button" class="text-button" @click="navigate('engagements')">Open engagement <Icon name="arrow-right" :size="15" /></button></div>
       </article>
 
       <article class="panel timeline-panel">

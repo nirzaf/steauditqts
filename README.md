@@ -6,6 +6,7 @@ Vue + Vite multi-page prototype for a Frappe/Microsoft 365 accounting and audit 
 
 - Overview dashboard
 - Clients and acceptance
+- CRM-inspired synthetic lead register (search, filters, list/grid, bounded demo import)
 - Engagement gates G0–G10
 - PBC portal
 - Accounting and trial balance
@@ -13,7 +14,9 @@ Vue + Vite multi-page prototype for a Frappe/Microsoft 365 accounting and audit 
 - Reviews and approvals
 - Release and archive
 - Integration health
-- Architecture map (V4 systems of record, control planes and service routes)
+- Architecture map (V5 systems of record, control planes and service routes)
+- V5 operating model (11 gates, 26 named outputs, commercial fixture, roles and notifications)
+- Complete cycle walkthrough (§35.1 journey and §27–29 failure-boundary overlays)
 - Phase 0 readiness (12 synthetic proof experiments, vertical slice and feasibility decision)
 
 The UI uses fictional QAR data based on the supplied workflow architecture. It demonstrates workflow controls and versioning; it is not a production accounting system or an audit opinion engine. Every screen is marked **SYNTHETIC DEMO** and carries `SIMULATION` evidence. Do not enter real client information, credentials, files, or professional decisions.
@@ -25,7 +28,11 @@ npm install
 npm run dev
 ```
 
-Create a production build with `npm run build`. The static output is in `dist/` and is deployed to Cloudflare Pages for `ste.quadrate.lk`.
+Create a production build with `npm run build`. The static Vue/Vite output is in `dist/` and is deployed to Cloudflare Pages for `ste.quadrate.lk`. Nuxt is intentionally not required: the browser workflow stays a small static client, while server-side functions belong in the separately scoped Cloudflare Worker.
+
+### Server-side boundary
+
+Server-side functions live in `worker/index.js` and are exposed only through the `steaudit-api` Worker route in `wrangler.jsonc`. The Worker is the place for validated, correlation-aware API commands and D1 persistence; the client remains local-only unless an explicitly configured, non-production shared-demo boundary is enabled. Keep the Worker and Pages deployments separate so a UI build cannot silently grant provider or records access.
 
 ## Client comments and walkthrough preferences
 
@@ -59,11 +66,13 @@ npx wrangler pages deploy dist --project-name ste-quadrate-lk --branch main
 
 The Worker is intentionally fail-closed demo infrastructure: inputs are length- and key-validated, writes are scoped to an explicit engagement and step, public health returns no client records, and every response includes a correlation ID and `SIMULATION` evidence. Do not treat this API or its D1 tables as production identity, isolation, tamper resistance, records protection, or audit evidence.
 
-## V4 architecture views
+## V5 architecture views
 
-The admin navigation includes architecture-focused prototype pages. **Architecture map** explains the Frappe-first modular-monolith boundary, Entra identity, MariaDB/outbox records, SharePoint document ownership, Purview protection and independent recovery checkpoints. **Admin architecture**, **Accountant architecture**, and **Client architecture** provide the same high-level diagram through each persona's boundary: control ownership, source-to-package preparation, or portal submission and communication. **Phase 0 readiness** turns the specification's 12 experiments into a filterable register with owners, pass criteria, a small complete vertical slice and the conditional feasibility decision. All values are synthetic planning examples; these pages do not claim that a tenant capability, production approval, or regulatory control has been proven.
+The admin navigation includes architecture-focused prototype pages. **Architecture map** explains the v5 Frappe-first modular-monolith boundary, the optional Cloudflare Worker edge/server-function boundary used by this prototype, Entra identity, MariaDB/outbox records, SharePoint document ownership, Purview protection and independent recovery checkpoints. **Admin architecture**, **Accountant architecture**, and **Client architecture** provide the same high-level diagram through each persona's boundary: control ownership, source-to-package preparation, or portal submission and communication. **V5 operating model** translates the new specification into its 11 independent gates, 26 named outputs, commercial fixture, role boundaries and notification handoffs. **Phase 0 readiness** turns the inherited experiments into a filterable register with owners, pass criteria, a small complete vertical slice and the conditional feasibility decision. All values are synthetic planning examples; these pages do not claim that a tenant capability, production approval, or regulatory control has been proven.
 
 The **Phase 0 readiness** page also includes an explicit **Run clean synthetic rehearsal** action. It resets only the browser-local synthetic scenario (separate from every professional command), runs the small end-to-end acceptance/PBC/accounting/audit/release/recovery slice, exercises confirmed-prohibition and non-renewal branches, and retains a bounded step-by-step `SIMULATION` evidence record. Each run links its exercised steps to the source-derived 28 AT, 44 ET, 24 VT, and 12 P0 traceability identities. A passing rehearsal is not a Microsoft, Frappe/MariaDB, records-retention, provider exactly-once, or recovery-fencing proof.
+
+The **Complete cycle** page is the guided explanation layer for that rehearsal. It follows the v5 new-client route from G0 through G10 with 36 numbered actions, derived outcomes, control boundaries, destination links, and five cross-cutting failure checkpoints. It makes fee approval, EL/signature, advance-gated onboarding, paired Draft FS/information-letter response, final discussion, invoice/cost close and recovery visible; use **Phase 0 readiness** for the resulting evidence register.
 
 ## Iconography and accessibility
 

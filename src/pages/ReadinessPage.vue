@@ -87,7 +87,7 @@ async function runCycle() {
 <template>
   <div class="page readiness-page">
     <PageHeader
-      eyebrow="V4 decision evidence · synthetic only"
+      eyebrow="V5 decision evidence · synthetic only"
       title="Phase 0 readiness"
       description="A sponsor-friendly proof register for the architecture: run one complete synthetic slice, inject failure boundaries, and decide what can be enabled before any live client work."
       action-label="View architecture map"
@@ -115,7 +115,7 @@ async function runCycle() {
     </section>
 
     <section class="panel evidence-register-panel">
-      <div class="panel-heading"><div><span class="eyebrow">M4 evidence register</span><h2>What the prototype can prove now</h2></div><span class="muted-label">Selected scope · {{ selectedEngagement?.id }}</span></div>
+      <div class="panel-heading"><div><span class="eyebrow">V5 evidence register</span><h2>What the prototype can prove now</h2></div><span class="muted-label">Selected scope · {{ selectedEngagement?.id }}</span></div>
       <p class="evidence-register-intro">This register turns the walkthrough into an auditable conversation. Each row points to a real synthetic record or an explicit missing proof; it never treats a green screen as evidence of a live integration.</p>
       <div class="evidence-register-list" role="list">
         <div v-for="item in evidenceRegister" :key="item.id" class="evidence-register-row" role="listitem">

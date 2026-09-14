@@ -54,7 +54,7 @@ function addWorkpaper() {
 }
 
 async function submitSnapshot(workpaper) {
-  const result = await submitWorkpaper({ workpaperId: workpaper.id, actorPersonaId: activeActor()?.personaId, expectedRevision: workpaper.revision, idempotencyKey: `workpaper-${workpaper.id}-${workpaper.revision}`, content: `${workpaper.id}|${selectedClient.value?.id}|${selectedEngagement.value?.period}|synthetic-snapshot` })
+  const result = await submitWorkpaper({ workpaperId: workpaper.id, actorPersonaId: activeActor()?.personaId, expectedRevision: workpaper.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `workpaper-${workpaper.id}-${workpaper.revision}`, content: `${workpaper.id}|${selectedClient.value?.id}|${selectedEngagement.value?.period}|synthetic-snapshot` })
   toast.value = result.outcome === 'COMMITTED' ? `${workpaper.id} submitted as an exact snapshot ${result.data.snapshot.id}. Reviewer sees this snapshot, not a mutable “latest” file.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4000)
 }

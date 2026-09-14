@@ -54,7 +54,7 @@ function navigate(route) {
         <p>Follow the numbered path from your action to the platform control. Select a step to see its owner, source of record, and handoff output.</p>
         <div class="architecture-status-stack" aria-label="Implementation status">
           <span class="architecture-status current"><strong>CURRENT IMPLEMENTATION</strong><small>Vue/Vite · browser-local synthetic state</small></span>
-          <span class="architecture-status target"><strong>TARGET V4 ARCHITECTURE</strong><small>Frappe/Microsoft controls remain a reference design</small></span>
+          <span class="architecture-status target"><strong>TARGET V5 ARCHITECTURE</strong><small>Frappe/Microsoft controls remain a reference design</small></span>
         </div>
         <div class="role-architecture-legend" aria-label="Architecture legend">
           <span><i class="role-legend-dot tone-blue"></i>Human access</span>

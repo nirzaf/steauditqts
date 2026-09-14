@@ -24,6 +24,8 @@ export const navItems = [
   { key: 'release', label: 'Release & archive', icon: 'lock', section: 'Control' },
   { key: 'integration', label: 'Integration health', icon: 'pulse', section: 'Operations' },
   { key: 'architecture', label: 'Architecture map', icon: 'workflow', section: 'Operations' },
+  { key: 'blueprint', label: 'V5 operating model', icon: 'layers', section: 'Operations', badge: '26' },
+  { key: 'cycle', label: 'Complete cycle', icon: 'workflow', section: 'Operations' },
   { key: 'readiness', label: 'Phase 0 readiness', icon: 'list-check', section: 'Operations', badge: '12' },
 ]
 
@@ -41,7 +43,7 @@ export const workflowGuides = {
       { title: 'Open the oldest blocker', body: 'Use Next actions to follow the highest-impact item. Each row deep-links to the page where it can be resolved.' },
       { title: 'Trace the cycle rail', body: 'The gate rail shows how one Northstar engagement moves from acceptance through archive without skipping controls.' },
     ],
-    checks: ['Every amber or red item has an owner and due date.', 'The next action belongs to the correct service track.', 'No release action is attempted while an earlier gate is blocked.'],
+    checks: ['Every amber or red item has an owner and due date.', 'The next action belongs to the correct service track.', 'No release or commercial-close action is attempted while an earlier gate is blocked.'],
     next: 'Clients & acceptance',
     nextHint: 'Open the client relationship before delivery work begins; acceptance is a separate professional decision.',
   },
@@ -50,9 +52,9 @@ export const workflowGuides = {
     step: '02 / 09',
     phase: 'Accept',
     title: 'Separate the relationship from the acceptance decision',
-    summary: 'Use this page to decide whether the firm can accept or continue a service-period relationship. A client record, quote, or portal login never grants professional acceptance.',
+    summary: 'Use this page to capture a prospect in the lead register, then decide whether the firm can accept or continue a service-period relationship. A lead, client record, quote, or portal login never grants professional acceptance.',
     steps: [
-      { title: 'Filter the register', body: 'Use Needs decision to focus on holds and due continuances, or search by client ID when a reviewer sends a direct link.' },
+      { title: 'Start with the lead register', body: 'Search, filter, or import bounded demo leads first. Assign a named owner, then keep qualification separate from creating a client and engagement.' },
       { title: 'Read the assessment', body: 'Open a client to inspect the response count, expired evidence, specialists, and the specific condition blocking commencement.' },
       { title: 'Record the human decision', body: 'The partner owns accept, continue, decline, or escalate. The prototype keeps that decision separate from commercial activity.' },
     ],
@@ -71,7 +73,7 @@ export const workflowGuides = {
       { title: 'Follow the right track', body: 'Open Accounting package for TB, mappings, journals, and statements. Open Audit file for risks, procedures, samples, and working papers.' },
       { title: 'Use the calendar', body: 'Milestones show the next commitment, who must act, and which gate will remain blocked if the date slips.' },
     ],
-    checks: ['G0–G3 are complete before the accounting or audit plan is treated as usable.', 'The accounting package is a versioned input, never the auditor’s ledger.', 'The partner and preparer roles remain distinct.'],
+    checks: ['G0–G4 are complete before portal or fieldwork operations are treated as ready.', 'The accounting package is a versioned input, never the auditor’s ledger.', 'The partner and preparer roles remain distinct.'],
     next: 'PBC portal',
     nextHint: 'Request the evidence needed to make data usable. The client only sees published request fields and upload status.',
   },
@@ -210,6 +212,21 @@ export const workflowGuides = {
     next: 'Portal overview',
     nextHint: 'Return to the overview to see whether a reply, upload, or detail submission is still outstanding.',
   },
+  blueprint: {
+    id: 'v5-blueprint-guide',
+    step: 'V5 SPEC 01',
+    phase: 'Operating model',
+    title: 'Use the v5 blueprint to explain the whole practice',
+    summary: 'This page translates the v5 specification into a stakeholder-friendly map: eleven independent gates, twenty-six named outputs, one commercial fixture, role boundaries, notifications, and the Worker/Frappe deployment split.',
+    steps: [
+      { title: 'Read the gate rail', body: 'Start with G0–G10. Each gate has its own evidence and owner; a paid invoice, portal login, or green status cannot substitute for another gate.' },
+      { title: 'Open a named output', body: 'Use the 26-output catalogue to see when each form, letter, statement, report, invoice, time record, and cost summary is created and who owns it.' },
+      { title: 'Walk the architecture boundary', body: 'The current demo uses a Cloudflare Worker for scoped server functions. The v5 production target remains a Frappe modular monolith with MariaDB and bounded Frappe workers.' },
+    ],
+    checks: ['Every status has an owner, trigger, version and evidence expectation.', 'Commercial cost, fee, advance, invoice and contribution are shown separately.', 'Unknown firm templates, rates, policies and tenant capability remain clearly marked as inputs—not invented defaults.'],
+    next: 'Complete cycle',
+    nextHint: 'Use the complete-cycle walkthrough to see how the v5 gates and outputs connect in chronological order.',
+  },
   'accountant-home': {
     id: 'accountant-home-guide',
     step: 'ACCOUNTANT 01',
@@ -262,7 +279,7 @@ export const workflowGuides = {
     title: 'Read the platform as connected control planes',
     summary: 'Use this map to understand which system owns each fact, how work crosses the Frappe boundary, and where identity, documents, records, and recovery are deliberately separated.',
     steps: [
-      { title: 'Start with identity', body: 'Entra authenticates staff and invited clients. Frappe then checks the firm, client, engagement, role, visibility, state, and separation-of-duties rules before revealing a record.' },
+      { title: 'Start with identity', body: 'Entra authenticates staff. The temporary Frappe Website User baseline onboards a named client contact until an approved Entra B2B route is configured. Frappe then checks the firm, client, engagement, role, visibility, state, and separation-of-duties rules before revealing a record.' },
       { title: 'Follow the source of truth', body: 'MariaDB owns structured business records and durable outbox intent. SharePoint owns Office files, evidence, snapshots, and issued artifacts.' },
       { title: 'Trace the control planes', body: 'Graph workers reconcile external changes, Purview observes records protection, and independent checkpoints make recovery and release evidence reconstructable.' },
     ],
@@ -275,7 +292,7 @@ export const workflowGuides = {
     step: 'PROOF 01',
     phase: 'Phase 0 proof',
     title: 'Turn architecture into evidence before production',
-    summary: 'Use this register as the sponsor-friendly view of the v4 decision: a small synthetic vertical slice, explicit failure tests, and a go/no-go decision before expanding the service scope.',
+    summary: 'Use this register as the sponsor-friendly view of the v5 decision: a small synthetic vertical slice, explicit failure tests, and a go/no-go decision before expanding the service scope.',
     steps: [
       { title: 'Run the smallest complete slice', body: 'Use two synthetic clients and separate preparer, reviewer, partner, records, and client identities to exercise intake, accounting, audit, release, archive, and renewal.' },
       { title: 'Inject the hard failures', body: 'Pause workers, expire leases, change a source during evaluation, revoke access, simulate provider timeouts, and restore an older database without allowing duplicate release.' },
@@ -322,13 +339,28 @@ export const workflowGuides = {
     title: 'Understand what happens after you press submit',
     summary: 'Use the client portal architecture view to see where your facts, files, and questions go—and why internal risk notes and professional approvals are not shown in the portal.',
     steps: [
-      { title: 'Use the invited workspace', body: 'Sign in with the invitation for your organization and check the period before completing a form or attaching evidence.' },
+      { title: 'Complete temporary onboarding', body: 'Use the named, short-lived Frappe Website User setup handoff, complete the required setup and MFA, then check the period before completing a form or attaching evidence. An approved Entra B2B route is an explicit alternative—not an invisible fallback.' },
       { title: 'Keep evidence with its request', body: 'Upload to the matching PBC item so the receipt, version, hash, and team response stay together.' },
       { title: 'Read the safe projection', body: 'Portal status tells you what is received, under review, accepted, or needs clarification; it is not a professional conclusion.' },
     ],
     checks: ['Each submission is tied to the correct client and engagement.', 'A file receipt or retry state is visible after upload.', 'Questions stay in the shared engagement thread with their context.'],
     next: 'Portal overview',
     nextHint: 'Return to the portal to review open requests, messages, due dates, and the next action for your team.',
+  },
+  cycle: {
+    id: 'cycle-guide',
+    step: 'V5 WALKTHROUGH 01',
+    phase: 'Complete cycle',
+    title: 'Trace the v5 cycle from acceptance to renewal',
+    summary: 'Use this walkthrough as the shared map for a client conversation. It follows one Northstar engagement through the v5 gates, 26 named outputs, commercial close, archive, recovery, and fresh continuation.',
+    steps: [
+      { title: 'Start at the gate', body: 'Read the journey from G0 to G10. Commercial ready, terms accepted, portal eligible, fieldwork ready, completion, release, commercial close, and archive are separate gates.' },
+      { title: 'Open the destination', body: 'Select a journey row to see the action, outcome, control, and a link to the corresponding prototype screen.' },
+      { title: 'Run the rehearsal last', body: 'Use the local rehearsal to exercise the negative paths and record synthetic evidence. It never turns a prototype state into a production claim.' },
+    ],
+    checks: ['A human owner is named for every decision or handoff.', 'Synthetic outcomes are read as demonstrations, not live integration evidence.', 'A hold, stale generation, invoice retry, or non-renewal path remains visible instead of being skipped.'],
+    next: 'V5 operating model',
+    nextHint: 'Use the readiness register after the walkthrough to see which assumptions still need tenant, provider, records, or recovery proof.',
   },
 }
 
@@ -341,7 +373,7 @@ export const roleArchitecturePages = {
     guideKey: 'admin-architecture',
     eyebrow: 'Admin architecture · high-level diagram',
     title: 'See the whole control plane at a glance',
-    description: 'Use this view to explain how identity, structured records, documents, approvals, records protection, and recovery connect without sharing ownership.',
+    description: 'Use this view to explain how identity, Cloudflare edge functions, structured records, documents, approvals, records protection, and recovery connect without sharing ownership.',
     initials: 'MR',
     avatarTone: 'navy',
     audience: 'Admin · control owner',
@@ -349,11 +381,12 @@ export const roleArchitecturePages = {
     diagramTitle: 'From a user request to a controlled business event',
     diagramHint: 'Read left to right. Each step names the system of record and the guardrail that must be evidenced before the next handoff.',
     flow: [
-      { id: 'admin-access', number: '01', label: 'Identity + policy', system: 'Entra ID → Frappe', icon: 'key', tone: 'blue', action: 'Authenticate staff and invited clients, then resolve firm, client, engagement, role, and separation-of-duties scope.', control: 'Tenant / issuer checks, session epoch, role assignment', output: 'Scoped actor session' },
-      { id: 'admin-command', number: '02', label: 'Guarded command', system: 'Frappe application plane', icon: 'workflow', tone: 'navy', action: 'Route a typed command instead of exposing a provider URL or an unrestricted integration token.', control: 'Command receipt, state guard, owner and idempotency key', output: 'Auditable business intent' },
-      { id: 'admin-records', number: '03', label: 'Structured records', system: 'MariaDB + durable outbox', icon: 'database', tone: 'navy', action: 'Persist client, engagement, gate, approval, generation, and retry state where the firm can query it consistently.', control: 'Versioned rows, outbox intent, lease and fencing token', output: 'Durable application state' },
-      { id: 'admin-documents', number: '04', label: 'Documents + snapshots', system: 'Graph → SharePoint', icon: 'folder', tone: 'amber', action: 'Move selected files through working, restricted, and records repositories while retaining IDs, versions, bytes, and hashes.', control: 'Allowlisted calls, exact snapshot, receipt hash', output: 'Reconstructable evidence package' },
-      { id: 'admin-release', number: '05', label: 'Decision + recovery', system: 'Approvals → Purview → checkpoint', icon: 'shield', tone: 'purple', action: 'Keep professional approval, protection observation, release authorization, delivery, and recovery evidence as separate events.', control: 'Named authority, manifest, protection attestation, external checkpoint', output: 'Controlled release or visible hold' },
+      { id: 'admin-access', number: '01', label: 'Identity + policy', system: 'Entra ID / Website User → Frappe', icon: 'key', tone: 'blue', action: 'Authenticate staff with Entra and onboard a named client contact through the temporary Website User baseline until an approved B2B route exists, then resolve firm, client, engagement, role, and separation-of-duties scope.', control: 'Tenant / issuer checks, setup expiry, session epoch, role assignment', output: 'Scoped actor session' },
+      { id: 'admin-command', number: '02', label: 'Server-side boundary', system: 'Cloudflare Worker → Frappe', icon: 'pulse', tone: 'green', action: 'Accept only a bounded server command from the browser. The Worker can protect the edge route, but it is not the Frappe application host or the system of record.', control: 'Access gate, correlation ID, typed route and fail-closed mode', output: 'Validated request boundary' },
+      { id: 'admin-command-firstrate', number: '03', label: 'Guarded command', system: 'Frappe application plane', icon: 'workflow', tone: 'navy', action: 'Route a typed business command instead of exposing a provider URL or an unrestricted integration token.', control: 'Command receipt, state guard, owner and idempotency key', output: 'Auditable business intent' },
+      { id: 'admin-records', number: '04', label: 'Structured records', system: 'MariaDB + durable outbox', icon: 'database', tone: 'navy', action: 'Persist client, engagement, gate, approval, generation, and retry state where the firm can query it consistently.', control: 'Versioned rows, outbox intent, lease and fencing token', output: 'Durable application state' },
+      { id: 'admin-documents', number: '05', label: 'Documents + snapshots', system: 'Graph → SharePoint', icon: 'folder', tone: 'amber', action: 'Move selected files through working, restricted, and records repositories while retaining IDs, versions, bytes, and hashes.', control: 'Allowlisted calls, exact snapshot, receipt hash', output: 'Reconstructable evidence package' },
+      { id: 'admin-release', number: '06', label: 'Decision + recovery', system: 'Approvals → Purview → checkpoint', icon: 'shield', tone: 'purple', action: 'Keep professional approval, protection observation, release authorization, delivery, and recovery evidence as separate events.', control: 'Named authority, manifest, protection attestation, external checkpoint', output: 'Controlled release or visible hold' },
     ],
     userSurface: [
       { title: 'Supervise boundaries', detail: 'See every workspace, gate, retry, approval dependency, and integration health signal.' },
@@ -425,11 +458,11 @@ export const roleArchitecturePages = {
     diagramTitle: 'From your submission to a visible team response',
     diagramHint: 'Read left to right. The portal gives you a clear status and communication trail while professional decisions and internal notes stay with authorized firm roles.',
     flow: [
-      { id: 'client-invite', number: '01', label: 'Secure sign-in', system: 'Entra invite → client portal', icon: 'key', tone: 'blue', action: 'Use the invited account for your organization. The portal session is scoped to the client and engagement you were invited to.', control: 'Tenant, invitation, session, client mapping', output: 'Private client workspace' },
+      { id: 'client-invite', number: '01', label: 'Temporary onboarding', system: 'Frappe Website User → client portal', icon: 'key', tone: 'blue', action: 'Use the named, short-lived onboarding username/password delivered through the approved secure handoff, then complete setup and MFA before any engagement read/write access.', control: 'Stable person mapping, expiry, setup-only session, revocation', output: 'Private client workspace' },
       { id: 'client-facts', number: '02', label: 'Submit facts', system: 'Frappe client record', icon: 'users', tone: 'navy', action: 'Complete or confirm entity details, contact information, period, and service requests in the form provided.', control: 'Field validation, revision and submit receipt', output: 'Versioned client input' },
       { id: 'client-upload', number: '03', label: 'Upload evidence', system: 'Portal → Graph → SharePoint', icon: 'upload', tone: 'amber', action: 'Add the requested file to the right PBC item. The system records the transfer and preserves the exact bytes and version.', control: 'Selected-resource grant, receipt, hash and retry', output: 'Traceable evidence item' },
       { id: 'client-thread', number: '04', label: 'Ask + clarify', system: 'Frappe communication thread', icon: 'message', tone: 'green', action: 'Keep each question with its request, period, and team response so everyone can see the next action.', control: 'Client-visible thread, timestamps and ownership', output: 'Shared clarification record' },
-      { id: 'client-status', number: '05', label: 'See status', system: 'Portal projection ← firm controls', icon: 'eye', tone: 'purple', action: 'See whether a request is received, under review, accepted, or needs clarification without exposing internal risk notes.', control: 'Safe projection of state, not a second approval', output: 'Clear next step for you' },
+      { id: 'client-status', number: '05', label: 'See status', system: 'Portal projection ← firm controls', icon: 'eye', tone: 'purple', action: 'See whether a request is received, under review, accepted, or needs clarification without exposing internal risk notes. An approved Entra B2B route is an explicit alternative, not an invisible fallback.', control: 'Safe projection of state, not a second approval', output: 'Clear next step for you' },
     ],
     userSurface: [
       { title: 'Submit once, track clearly', detail: 'Use Client details and requests to keep facts, files, and due dates in one engagement context.' },
@@ -482,26 +515,27 @@ export const portfolioClients = [
 
 export const gateMeta = [
   { id: 'G0', title: 'Firm ready', detail: 'Methods, access and repositories' },
-  { id: 'G1', title: 'Accepted / continued', detail: 'Assessment, ethics and clearances' },
-  { id: 'G2', title: 'Work authorized', detail: 'Terms, team, access and dates' },
-  { id: 'G3', title: 'Data usable', detail: 'Validated source and control totals' },
-  { id: 'G4', title: 'Accounting ready', detail: 'Mapping, journals and statements' },
-  { id: 'G5', title: 'Audit plan ready', detail: 'Risks, materiality and procedures' },
-  { id: 'G6', title: 'Conclusions complete', detail: 'Evidence, exceptions and evaluation' },
-  { id: 'G7', title: 'Final package approved', detail: 'Management, partner and EQR' },
-  { id: 'G8', title: 'Release authorized', detail: 'Matched report and recipients' },
-  { id: 'G9', title: 'Archive complete', detail: 'Manifest, retention and recovery' },
-  { id: 'G10', title: 'Next period allowed', detail: 'Fresh continuance and terms' },
+  { id: 'G1', title: 'Accept / continue', detail: 'Assessment, evidence, clearances and partner decision' },
+  { id: 'G2', title: 'Commercial ready', detail: 'Estimate, fee approvals and quotation' },
+  { id: 'G3', title: 'Terms accepted', detail: 'Exact EL and verified acceptance' },
+  { id: 'G4', title: 'Portal eligible', detail: 'Advance, identity and restricted binding' },
+  { id: 'G5', title: 'Fieldwork ready', detail: 'Plan, announcement, team and critical items' },
+  { id: 'G6', title: 'Review submission ready', detail: 'Workpapers and conclusion summary' },
+  { id: 'G7', title: 'Completion ready', detail: 'Responses, review, representation and EQR' },
+  { id: 'G8', title: 'Release ready', detail: 'Opinion, discussion, signatures and protection' },
+  { id: 'G9', title: 'Commercial close', detail: 'Invoice, advance, time and cost snapshot' },
+  { id: 'G10', title: 'Archive / renewal', detail: 'Retained file, recovery and fresh decision' },
 ]
 
-export const gateStatuses = ['good', 'good', 'good', 'good', 'warn', 'warn', 'danger', 'danger', 'danger', 'danger', 'neutral']
+export const gateStatuses = ['good', 'good', 'good', 'good', 'good', 'good', 'warn', 'danger', 'danger', 'neutral', 'neutral']
 
-// V4 architecture map: each node is a deliberately small, human-readable
+// V5 architecture map: each node is a deliberately small, human-readable
 // description of the system of record, boundary, and control it represents.
 // These are synthetic demo values, not live tenant configuration.
 export const architectureNodes = [
-  { id: 'actors', label: 'Staff + invited clients', kind: 'People', icon: 'users', tone: 'blue', detail: 'Firm staff use the Desk workspace; invited B2B clients use only the restricted portal surface.', owner: 'Entra identity + Frappe assignment', rule: 'A login is not professional acceptance or a document permission.' },
+  { id: 'actors', label: 'Staff + named clients', kind: 'People', icon: 'users', tone: 'blue', detail: 'Staff use the internal workspace; baseline clients use named temporary onboarding credentials and only the restricted portal surface.', owner: 'Entra staff identity + Frappe website user', rule: 'A login is not professional acceptance or a document permission.' },
   { id: 'entra', label: 'Microsoft Entra ID', kind: 'Identity plane', icon: 'key', tone: 'blue', detail: 'Tenant-scoped OIDC authentication, MFA/Conditional Access and stable object mappings.', owner: 'Microsoft Entra', rule: 'Validate issuer, tenant, audience, state, nonce and session epoch.' },
+  { id: 'cloudflare-worker', label: 'Cloudflare Worker boundary', kind: 'Prototype server functions', icon: 'pulse', tone: 'green', detail: 'The current Vue prototype can opt into a separately protected Worker for narrow API commands, correlation IDs and D1 demo persistence.', owner: 'Cloudflare Worker · steaudit-api', rule: 'Edge functions are fail-closed and never replace the Frappe application or provider authorization boundary.' },
   { id: 'frappe', label: 'Frappe + audit_practice', kind: 'Application plane', icon: 'workflow', tone: 'navy', detail: 'One custom modular app owns commands, assignments, gates, approvals, findings and projections.', owner: 'Firm-managed application', rule: 'Authorize scope and operation before resolving any provider file.' },
   { id: 'mariadb', label: 'MariaDB + durable outbox', kind: 'Structured records', icon: 'database', tone: 'navy', detail: 'Versioned professional records, safety generations, command receipts, events and retryable intent.', owner: 'Frappe database', rule: 'Structured client data never mixes with the firm ledger.' },
   { id: 'workers', label: 'Frappe workers', kind: 'Execution groups', icon: 'pulse', tone: 'green', detail: 'General, processing and restricted records jobs run with bounded scopes and attempt fencing.', owner: 'Scheduler + workers', rule: 'Long work is leased and reconciled; Redis is not the only copy of intent.' },
@@ -514,6 +548,7 @@ export const architectureNodes = [
 
 export const architectureFlowRows = [
   { id: 'access', label: 'Access', icon: 'users', hint: 'Authenticate, then authorize', nodeIds: ['actors', 'entra', 'frappe'], arrows: ['OIDC + PKCE', 'Scoped commands'] },
+  { id: 'server', label: 'Server functions', icon: 'pulse', hint: 'Keep the edge boundary narrow', nodeIds: ['actors', 'cloudflare-worker', 'frappe'], arrows: ['HTTPS request', 'Fail-closed API'] },
   { id: 'records', label: 'Structured records', icon: 'database', hint: 'Own business state locally', nodeIds: ['frappe', 'mariadb', 'workers'], arrows: ['Guarded transaction', 'Durable jobs'] },
   { id: 'documents', label: 'Documents', icon: 'folder', hint: 'Preserve and reconcile content', nodeIds: ['workers', 'graph', 'sharepoint'], arrows: ['Selected Graph calls', 'Versioned artifacts'] },
   { id: 'editing', label: 'Office editing', icon: 'file', hint: 'Human edits stay outside the app', nodeIds: ['frappe', 'office', 'sharepoint'], arrows: ['Authenticated launch', 'Saved revision'] },
@@ -521,7 +556,8 @@ export const architectureFlowRows = [
 ]
 
 export const systemsOfRecord = [
-  { information: 'Staff and invited identity', system: 'Microsoft Entra ID', icon: 'key', tone: 'blue', projection: 'Frappe keeps stable issuer / tenant / object mappings and session state.' },
+  { information: 'Staff and client onboarding identity', system: 'Entra ID + Frappe Website User', icon: 'key', tone: 'blue', projection: 'Staff use tenant-scoped identity; the temporary client baseline is named, short-lived and explicitly separate from an optional Entra B2B route.' },
+  { information: 'Prototype server commands', system: 'Cloudflare Worker (steaudit-api)', icon: 'pulse', tone: 'green', projection: 'The Worker is an optional, fail-closed edge boundary for demo API calls; it is not the v5 Frappe system of record.' },
   { information: 'Client, engagement and professional authority', system: 'Frappe audit_practice', icon: 'workflow', tone: 'navy', projection: 'Assignments and commands define business access; a customer or invoice never implies acceptance.' },
   { information: 'TB, GL imports, mappings and approvals', system: 'MariaDB structured records', icon: 'database', tone: 'navy', projection: 'Rows, revisions, safety generations and manifests are versioned with Decimal arithmetic.' },
   { information: 'Office files and evidence', system: 'SharePoint Online', icon: 'folder', tone: 'amber', projection: 'Frappe stores IDs, versions, hashes and links—not a competing document repository.' },
@@ -673,12 +709,59 @@ export const phase0Stages = [
 export const verticalSliceSteps = [
   { gate: 'G0', title: 'Firm and method ready', detail: 'Synthetic users, capability profile, pinned build and repository bindings.', icon: 'settings' },
   { gate: 'G1', title: 'Accept or hold relationship', detail: '62-question assessment, specialist clearance and partner decision.', icon: 'users' },
-  { gate: 'G2', title: 'Authorize work', detail: 'Terms, team, direct-access checks and recoverable provisioning.', icon: 'key' },
-  { gate: 'G3', title: 'Promote usable data', detail: 'Receipt, safe parsing, control totals, source bridge and validated TB.', icon: 'database' },
-  { gate: 'G4–G5', title: 'Prepare accounting and audit', detail: 'Mapping, AJ-001 reflection, statements, risks, materiality and samples.', icon: 'calculator' },
-  { gate: 'G6–G7', title: 'Review exact submissions', detail: 'Workpaper snapshots, findings, management responsibility, partner and EQR.', icon: 'check-circle' },
-  { gate: 'G8–G9', title: 'Release and archive', detail: 'Signed lineage, protection attestation, checkpoint, delivery and structured archive.', icon: 'lock' },
-  { gate: 'G10', title: 'Renew with fresh facts', detail: '30-question continuance and a new-period shell; no copied sign-offs.', icon: 'refresh' },
+  { gate: 'G2', title: 'Commercial ready', detail: 'Staff-level estimate, fee approvals, quotation and approved scope.', icon: 'calculator' },
+  { gate: 'G3', title: 'Terms accepted', detail: 'Exact EL review, delivery and electronic or wet-sign verification.', icon: 'file' },
+  { gate: 'G4', title: 'Portal eligible', detail: 'Verified advance allocation, named client identity and scoped activation.', icon: 'key' },
+  { gate: 'G5', title: 'Fieldwork ready', detail: 'Plan, announcement, PBC readiness, validated TB and audit preparation.', icon: 'clipboard' },
+  { gate: 'G6', title: 'Review submission ready', detail: 'Exact workpapers, conclusion summary and next-level package.', icon: 'check-circle' },
+  { gate: 'G7', title: 'Completion ready', detail: 'Draft response, information follow-up, representation, review and EQR.', icon: 'users' },
+  { gate: 'G8', title: 'Release ready', detail: 'Opinion, final discussion, signatures, protection and checkpoint.', icon: 'lock' },
+  { gate: 'G9', title: 'Commercial close', detail: 'Final invoice, advance allocation, canonical time and cost reconciliation.', icon: 'chart' },
+  { gate: 'G10', title: 'Archive / renewal', detail: 'Complete archive, recovery rehearsal and fresh continuation decision.', icon: 'refresh' },
+]
+
+// A reference-prototype-inspired, human-readable journey. The routes point to
+// existing screens in this demonstrator; outcomes deliberately say synthetic
+// so the map cannot be mistaken for proof of a live provider integration.
+export const cycleJourneySteps = [
+  { number: '01', gate: 'G0', phase: 'Acquire & accept', title: 'Configure the firm baseline', action: 'Admin pins the build, method, users, service profile, and repository bindings.', outcome: 'Synthetic outcome: G0 is derived from the configured access and control records.', control: 'Version pin, tenant boundary, named system owner', route: 'architecture', routeLabel: 'Open architecture map', icon: 'settings', tone: 'blue' },
+  { number: '02', gate: 'G1', phase: 'Acquire & accept', title: 'Create the prospect record', action: 'The team registers Northstar Trading as a prospect with an owner and requested service.', outcome: 'Synthetic outcome: the relationship exists without implying acceptance or portal access.', control: 'Client identity, service route, relationship owner', route: 'clients', routeLabel: 'Open clients & acceptance', icon: 'users', tone: 'blue' },
+  { number: '03', gate: 'G1', phase: 'Acquire & accept', title: 'Start the CRM relationship', action: 'The owner records the contact, scope conversation, and next decision date.', outcome: 'Synthetic outcome: commercial activity stays separate from professional acceptance.', control: 'Scoped client record and activity history', route: 'clients', routeLabel: 'Open clients & acceptance', icon: 'message', tone: 'navy' },
+  { number: '04', gate: 'G1', phase: 'Acquire & accept', title: 'Open the 62-question acceptance', action: 'Compliance opens the current acceptance template and assigns the questions to accountable owners.', outcome: 'Synthetic outcome: unanswered or unknown responses create visible holds.', control: 'Template version, revision, response owner', route: 'clients', routeLabel: 'Open clients & acceptance', icon: 'list-check', tone: 'blue' },
+  { number: '05', gate: 'G1', phase: 'Acquire & accept', title: 'Resolve evidence and specialist holds', action: 'Compliance records the missing UBO, independence, and specialist evidence before a partner decision.', outcome: 'Synthetic outcome: the hold clears only when the required response is recorded.', control: 'Evidence status, explanation, specialist clearance', route: 'clients', routeLabel: 'Open clients & acceptance', icon: 'shield', tone: 'amber' },
+  { number: '06', gate: 'G1', phase: 'Acquire & accept', title: 'Record the partner decision', action: 'The authorized partner accepts, declines, or escalates the current relationship scope.', outcome: 'Synthetic outcome: a decision is committed with rationale; confirmed prohibitions remain non-overridable.', control: 'Named authority, expected revision, idempotency', route: 'clients', routeLabel: 'Open clients & acceptance', icon: 'check-circle', tone: 'green' },
+  { number: '07', gate: 'G2', phase: 'Acquire & accept', title: 'Sign terms and authorize work', action: 'Management signs the scoped terms and the partner activates the eligible engagement.', outcome: 'Synthetic outcome: activation follows terms, assignment, and direct-access checks.', control: 'Terms version, team authority, activation blockers', route: 'engagements', routeLabel: 'Open engagement workspace', icon: 'briefcase', tone: 'navy' },
+  { number: '08', gate: 'G2', phase: 'Acquire & accept', title: 'Publish the evidence request set', action: 'The team publishes PBC requests with period, owner, due date, and acceptance criteria.', outcome: 'Synthetic outcome: the client sees scoped requests, not internal risk or review notes.', control: 'Client projection, request scope, due date', route: 'pbc', routeLabel: 'Open PBC portal', icon: 'inbox', tone: 'blue' },
+  { number: '09', gate: 'G2', phase: 'Acquire & accept', title: 'Confirm planning context', action: 'The team checks entity, period, service route, owner, and the current gate before collecting source data.', outcome: 'Synthetic outcome: the next track is visible and no downstream work starts from an unknown scope.', control: 'Engagement assignment and gate applicability', route: 'engagements', routeLabel: 'Open engagement workspace', icon: 'briefcase', tone: 'navy' },
+  { number: '10', gate: 'G3', phase: 'Execute', title: 'Receive and preserve the raw trial balance', action: 'The client uploads the requested source and the accountant reviews the receipt before parsing.', outcome: 'Synthetic outcome: the raw receipt, identity, period, and source bridge are preserved.', control: 'Receipt ID, bytes, entity, period, currency', route: 'accounting', routeLabel: 'Open Accounting & TB', icon: 'upload', tone: 'amber' },
+  { number: '11', gate: 'G3', phase: 'Execute', title: 'Hold the opening difference', action: 'The accountant compares control totals and raises the unresolved opening-equity difference.', outcome: 'Synthetic outcome: the package remains held; an accepted-looking screen cannot bypass reconciliation.', control: 'Signed balance, control totals, query owner', route: 'accounting', routeLabel: 'Open Accounting & TB', icon: 'warning', tone: 'danger' },
+  { number: '12', gate: 'G3', phase: 'Execute', title: 'Promote the corrected source', action: 'The client supplies a corrected source and the accountant promotes it as a new generation.', outcome: 'Synthetic outcome: the prior receipt remains historical and the new generation is the current candidate.', control: 'Source generation, replacement reason, hash', route: 'accounting', routeLabel: 'Open Accounting & TB', icon: 'refresh', tone: 'blue' },
+  { number: '13', gate: 'G4', phase: 'Execute', title: 'Map the chart of accounts', action: 'The accountant maps every accepted row to the reporting taxonomy and reviews unmapped areas.', outcome: 'Synthetic outcome: mapping coverage and exceptions are visible before statements are prepared.', control: 'Taxonomy version, mapping status, exception owner', route: 'accounting', routeLabel: 'Open Accounting & TB', icon: 'workflow', tone: 'navy' },
+  { number: '14', gate: 'G4', phase: 'Execute', title: 'Stage the accounting adjustment', action: 'The accountant documents AJ-001 and shows whether it is proposed, approved, or already reflected.', outcome: 'Synthetic outcome: adjustment lineage points back to the source generation and avoids a second application.', control: 'Adjustment ID, layer, source bridge', route: 'accounting', routeLabel: 'Open Accounting & TB', icon: 'calculator', tone: 'amber' },
+  { number: '15', gate: 'G4', phase: 'Execute', title: 'Re-upload without double applying AJ-001', action: 'A replacement TB arrives with AJ-001 already reflected in the source.', outcome: 'Synthetic outcome: the package recognizes the reflection and does not apply the entry twice.', control: 'Reflection marker, Decimal totals, idempotency', route: 'accounting', routeLabel: 'Open Accounting & TB', icon: 'check-circle', tone: 'green' },
+  { number: '16', gate: 'G4', phase: 'Execute', title: 'Prepare the statement package', action: 'The accountant produces FS v05 from the validated source and documented adjustments.', outcome: 'Synthetic outcome: profit, assets, liabilities, equity, and source lineage are shown together.', control: 'Exact source version, package revision, totals', route: 'accounting', routeLabel: 'Open Accounting & TB', icon: 'file', tone: 'navy' },
+  { number: '17', gate: 'G5', phase: 'Execute', title: 'Submit an exact workpaper snapshot', action: 'The audit team freezes the submitted workpaper and linked evidence for review.', outcome: 'Synthetic outcome: the reviewer sees a fixed snapshot, not a mutable working draft.', control: 'Snapshot ID, evidence versions, submitted timestamp', route: 'audit', routeLabel: 'Open Audit & fieldwork', icon: 'clipboard', tone: 'blue' },
+  { number: '18', gate: 'G5', phase: 'Execute', title: 'Return a review point with the history intact', action: 'The reviewer documents an exception, response, owner, and due date.', outcome: 'Synthetic outcome: returning work does not erase the prior submission or reviewer identity.', control: 'Review point, response, stale dependency', route: 'reviews', routeLabel: 'Open Reviews & approvals', icon: 'message', tone: 'amber' },
+  { number: '19', gate: 'G5', phase: 'Execute', title: 'Resubmit the corrected snapshot', action: 'The preparer fixes the workpaper and submits a new exact snapshot for review.', outcome: 'Synthetic outcome: the new snapshot links to the prior one and carries a fresh revision.', control: 'Snapshot lineage, reviewer assignment, revision', route: 'audit', routeLabel: 'Open Audit & fieldwork', icon: 'refresh', tone: 'blue' },
+  { number: '20', gate: 'G5', phase: 'Execute', title: 'Set materiality and the audit plan', action: 'The audit manager records materiality, performance materiality, risks, assertions, and responses.', outcome: 'Synthetic outcome: thresholds and procedures are documented as professional selections.', control: 'Rationale, population source, risk owner', route: 'audit', routeLabel: 'Open Audit & fieldwork', icon: 'chart', tone: 'navy' },
+  { number: '21', gate: 'G5', phase: 'Execute', title: 'Freeze the population and sample', action: 'The team selects a population revision and sample plan from the accepted source.', outcome: 'Synthetic outcome: the sample remains tied to the exact population and source generation.', control: 'Population revision, sampling rationale, evidence', route: 'audit', routeLabel: 'Open Audit & fieldwork', icon: 'list-check', tone: 'blue' },
+  { number: '22', gate: 'G6', phase: 'Execute', title: 'Evaluate misstatement and alternative work', action: 'The team records the AR-019 exception, contradictory evidence, and the next procedure.', outcome: 'Synthetic outcome: the exception is routed for human evaluation rather than auto-concluded.', control: 'Exception status, alternative procedure, owner', route: 'audit', routeLabel: 'Open Audit & fieldwork', icon: 'warning', tone: 'danger' },
+  { number: '23', gate: 'G6', phase: 'Conclude', title: 'Capture management response', action: 'Management accepts or declines the proposed correction and provides the response used in review.', outcome: 'Synthetic outcome: management responsibility is recorded separately from the auditor conclusion.', control: 'Response, approval authority, object version', route: 'reviews', routeLabel: 'Open Reviews & approvals', icon: 'users', tone: 'amber' },
+  { number: '24', gate: 'G6', phase: 'Conclude', title: 'Invalidate stale approvals after a source change', action: 'A linked FS or TB generation changes after a prior review or approval.', outcome: 'Synthetic outcome: stale dependencies block release until the exact new snapshot is re-evaluated.', control: 'Generation guard, stale approval reason', route: 'reviews', routeLabel: 'Open Reviews & approvals', icon: 'lock', tone: 'danger' },
+  { number: '25', gate: 'G7', phase: 'Conclude', title: 'Complete final feedback and the management letter', action: 'The partner closes final review points and records any management-letter communication.', outcome: 'Synthetic outcome: unresolved significant items keep completion and release visibly held.', control: 'Completion checklist, findings, response history', route: 'reviews', routeLabel: 'Open Reviews & approvals', icon: 'check-circle', tone: 'amber' },
+  { number: '26', gate: 'G7', phase: 'Conclude', title: 'Capture exact statements and representations', action: 'The team binds the representation, final statement package, and completion evidence to exact versions.', outcome: 'Synthetic outcome: the completion bundle is reconstructable and not “latest file” based.', control: 'Exact versions, representation date, manifest', route: 'release', routeLabel: 'Open Release & archive', icon: 'file', tone: 'navy' },
+  { number: '27', gate: 'G7', phase: 'Conclude', title: 'Record partner conclusion and EQR', action: 'The engagement partner concludes and the independent quality reviewer completes the required review.', outcome: 'Synthetic outcome: EQR remains a separate authority gate before report dating.', control: 'Named authority, independence, approval snapshot', route: 'reviews', routeLabel: 'Open Reviews & approvals', icon: 'shield', tone: 'purple' },
+  { number: '28', gate: 'G8', phase: 'Conclude', title: 'Authorize the signed issue', action: 'The authorized partner dates and issues the signed report after the release checks pass.', outcome: 'Synthetic outcome: the signed artifact, recipients, and manifest become an immutable release event.', control: 'Report date, signature hash, recipient set', route: 'release', routeLabel: 'Open Release & archive', icon: 'lock', tone: 'green' },
+  { number: '29', gate: 'G9', phase: 'Conclude', title: 'Protect, deliver, archive, and recover', action: 'The records owner verifies protection, delivery evidence, structured archive, and an independent recovery checkpoint.', outcome: 'Synthetic outcome: release is complete only when artifacts can be reconstructed; recovery stays quarantined until reconciled.', control: 'Protection observation, delivery log, checkpoint', route: 'release', routeLabel: 'Open Release & archive', icon: 'archive', tone: 'purple' },
+  { number: '30', gate: 'G10', phase: 'Renewal', title: 'Open the next-period shell and fresh 30Q', action: 'The team starts a new continuance shell and tests both renewal and non-renewal outcomes.', outcome: 'Synthetic outcome: prior conclusions remain historical; the next period begins with UNKNOWN responses.', control: 'Fresh template, new period, explicit renewal decision', route: 'engagements', routeLabel: 'Open engagement workspace', icon: 'refresh', tone: 'blue' },
+]
+
+export const cycleFailureCheckpoints = [
+  { id: 'FB-01', title: 'Verify both access systems before direct Office work', detail: 'Confirm the application scope and the human Microsoft session before opening a document. Preserve the original receipt before parsing.', guard: 'Access proof + receipt hash' },
+  { id: 'FB-02', title: 'Promote a source as a synchronous generation change', detail: 'Verify the new source is reflected before selecting an adjustment plan. A pending parse cannot become the release base by implication.', guard: 'Source generation + reflection state' },
+  { id: 'FB-03', title: 'Freeze the snapshot before review', detail: 'Reviewers evaluate an exact saved submission. Candidate evaluation runs only over unchanged input generations.', guard: 'Snapshot ID + generation guard' },
+  { id: 'FB-04', title: 'Complete EQR before report dating', detail: 'Protect and verify signed artifacts before release, then persist the external release checkpoint before the first delivery.', guard: 'EQR + signed hash + checkpoint' },
+  { id: 'FB-05', title: 'Restore-test archive and both renewal outcomes', detail: 'Restore structured archive and artifacts before production adoption, then test accepted renewal and non-renewal/withdrawal as separate paths.', guard: 'Recovery proof + G10 decision' },
 ]
 
 export const feasibilityCards = [

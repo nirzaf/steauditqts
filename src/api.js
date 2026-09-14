@@ -92,7 +92,7 @@ function localWrite(snapshot, mutate) {
   }
 }
 
-function localComment(payload, { offline = false } = {}) {
+function localComment(payload, { offline = false, error = null } = {}) {
   const snapshot = localRead()
   const result = localWrite(snapshot, (state) => {
     state.comments.push({
@@ -110,10 +110,11 @@ function localComment(payload, { offline = false } = {}) {
     outcome: 'SAVED_LOCAL_DRAFT',
     syncState: offline ? 'LOCAL_ONLY_FALLBACK' : 'LOCAL_ONLY',
     comment,
+    error: error ? publicError(error) : null,
   })
 }
 
-function localPreference(payload, { offline = false } = {}) {
+function localPreference(payload, { offline = false, error = null } = {}) {
   const snapshot = localRead()
   const result = localWrite(snapshot, (state) => {
     const preference = {
@@ -132,10 +133,11 @@ function localPreference(payload, { offline = false } = {}) {
     outcome: 'SAVED_LOCAL_DRAFT',
     syncState: offline ? 'LOCAL_ONLY_FALLBACK' : 'LOCAL_ONLY',
     preference,
+    error: error ? publicError(error) : null,
   })
 }
 
-function localProfile(payload, { offline = false } = {}) {
+function localProfile(payload, { offline = false, error = null } = {}) {
   const snapshot = localRead()
   const result = localWrite(snapshot, (state) => {
     const engagementId = String(payload.engagementId || DEMO_ENGAGEMENT_ID)
@@ -157,6 +159,7 @@ function localProfile(payload, { offline = false } = {}) {
     outcome: 'SAVED_LOCAL_DRAFT',
     syncState: offline ? 'LOCAL_ONLY_FALLBACK' : 'LOCAL_ONLY',
     profile,
+    error: error ? publicError(error) : null,
   })
 }
 

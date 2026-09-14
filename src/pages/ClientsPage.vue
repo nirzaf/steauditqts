@@ -5,7 +5,7 @@ import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { client, formatMoney, portfolioClients, workflowGuides } from '../data'
-import { activeActor, assessmentSummary, engagementById, recordAssessmentDecision, scenario, saveAssessmentResponse, selectEngagement } from '../domain/scenario.js'
+import { activeActor, actorById, assessmentSummary, createLead, engagementById, importLeadFixtures, recordAssessmentDecision, scenario, saveAssessmentResponse, selectEngagement } from '../domain/scenario.js'
 import { visibleResponses } from '../domain/assessments.js'
 
 const emit = defineEmits(['navigate'])
@@ -21,7 +21,33 @@ const responseAnswer = ref('YES')
 const responseApplicability = ref('APPLICABLE')
 const responseExplanation = ref('')
 const decisionWorking = ref(false)
+const leadSearch = ref('')
+const leadFilter = ref('All leads')
+const leadView = ref('list')
+const leadModalOpen = ref(false)
+const leadWorking = ref(false)
+const leadForm = ref({ name: '', company: '', email: '', phone: '', value: '0.00', service: 'Financial-statement audit', source: 'Referral', assignedActorId: 'ACT-OMAR' })
 const filters = ['All clients', 'Needs decision', 'In delivery', 'Low risk']
+const leadFilters = ['All leads', 'Needs follow-up', 'Qualified']
+const leadServices = ['Financial-statement audit', 'Accounting only', 'Internal audit', 'Review engagement']
+const leadSources = ['Referral', 'Website', 'Existing client', 'Event']
+
+const leadRows = computed(() => (scenario.leads || []).filter((lead) => {
+  const query = leadSearch.value.trim().toLowerCase()
+  const matchesSearch = !query || `${lead.name} ${lead.company} ${lead.email} ${lead.id} ${lead.source}`.toLowerCase().includes(query)
+  const matchesFilter = leadFilter.value === 'All leads' || (leadFilter.value === 'Needs follow-up' && lead.status === 'PENDING') || (leadFilter.value === 'Qualified' && lead.status === 'QUALIFIED')
+  return matchesSearch && matchesFilter
+}))
+const leadOwnerName = (lead) => actorById(lead.assignedActorId)?.name || 'Unassigned'
+const leadStatusTone = (status) => ['QUALIFIED', 'CONVERTED'].includes(status) ? 'good' : status === 'CLOSED' ? 'neutral' : 'warn'
+const leadStatusLabel = (status) => status === 'QUALIFIED' ? 'Qualified' : status === 'CONVERTED' ? 'Converted' : status === 'CLOSED' ? 'Closed' : 'Pending'
+const canManageLeads = computed(() => Boolean(activeActor()?.roles?.some((role) => ['system_admin', 'engagement_partner', 'compliance_reviewer'].includes(role))))
+const activeClientCount = computed(() => scenario.clients.length)
+const awaitingPartnerCount = computed(() => scenario.engagements.filter((engagement) => {
+  const assessment = scenario.assessments.find((item) => item.engagementId === engagement.id && item.type === 'acceptance')
+  return !assessment?.decision || assessmentSummary(engagement.id, 'acceptance').holds.length > 0
+}).length)
+const continuanceCount = computed(() => scenario.renewalCases.filter((item) => ['PENDING_ASSESSMENT', 'RENEWED_PENDING_TERMS'].includes(item.state)).length)
 
 const filteredClients = computed(() => portfolioClients.filter((item) => {
   const query = search.value.trim().toLowerCase()
@@ -64,6 +90,7 @@ function recordDecision(decision) {
     type: assessmentType.value,
     actorPersonaId: activeActor()?.personaId,
     expectedRevision: assessment.revision,
+    expectedSessionEpoch: activeActor()?.sessionEpoch,
     idempotencyKey: `decision-${assessment.id}-${assessment.revision}-${decision}`,
     decision,
     rationale: decision === 'ACCEPT' ? 'Synthetic partner decision recorded after reviewing the scoped assessment.' : decision === 'CONTINUE' ? 'Synthetic continuance decision recorded for the scoped period.' : 'Synthetic decision recorded for demonstration; follow-up remains in the event history.',
@@ -93,6 +120,7 @@ async function saveResponse() {
     questionId: focusedQuestion.value.question.id,
     actorPersonaId: activeActor()?.personaId,
     expectedRevision: currentAssessmentSummary.value.assessment.revision,
+    expectedSessionEpoch: activeActor()?.sessionEpoch,
     idempotencyKey: `assessment-${assessmentType.value}-${focusedQuestion.value.question.id}-${currentAssessmentSummary.value.assessment.revision}`,
     answer: responseAnswer.value,
     applicability: responseApplicability.value,
@@ -116,22 +144,86 @@ function openEngagement(item = selected.value) {
 }
 
 function addClient() {
-  toast.value = 'New client draft opened. Add the relationship first, then start a separate acceptance assessment.'
-  window.setTimeout(() => { toast.value = '' }, 4000)
+  leadForm.value = { name: '', company: '', email: '', phone: '', value: '0.00', service: 'Financial-statement audit', source: 'Referral', assignedActorId: activeActor()?.id || 'ACT-OMAR' }
+  leadModalOpen.value = true
+}
+
+function closeLeadModal() {
+  if (!leadWorking.value) leadModalOpen.value = false
+}
+
+function showLeadToast(message) {
+  toast.value = message
+  window.setTimeout(() => { toast.value = '' }, 4500)
+}
+
+function saveLead() {
+  if (leadWorking.value) return
+  leadWorking.value = true
+  const result = createLead({
+    ...leadForm.value,
+    actorPersonaId: activeActor()?.personaId,
+    expectedSessionEpoch: activeActor()?.sessionEpoch,
+    idempotencyKey: `lead-create-${Date.now()}`,
+  })
+  leadWorking.value = false
+  if (result.outcome === 'COMMITTED') {
+    leadModalOpen.value = false
+    showLeadToast(`${result.data.id} added to the synthetic lead register. Qualification stays separate from client acceptance.`)
+  } else showLeadToast(`${result.outcome}: ${result.code} — ${result.message}`)
+}
+
+function importSampleLeads() {
+  if (leadWorking.value) return
+  leadWorking.value = true
+  const result = importLeadFixtures({
+    actorPersonaId: activeActor()?.personaId,
+    expectedSessionEpoch: activeActor()?.sessionEpoch,
+    idempotencyKey: `lead-import-demo-${Date.now()}`,
+    rows: [
+      { name: 'Gulf Horizon Services', company: 'Gulf Horizon Services W.L.L.', email: 'finance@gulfhorizon.demo', phone: '+974 4477 1190', value: '64000', service: 'Accounting only', source: 'Event', assignedActorId: 'ACT-LEILA' },
+      { name: 'Pearl Gate Manufacturing', company: 'Pearl Gate Manufacturing W.L.L.', email: 'cfo@pearlgate.demo', phone: '+974 4488 6031', value: '112000', service: 'Financial-statement audit', source: 'Existing client', assignedActorId: 'ACT-MAYA' },
+    ],
+  })
+  leadWorking.value = false
+  if (result.outcome === 'COMMITTED') showLeadToast(`${result.data.importedCount} lead(s) imported; ${result.data.skippedCount} duplicate(s) skipped. No external upload was performed.`)
+  else showLeadToast(`${result.outcome}: ${result.code} — ${result.message}`)
 }
 </script>
 
 <template>
   <div class="page">
-    <PageHeader eyebrow="Relationships and decisions" title="Clients & acceptance" description="Keep the commercial relationship separate from the professional acceptance decision. Every service and reporting period gets its own assessment." action-label="Add client" @action="addClient" />
+    <PageHeader eyebrow="Relationships and decisions" title="Clients & acceptance" description="Keep the commercial relationship separate from the professional acceptance decision. Every service and reporting period gets its own assessment." action-label="New lead" @action="addClient" />
     <WorkflowGuide :guide="workflowGuides.clients" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 
     <section class="stats-strip">
-      <div><span>Active clients</span><strong>18</strong><small>Across 24 service-period engagements</small></div>
-      <div><span>Awaiting partner decision</span><strong>3</strong><small>All blockers remain visible</small></div>
-      <div><span>Continuances due</span><strong>5</strong><small>Next 30 days</small></div>
+      <div><span>Active clients</span><strong>{{ activeClientCount }}</strong><small>Scenario relationships with explicit IDs</small></div>
+      <div><span>Awaiting partner decision</span><strong>{{ awaitingPartnerCount }}</strong><small>Holds remain visible until cleared</small></div>
+      <div><span>Continuance shells</span><strong>{{ continuanceCount }}</strong><small>Next-period decisions in progress</small></div>
       <div><span>Question bank</span><strong>62 + 30</strong><small>Acceptance and annual review</small></div>
+    </section>
+
+    <section class="panel lead-register-panel">
+      <div class="panel-heading"><div><span class="eyebrow">Commercial intake · CRM-inspired</span><h2>Lead register</h2></div><div class="button-row"><button type="button" class="button secondary" :disabled="!canManageLeads || leadWorking" @click="importSampleLeads"><Icon name="upload" :size="16" />{{ leadWorking ? 'Working…' : 'Import demo leads' }}</button><button type="button" class="button primary" :disabled="!canManageLeads" @click="addClient"><Icon name="plus" :size="16" />New lead</button></div></div>
+      <div class="lead-toolbar"><label class="search-field"><Icon name="search" :size="17" /><span class="sr-only">Search leads</span><input v-model="leadSearch" type="search" placeholder="Search name, company, email or source" /></label><div class="filter-row" aria-label="Lead filters"><button v-for="item in leadFilters" :key="item" type="button" :class="{ active: leadFilter === item }" @click="leadFilter = item">{{ item }}</button></div><div class="view-toggle" aria-label="Lead view"><button type="button" :class="{ active: leadView === 'list' }" aria-label="List view" :aria-pressed="leadView === 'list'" @click="leadView = 'list'"><Icon name="list" :size="16" /></button><button type="button" :class="{ active: leadView === 'grid' }" aria-label="Grid view" :aria-pressed="leadView === 'grid'" @click="leadView = 'grid'"><Icon name="grid" :size="16" /></button></div></div>
+      <div v-if="leadView === 'list'" class="table-wrap responsive-table">
+        <table class="lead-table">
+          <thead><tr><th>Lead</th><th>Company</th><th>Value</th><th>Assigned</th><th>Status</th><th>Source</th><th>Last contact</th></tr></thead>
+          <tbody>
+            <tr v-for="lead in leadRows" :key="lead.id">
+              <td><div class="client-cell"><span class="avatar avatar-blue">{{ lead.name.split(' ').map((part) => part[0]).slice(0, 2).join('') }}</span><span><strong>{{ lead.name }}</strong><small>{{ lead.id }} · {{ lead.email }}</small></span></div></td>
+              <td>{{ lead.company }}</td><td class="num">{{ formatMoney(Number(lead.value)) }}</td><td>{{ leadOwnerName(lead) }}</td><td><StatusPill :label="leadStatusLabel(lead.status)" :tone="leadStatusTone(lead.status)" /></td><td>{{ lead.source }}</td><td>{{ lead.lastContact || 'Not contacted' }}</td>
+            </tr>
+            <tr v-if="!leadRows.length"><td colspan="7" class="empty-state"><strong>No leads match this view.</strong><span>Try another filter or add a new synthetic lead.</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-else class="lead-card-grid">
+        <article v-for="lead in leadRows" :key="lead.id" class="lead-card"><div class="lead-card-top"><span class="avatar avatar-blue">{{ lead.name.split(' ').map((part) => part[0]).slice(0, 2).join('') }}</span><StatusPill :label="leadStatusLabel(lead.status)" :tone="leadStatusTone(lead.status)" /></div><h3>{{ lead.name }}</h3><p>{{ lead.company }}</p><dl><div><dt>Value</dt><dd>{{ formatMoney(Number(lead.value)) }}</dd></div><div><dt>Assigned</dt><dd>{{ leadOwnerName(lead) }}</dd></div><div><dt>Source</dt><dd>{{ lead.source }}</dd></div></dl><small class="lead-card-id">{{ lead.id }} · Created {{ lead.createdAt.slice(0, 10) }}</small></article>
+        <div v-if="!leadRows.length" class="empty-side"><Icon name="users" :size="28" /><h3>No leads match this view</h3><p>Try another filter or add a new synthetic lead.</p></div>
+      </div>
+      <div class="panel-footnote"><Icon name="info" :size="16" /><span><strong>CRM boundary:</strong> leads are intake records only. Converting a lead still requires a client record, service-period scope, and a separate professional acceptance decision.</span></div>
     </section>
 
     <section class="panel client-register-panel">
@@ -169,6 +261,24 @@ function addClient() {
     </section>
 
     <div class="prototype-note"><Icon name="info" :size="17" /><span><strong>Acceptance boundary</strong> A customer record, quotation, deposit or portal login never implies professional acceptance. The partner decision is stored separately.</span></div>
+
+    <div v-if="leadModalOpen" class="modal-backdrop" role="presentation" @click.self="closeLeadModal">
+      <section class="modal-panel lead-modal" role="dialog" aria-modal="true" aria-labelledby="lead-title">
+        <div class="modal-header"><div><span class="eyebrow">Synthetic commercial intake</span><h2 id="lead-title">Create a new lead</h2><p>Capture a relationship prospect first. Conversion to a client and acceptance assessment are separate controlled steps.</p></div><button type="button" class="icon-button" aria-label="Close new lead" title="Close new lead" @click="closeLeadModal"><Icon name="x" :size="17" /></button></div>
+        <form class="form-grid lead-form" @submit.prevent="saveLead">
+          <label>Contact name<input v-model="leadForm.name" required maxlength="160" autocomplete="off" placeholder="e.g. Aisha Rahman" /></label>
+          <label>Company<input v-model="leadForm.company" required maxlength="180" autocomplete="organization" placeholder="e.g. Horizon W.L.L." /></label>
+          <label>Company email<input v-model="leadForm.email" required type="email" maxlength="254" autocomplete="email" placeholder="finance@company.demo" /></label>
+          <label>Phone<input v-model="leadForm.phone" maxlength="40" autocomplete="tel" placeholder="+974 4400 0000" /></label>
+          <label>Estimated value (QAR)<input v-model="leadForm.value" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" placeholder="50000.00" /></label>
+          <label>Service route<select v-model="leadForm.service"><option v-for="service in leadServices" :key="service" :value="service">{{ service }}</option></select></label>
+          <label>Source<select v-model="leadForm.source"><option v-for="source in leadSources" :key="source" :value="source">{{ source }}</option></select></label>
+          <label>Assigned owner<select v-model="leadForm.assignedActorId"><option v-for="actor in scenario.actors.filter((item) => item.active && !item.roles.some((role) => ['client_finance', 'management_approver'].includes(role)))" :key="actor.id" :value="actor.id">{{ actor.name }} · {{ actor.roles[0].replaceAll('_', ' ') }}</option></select></label>
+          <div class="form-span-2 lead-form-callout"><Icon name="shield" :size="17" /><span><strong>What happens next</strong><small>The lead is stored in the local synthetic register with a revision and event. No client, portal user, quote, deposit, or professional decision is created automatically.</small></span></div>
+          <div class="form-span-2 modal-form-actions"><button type="button" class="button ghost" :disabled="leadWorking" @click="closeLeadModal">Cancel</button><button type="submit" class="button primary" :disabled="leadWorking">{{ leadWorking ? 'Saving…' : 'Save synthetic lead' }}</button></div>
+        </form>
+      </section>
+    </div>
 
     <div v-if="assessmentOpen" class="modal-backdrop" role="presentation" @click.self="closeAssessment">
       <section class="modal-panel assessment-modal" role="dialog" aria-modal="true" aria-labelledby="assessment-title">

@@ -11,6 +11,9 @@ import {
   accountingPackageFor,
   assessmentSummary,
   clearReviewPoint,
+  createReviewPoint,
+  createLead,
+  importLeadFixtures,
   createContinuanceShell,
   createPopulationRevision,
   assembleArchive,
@@ -44,8 +47,10 @@ import {
   resumeImpactProcessing,
   runIntegrationReconciliation,
   scenario,
+  saveAssessmentResponse,
   selectEngagement,
   setActivePersona,
+  setActorStatus,
   setProviderSimulation,
   stageAccountingJournal,
   authorizeAccountingJournal,
@@ -89,6 +94,79 @@ test('assessment projection keeps unknown evidence held and partner decisions gu
   const favorable = recordAssessmentDecision({ engagementId: 'ENG-0018-AUD-2026', actorPersonaId: 'admin-demo', expectedRevision: initial.assessment.revision, idempotencyKey: 'decision-1', decision: 'ACCEPT', rationale: 'Synthetic hold intentionally remains.' })
   assert.equal(favorable.outcome, 'BLOCKED')
   assert.equal(favorable.code, 'ASSESSMENT_HOLDS')
+})
+
+test('directional questionnaire rules keep adverse answers held', () => {
+  const initial = assessmentSummary('ENG-0018-AUD-2026', 'acceptance')
+  const response = saveAssessmentResponse({
+    engagementId: 'ENG-0018-AUD-2026',
+    type: 'acceptance',
+    questionId: 'CE-023',
+    actorPersonaId: 'admin-demo',
+    expectedRevision: initial.assessment.revision,
+    idempotencyKey: 'adverse-ce023',
+    answer: 'NO',
+    explanation: 'Synthetic management response is not yet available.',
+  })
+  assert.equal(response.outcome, 'COMMITTED')
+  assert.equal(assessmentSummary('ENG-0018-AUD-2026', 'acceptance').holds.some((hold) => hold.questionId === 'CE-023' && hold.code === 'HARD_STOP_RESPONSE'), true)
+  const invalid = saveAssessmentResponse({
+    engagementId: 'ENG-0018-AUD-2026',
+    type: 'acceptance',
+    questionId: 'CE-001',
+    actorPersonaId: 'admin-demo',
+    expectedRevision: response.revision,
+    idempotencyKey: 'invalid-ce001',
+    answer: 'NO_MATCH',
+  })
+  assert.equal(invalid.code, 'ANSWER_INVALID')
+})
+
+test('actor status changes rotate sessions and review-point drafts are scoped', () => {
+  const disabled = setActorStatus({ targetActorId: 'ACT-SAMIR', actorPersonaId: 'admin-demo', active: false, expectedSessionEpoch: 1, idempotencyKey: 'disable-samir' })
+  assert.equal(disabled.outcome, 'COMMITTED')
+  assert.equal(disabled.data.active, false)
+  assert.equal(disabled.data.sessionEpoch, 2)
+  const stale = setActorStatus({ targetActorId: 'ACT-SAMIR', actorPersonaId: 'admin-demo', active: true, expectedSessionEpoch: 0, idempotencyKey: 'stale-enable-samir' })
+  assert.equal(stale.code, 'SESSION_EPOCH_STALE')
+  const enabled = setActorStatus({ targetActorId: 'ACT-SAMIR', actorPersonaId: 'admin-demo', active: true, expectedSessionEpoch: 1, idempotencyKey: 'enable-samir' })
+  assert.equal(enabled.outcome, 'COMMITTED')
+  assert.equal(enabled.data.sessionEpoch, 3)
+
+  setActivePersona('system-admin-only-demo')
+  const assessment = assessmentSummary('ENG-0018-AUD-2026', 'acceptance')
+  const staleAssessmentWrite = saveAssessmentResponse({ engagementId: 'ENG-0018-AUD-2026', type: 'acceptance', questionId: 'CE-011', actorPersonaId: 'system-admin-only-demo', expectedRevision: assessment.assessment.revision, expectedSessionEpoch: 2, idempotencyKey: 'stale-assessment-write', answer: 'YES', explanation: 'This stale tab must not commit.' })
+  assert.equal(staleAssessmentWrite.outcome, 'CONFLICT')
+  assert.equal(staleAssessmentWrite.code, 'SESSION_EPOCH_STALE')
+
+  const draft = createReviewPoint({ engagementId: 'ENG-0018-AUD-2026', actorPersonaId: 'admin-demo', expectedRevision: 4, expectedSessionEpoch: 1, idempotencyKey: 'create-review-draft', title: 'Disclosure support missing', detail: 'Link the missing note disclosure to the exact FS revision.', severity: 'SIGNIFICANT', assigneeActorId: 'ACT-FATIMA', due: '2026-09-20' })
+  assert.equal(draft.outcome, 'COMMITTED')
+  assert.equal(draft.data.severity, 'SIGNIFICANT')
+  assert.equal(scenario.reviews.some((point) => point.id === draft.data.id && point.status === 'OPEN'), true)
+})
+
+test('synthetic CRM lead intake validates ownership, duplicates and bounded imports', () => {
+  const created = createLead({ actorPersonaId: 'admin-demo', expectedSessionEpoch: 1, idempotencyKey: 'lead-create-1', name: 'Aisha Rahman', company: 'Aisha Foods W.L.L.', email: 'finance@aishafoods.demo', phone: '+974 4400 1199', value: '55000', service: 'Accounting only', source: 'Referral', assignedActorId: 'ACT-LEILA' })
+  assert.equal(created.outcome, 'COMMITTED')
+  assert.equal(created.data.status, 'PENDING')
+  assert.equal(created.data.value, '55000.00')
+  assert.equal(scenario.leads.some((lead) => lead.id === created.data.id), true)
+
+  const duplicate = createLead({ actorPersonaId: 'admin-demo', expectedSessionEpoch: 1, idempotencyKey: 'lead-duplicate', name: 'Aisha Rahman', company: 'Aisha Foods W.L.L.', email: 'finance@aishafoods.demo', service: 'Accounting only', source: 'Referral', value: '55000' })
+  assert.equal(duplicate.outcome, 'CONFLICT')
+  assert.equal(duplicate.code, 'LEAD_DUPLICATE')
+
+  const invalid = createLead({ actorPersonaId: 'admin-demo', expectedSessionEpoch: 1, idempotencyKey: 'lead-invalid', name: 'Short', company: 'Invalid', email: 'not-an-email', service: 'Accounting only', source: 'Referral' })
+  assert.equal(invalid.outcome, 'BLOCKED')
+  assert.equal(invalid.code, 'LEAD_EMAIL_INVALID')
+
+  const imported = importLeadFixtures({ actorPersonaId: 'admin-demo', expectedSessionEpoch: 1, idempotencyKey: 'lead-import-1', rows: [
+    { name: 'Aisha Rahman', company: 'Aisha Foods W.L.L.', email: 'finance@aishafoods.demo', service: 'Accounting only', source: 'Referral' },
+    { name: 'Qatar Meridian', company: 'Qatar Meridian W.L.L.', email: 'ops@qatarmeridian.demo', service: 'Internal audit', source: 'Event', assignedActorId: 'ACT-OMAR' },
+  ] })
+  assert.equal(imported.outcome, 'COMMITTED')
+  assert.equal(imported.data.importedCount, 1)
+  assert.equal(imported.data.skippedCount, 1)
 })
 
 test('all eleven gates are projected with service-specific applicability and G10 denominator', () => {
