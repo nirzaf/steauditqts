@@ -916,6 +916,16 @@ tfoot th { color: var(--primary); background: #f7faff; }
 .review-row small { color: var(--subtle); font-size: .67rem; }
 .review-actions { display: grid; justify-items: end; gap: 7px; }
 .panel-copy { margin: 0 21px 16px; font-size: .76rem; line-height: 1.45; }
+.completion-recommendation-panel { margin-top: 18px; overflow: hidden; }
+.completion-recommendation-body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr); gap: 18px; padding: 0 21px 18px; }
+.completion-recommendation-summary { padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #fbfdff; }
+.completion-recommendation-summary p { margin: 7px 0 12px; color: var(--muted); font-size: .7rem; line-height: 1.5; }
+.completion-recommendation-form { display: grid; align-content: start; gap: 10px; padding: 14px; border: 1px solid #c8dced; border-radius: 10px; background: #f7fbff; }
+.completion-recommendation-form label { display: grid; gap: 5px; color: var(--muted); font-size: .66rem; font-weight: 700; }
+.completion-recommendation-form select, .completion-recommendation-form textarea { width: 100%; padding: 9px 10px; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; font: inherit; font-size: .7rem; }
+.completion-recommendation-form textarea { resize: vertical; line-height: 1.4; }
+.completion-recommendation-blockers { padding: 14px 21px 18px; border-top: 1px solid var(--line); background: #fffaf4; }
+.completion-recommendation-blockers .check-list { margin-top: 8px; }
 .dependency-graph { display: grid; grid-template-columns: 1fr; gap: 0; margin: 0 21px 18px; }
 .dependency-node { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; }
 .dependency-node span { color: var(--ink); font-family: 'Fira Code', monospace; font-size: .72rem; }
@@ -944,6 +954,10 @@ tfoot th { color: var(--primary); background: #f7faff; }
 .approval-inspection h3 { margin: 3px 0 4px; color: var(--primary); font-size: .84rem; }
 .approval-inspection .detail-list { padding: 0; }
 .review-draft-modal { width: min(650px, 100%); }
+@media (max-width: 780px) {
+  .completion-recommendation-body { grid-template-columns: 1fr; padding-right: 15px; padding-left: 15px; }
+  .completion-recommendation-blockers { padding-right: 15px; padding-left: 15px; }
+}
 
 .release-hero-meta strong { color: var(--primary); font-family: 'Fira Code', monospace; font-size: 1.08rem; }
 .release-flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 0 21px 20px; }

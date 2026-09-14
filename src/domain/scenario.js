@@ -177,6 +177,7 @@ function initialScenario() {
           partnerApproved: false,
           eqrRequired: true,
           eqrComplete: false,
+          completionRecommendation: null,
           protection: 'UNKNOWN',
           archiveVerified: false,
           commercialClosed: false,
@@ -215,6 +216,7 @@ function initialScenario() {
           partnerApproved: false,
           eqrRequired: false,
           eqrComplete: null,
+          completionRecommendation: null,
           protection: 'UNKNOWN',
           archiveVerified: false,
           commercialClosed: false,
@@ -251,6 +253,7 @@ function initialScenario() {
           partnerApproved: true,
           eqrRequired: false,
           eqrComplete: null,
+          completionRecommendation: null,
           protection: 'VERIFIED_SIMULATION',
           archiveVerified: false,
           commercialClosed: true,
@@ -392,6 +395,20 @@ function mergeScenarioState(defaults, parsed) {
   for (const key of ['clients', 'engagements', 'actors', 'assessments', 'terms', 'activation', 'commercialRecords', 'credentialBootstraps', 'taskActions', 'accountingPackages', 'renewalCases', 'leads', 'documents', 'workpapers', 'reviews', 'releaseCandidates', 'snapshots', 'operations', 'checkpoints', 'events', 'commandReceipts', 'cycleRuns', 'pbcRequests', 'informationRequests', 'outbox', 'legalHolds', 'amendments']) {
     merged[key] = appendMissingById(defaults[key], merged[key])
   }
+  // Role and assignment metadata is static demo policy, while actor status,
+  // session epochs, and status reasons are user-controlled walkthrough state.
+  // Add newly introduced static roles to an existing browser-local scenario so
+  // a prior bundle cannot hide a current persona action after deployment.
+  const defaultActors = new Map((defaults.actors || []).map((actor) => [actor.id, actor]))
+  merged.actors = (merged.actors || []).map((actor) => {
+    const baseline = defaultActors.get(actor.id)
+    if (!baseline) return actor
+    return {
+      ...actor,
+      roles: [...new Set([...(actor.roles || []), ...(baseline.roles || [])])],
+      assignments: [...new Set([...(actor.assignments || []), ...(baseline.assignments || [])])],
+    }
+  })
   merged.audit.risks = appendMissingById(defaults.audit.risks, merged.audit.risks)
   merged.audit.populations = appendMissingById(defaults.audit.populations, merged.audit.populations)
   merged.audit.samples = appendMissingById(defaults.audit.samples, merged.audit.samples)
@@ -1265,7 +1282,7 @@ export function createContinuanceShell({ sourceEngagementId = scenario.selectedE
     linkedEngagementId: null,
     isNextPeriodShell: true,
     sourceEngagementId,
-    evidence: { firmReady: source.evidence.firmReady, accepted: false, commercialReady: false, termsSigned: false, portalEligible: false, assignmentsEligible: false, workspaceVerified: false, sourceValidated: false, mappingReviewed: false, statementApproved: false, auditPlanReady: source.service === 'audit' ? false : null, conclusionsComplete: source.service === 'audit' ? false : null, managementApproved: false, partnerApproved: false, eqrRequired: source.evidence.eqrRequired, eqrComplete: source.evidence.eqrRequired ? false : null, protection: 'UNKNOWN', archiveVerified: false, commercialClosed: false },
+    evidence: { firmReady: source.evidence.firmReady, accepted: false, commercialReady: false, termsSigned: false, portalEligible: false, assignmentsEligible: false, workspaceVerified: false, sourceValidated: false, mappingReviewed: false, statementApproved: false, auditPlanReady: source.service === 'audit' ? false : null, conclusionsComplete: source.service === 'audit' ? false : null, managementApproved: false, partnerApproved: false, eqrRequired: source.evidence.eqrRequired, eqrComplete: source.evidence.eqrRequired ? false : null, completionRecommendation: null, protection: 'UNKNOWN', archiveVerified: false, commercialClosed: false },
     holds: [{ id: `HOLD-${shellId}-CONT`, code: 'CONTINUANCE_REQUIRED', message: 'Fresh annual continuance responses and partner decision are required for this next-period shell.', action: 'Complete RV-001…RV-030 and record renewal outcome.' }],
   }
   const sourceContinuance = assessmentFor(sourceEngagementId, 'continuance')
@@ -2065,6 +2082,55 @@ export function reviewWorkpaper({ workpaperId, actorPersonaId, expectedRevision,
   scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'WORKPAPER_REVIEW_RECORDED', workpaperId: workpaper.id, actorId: actor.id, decision, revision: workpaper.revision, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
   return finish(commandResult('COMMITTED', { data: workpaper, revision: workpaper.revision }))
+}
+
+function completionBlockersFor(engagement) {
+  if (!engagement) return []
+  const blockers = [...openReviewBlockers(engagement.id)]
+  if (engagement.service === 'audit') blockers.push(...auditChainSummary(engagement.id).blockers)
+  if (!engagement.evidence.managementApproved) blockers.push({ code: 'MANAGEMENT_RESPONSE_REQUIRED', message: 'Management responsibility is not yet bound to the current package.' })
+  if (engagement.evidence.eqrRequired && !engagement.evidence.eqrComplete) blockers.push({ code: 'EQR_INCOMPLETE', message: 'The required independent engagement quality review is not complete.' })
+  const unique = new Map()
+  blockers.forEach((blocker) => unique.set(`${blocker.code}:${blocker.message}`, blocker))
+  return [...unique.values()]
+}
+
+/**
+ * Record the audit manager's completion recommendation without turning it
+ * into a partner opinion or release authorization. The recommendation keeps
+ * the blockers visible so a conditional recommendation remains explainable.
+ */
+export function recordCompletionRecommendation({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey, decision = 'RECOMMEND', rationale = '' } = {}) {
+  const engagement = engagementById(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const normalizedDecision = String(decision || '').toUpperCase()
+  const cleanRationale = String(rationale || '').trim()
+  const fingerprint = commandFingerprint({ action: 'RECORD_COMPLETION_RECOMMENDATION', targetId: engagementId, engagementId, payload: { expectedRevision, expectedSessionEpoch, decision: normalizedDecision, rationale: cleanRationale } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot recommend completion for this engagement.' }))
+  if (!actorHasRole(actor, 'audit_manager', engagementId)) return finish(commandResult('DENIED', { code: 'COMPLETION_AUTHORITY_REQUIRED', message: 'Only the scoped audit manager can record a completion recommendation.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (expectedRevision != null && expectedRevision !== engagement.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected engagement revision ${expectedRevision}, current revision is ${engagement.revision}.`, revision: engagement.revision }))
+  if (!['RECOMMEND', 'HOLD', 'RETURN_FOR_CORRECTION'].includes(normalizedDecision)) return finish(commandResult('BLOCKED', { code: 'COMPLETION_DECISION_INVALID', message: 'Choose RECOMMEND, HOLD, or RETURN_FOR_CORRECTION.' }))
+  if (cleanRationale.length < 8) return finish(commandResult('BLOCKED', { code: 'COMPLETION_RATIONALE_REQUIRED', message: 'A completion recommendation needs a concise evidence-based rationale.' }))
+  const blockers = completionBlockersFor(engagement)
+  const recommendation = {
+    decision: normalizedDecision,
+    status: normalizedDecision === 'RECOMMEND' && blockers.length === 0 ? 'READY' : 'CONDITIONAL',
+    actorId: actor.id,
+    recordedAt: new Date().toISOString(),
+    engagementRevision: engagement.revision,
+    rationale: cleanRationale,
+    blockers,
+  }
+  engagement.evidence.completionRecommendation = recommendation
+  engagement.revision += 1
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'COMPLETION_RECOMMENDATION_RECORDED', engagementId, decision: normalizedDecision, blockerCount: blockers.length, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: recommendation, revision: engagement.revision, operationId: `COMPLETION-${engagementId}` }))
 }
 
 export const providerFaults = ['NONE', '429_RETRY_AFTER', '403_FORBIDDEN', '500_SERVER_ERROR', 'TIMEOUT_AFTER_UPLOAD_SUCCESS', 'EXPIRED_LEASE', 'CURSOR_EXPIRED']

@@ -12,6 +12,7 @@ import {
   deriveGates,
   issueSyntheticCredential,
   recordClientInformationResponse,
+  recordCompletionRecommendation,
   recordDraftFsDecision,
   recordHardCopyReadiness,
   recordPbcUpload,
@@ -106,6 +107,21 @@ test('Engagement Letter decisions stay bound to the exact version and scoped app
   assert.equal(accepted.outcome, 'COMMITTED')
   assert.equal(termsAcceptedFor(current.id), true)
   assert.equal(termsFor(current.id).clientDecision.version, 'EL-2026-02')
+})
+
+test('audit manager can record a conditional completion recommendation with visible blockers', () => {
+  setActivePersona('audit-manager-demo')
+  let current = selectedEngagement()
+  const denied = recordCompletionRecommendation({ engagementId: current.id, actorPersonaId: 'client-management-demo', expectedRevision: current.revision, expectedSessionEpoch: 1, idempotencyKey: 'completion-denied', decision: 'RECOMMEND', rationale: 'Reviewed the current file and blockers.' })
+  assert.equal(denied.outcome, 'DENIED')
+  assert.equal(denied.code, 'COMPLETION_AUTHORITY_REQUIRED')
+
+  current = selectedEngagement()
+  const recorded = recordCompletionRecommendation({ engagementId: current.id, actorPersonaId: 'audit-manager-demo', expectedRevision: current.revision, expectedSessionEpoch: 1, idempotencyKey: 'completion-manager', decision: 'RECOMMEND', rationale: 'Reviewed exact snapshots; partner and EQR blockers remain visible.' })
+  assert.equal(recorded.outcome, 'COMMITTED')
+  assert.equal(recorded.data.status, 'CONDITIONAL')
+  assert.ok(recorded.data.blockers.length > 0)
+  assert.equal(scenario.engagements.find((item) => item.id === current.id).evidence.completionRecommendation.decision, 'RECOMMEND')
 })
 
 test('RT-07 unknown account mapping reduces truthful coverage and keeps review required', () => {

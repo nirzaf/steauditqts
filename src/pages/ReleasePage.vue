@@ -5,13 +5,14 @@ import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { archiveItems, formatMoney, workflowGuides } from '../data'
-import { activeActor, advanceRelease as advanceReleaseCommand, assembleArchive, createAmendmentCase, createReleaseCheckpoint, recordLegalHold, releaseCandidateBlockers, releaseLegalHold, releaseSteps as scenarioReleaseSteps, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
+import { activeActor, advanceRelease as advanceReleaseCommand, assembleArchive, createAmendmentCase, createReleaseCheckpoint, recordLegalHold, releaseCandidateBlockers, releaseLegalHold, releaseSteps as scenarioReleaseSteps, scenario, selectEngagement, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
 
 const releaseSteps = scenarioReleaseSteps
 const inspectedIndex = ref(0)
 const toast = ref('')
 const selectedEngagement = computed(() => scenarioEngagement())
 const selectedClient = computed(() => scenarioClient())
+const engagementOptions = computed(() => scenario.engagements.filter((item) => activeActor()?.assignments?.includes(item.id)))
 const emptyCandidate = computed(() => ({ id: 'NO-CANDIDATE', engagementId: selectedEngagement.value?.id || null, revision: 0, inputGeneration: 0, evaluatedInputGeneration: 0, policyGeneration: 0, manifestDigest: '—', state: 'NOT_AVAILABLE', stepIndex: 0, requiredEqr: false, eqrComplete: null, managementApproved: false, partnerApproved: false, protection: 'UNKNOWN', releaseEventId: null, checkpointId: null, deliveryState: 'NOT_STARTED', archiveState: 'NOT_STARTED' }))
 const candidate = computed(() => scenario.releaseCandidates.find((item) => item.engagementId === selectedEngagement.value?.id && item.state !== 'ARCHIVED') || emptyCandidate.value)
 const releaseIndex = computed(() => candidate.value?.stepIndex || 0)
@@ -30,6 +31,12 @@ const safetyChecks = computed(() => [
   { label: 'Manifest digest', value: candidate.value.manifestDigest, detail: selectedEngagement.value ? `${selectedEngagement.value.serviceLabel} · revision ${candidate.value.revision}` : 'No assigned engagement', icon: 'link', state: selectedEngagement.value ? 'Matched' : 'Unavailable', tone: selectedEngagement.value ? 'good' : 'warn' },
   { label: 'Protection + checkpoint', value: candidate.value.checkpointId || 'Pending', detail: candidate.value.protection === 'VERIFIED_SIMULATION' ? 'Simulated protection observed' : 'Protection or checkpoint still required', icon: 'shield', state: candidate.value.checkpointId ? 'Verified' : 'Blocks release', tone: candidate.value.checkpointId ? 'good' : 'danger' },
 ])
+
+function changeEngagement(event) {
+  const result = selectEngagement(event.target.value, { actorPersonaId: activeActor()?.personaId })
+  if (result.outcome !== 'COMMITTED') event.target.value = selectedEngagement.value?.id || ''
+  inspectedIndex.value = 0
+}
 
 function advanceRelease() {
   if (releaseIndex.value >= releaseSteps.length - 1) return
@@ -83,6 +90,8 @@ function openAmendment() {
     <PageHeader eyebrow="Controlled finalization" title="Release & archive" description="A signed package is a durable, version-bound business event. Release, delivery, records protection and amendments are shown as separate controls." action-label="Inspect release candidate" @action="createReleaseCandidate" />
     <WorkflowGuide :guide="workflowGuides.release" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+
+    <section class="panel engagement-selector release-scope-selector"><div><span class="eyebrow">Release scope</span><strong>Compare candidates without leaving the control page</strong><small>Switch between assigned service-period candidates. Every release command remains bound to the selected engagement and exact candidate revision.</small></div><label>Engagement<select :value="selectedEngagement?.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
 
     <section class="release-hero panel"><div><span class="eyebrow">Release candidate {{ candidate.id }} · {{ selectedClient?.name || 'No assigned client' }}</span><h2>Version-bound synthetic package</h2><p>{{ selectedEngagement ? `Period ${selectedEngagement.periodLabel} · ${selectedEngagement.currency}` : 'No assigned engagement is selected for this persona.' }} · manifest digest <code>{{ candidate.manifestDigest }}</code></p></div><div class="release-hero-meta"><StatusPill :label="releaseStatus" :tone="releaseTone" /><strong>{{ formatMoney(745000) }}</strong><span>illustrative total assets · SIMULATION</span></div></section>
 

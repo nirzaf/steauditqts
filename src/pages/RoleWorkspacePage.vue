@@ -3,7 +3,8 @@ import { computed, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
-import { formatMoney } from '../data'
+import WorkflowGuide from '../components/WorkflowGuide.vue'
+import { formatMoney, workflowGuides } from '../data'
 import { roleWorkspaceFor } from '../roleWorkspaces.js'
 import { activeActor, commercialRecordFor, completeSyntheticCredentialSetup, gateSummary, issueSyntheticCredential, recordRoleTaskAction, recordTerms, recordTermsDecision, scenario, selectedClient, selectedEngagement, termsFor, verifyAdvancePayment } from '../domain/scenario.js'
 
@@ -102,6 +103,7 @@ function reissueTerms() {
 <template>
   <div class="page role-workspace-page">
     <PageHeader :eyebrow="workspace.eyebrow" :title="workspace.title" :description="workspace.summary" />
+    <WorkflowGuide :guide="workflowGuides['role-workspace']" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 
     <section class="role-scope-banner panel">

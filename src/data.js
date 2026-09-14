@@ -49,6 +49,21 @@ export const workflowGuides = {
     next: 'Clients & acceptance',
     nextHint: 'Open the client relationship before delivery work begins; acceptance is a separate professional decision.',
   },
+  'role-workspace': {
+    id: 'role-workspace-guide',
+    step: 'ROLE 01',
+    phase: 'Orient',
+    title: 'Start with the work owned by your role',
+    summary: 'Use this workspace as your handoff queue. It shows the current engagement scope, the gate pressure, the actions this persona may take, and the next record page to open.',
+    steps: [
+      { title: 'Confirm the scope', body: 'Check the client, service, period, named actor and current session before opening a task. A route being visible does not grant authority outside the assignment.' },
+      { title: 'Choose one owned task', body: 'Use the task links to open the exact client, evidence, accounting, audit, review or release surface. Every command re-checks role, scope, revision and session state.' },
+      { title: 'Leave the decision with its owner', body: 'Prepare, acknowledge or recommend only what this persona owns. Acceptance, opinion, release and records actions remain separate named decisions.' },
+    ],
+    checks: ['The engagement and reporting period match the work you are about to open.', 'Blockers show a next owner instead of being hidden behind a green status.', 'A task acknowledgement or recommendation does not bypass a professional gate.'],
+    next: 'Pipeline visualizer',
+    nextHint: 'Use the animated pipeline to explain where this role’s handoff travels next.',
+  },
   clients: {
     id: 'clients-guide',
     step: '02 / 09',

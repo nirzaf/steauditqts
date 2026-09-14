@@ -21,7 +21,7 @@ npm run api:dev          # second terminal: fail-closed Worker on /api/*
 npm run db:migrate:local # only when testing an isolated local D1 binding
 ```
 
-Health: `npm test` → **74/74 passing** (scenario, accounting, cycle, v5, pipeline, requirements regression, api, local-state, worker-boundary).
+Health: `npm test` → **75/75 passing** (scenario, accounting, cycle, v5, pipeline, requirements regression, api, local-state, worker-boundary).
 
 ## 2. Log in — pick a persona, no signup
 
@@ -64,7 +64,7 @@ Tip: open two browsers (e.g. Admin + Client) side-by-side to see visibility boun
 9. As **Audit manager**: Reviews & approvals → clear segregated review point with response, recommend completion.
 
 ### D. Release → Visualize → Reset (Partner/Records + anyone, 3 min)
-10. As **Partner**: Release & archive → `RC-026` blocked path vs `RC-READY-001` ordered path: release event → independent records checkpoint → delivery → archive (one release identity, exact report/FS pair).
+10. As **Partner**: Release & archive → use the **Release scope** selector to compare `RC-026` (blocked) with `RC-READY-001` (ordered path): release event → independent records checkpoint → delivery → archive (one release identity, exact report/FS pair).
 11. Open **Pipeline visualizer**: play 8-stage swimlane (client→portal→audit→finance), keyboard-operable, pauses when hidden.
 12. Open **Phase 0 readiness**: filter 12 experiments → **Run clean synthetic rehearsal** → watch acceptance/PBC/accounting/audit/release/recovery slice with `SIMULATION` evidence mapped to AT/ET/VT/P0 IDs. Passing ≠ tenant/production proof.
 13. Every page: open **WorkflowGuide** → add client comment + walkthrough preference (presentation-only, never waives a gate).

@@ -23,6 +23,7 @@ const syncState = ref('SYNCED')
 const statusMessage = ref('')
 
 const guideIcon = computed(() => ({
+  'role-workspace-guide': 'grid',
   'overview-guide': 'grid',
   'clients-guide': 'users',
   'engagement-guide': 'briefcase',
