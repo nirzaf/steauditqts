@@ -5,7 +5,74 @@ import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { archiveItems, formatMoney, workflowGuides } from '../data'
+import { loadDemoSession } from '../auth.js'
+import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
+import { useDemoContext } from '../demoContext.js'
+import { idempotencyKey, recordFinalDiscussion, runSharedAction } from '../sharedDemo.js'
 import { activeActor, advanceRelease as advanceReleaseCommand, assembleArchive, createAmendmentCase, createReleaseCheckpoint, recordLegalHold, releaseCandidateBlockers, releaseLegalHold, releaseSteps as scenarioReleaseSteps, scenario, selectEngagement, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
+import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
+
+// Phase C — shared completion chain (D1 authority): final discussion,
+// visible release checklist, release, invoice and commercial close.
+const {
+  activeEngagementId: sharedEngagementId,
+  progress: sharedProgress,
+  progressError: sharedProgressError,
+  loading: sharedLoading,
+  refresh: refreshSharedContext,
+} = useDemoContext()
+const sharedNotice = ref('')
+const sharedBusy = ref('')
+const discussionForm = ref({ date: '2026-09-20', attendees: '', topics: '', outcome: '' })
+const invoiceForm = ref({ actualHours: '148', actualCost: '29500.00' })
+
+const sharedRole = computed(() => loadDemoSession()?.role || '')
+const canSharedPartner = computed(() => ['partner', 'admin'].includes(sharedRole.value))
+const canSharedFinance = computed(() => ['finance', 'admin'].includes(sharedRole.value))
+const releaseChecklistIds = ['manager-completion', 'partner-review', 'opinion', 'eqr', 'draft-fs', 'review-points', 'accounting-package', 'final-discussion', 'release']
+const releaseChecklist = computed(() => {
+  const gates = sharedProgress.value?.gateDetails || []
+  return releaseChecklistIds.map((id) => gates.find((gate) => gate.id === id)).filter(Boolean)
+})
+const releaseGate = computed(() => (sharedProgress.value?.gateDetails || []).find((gate) => gate.id === 'release') || null)
+
+function sharedNotify(message, result) {
+  sharedNotice.value = result.ok ? message : ('Not committed (' + (result.error?.code || 'ERROR') + '): ' + (result.error?.message || ''))
+  if (result.ok) refreshSharedContext()
+  window.setTimeout(() => { sharedNotice.value = '' }, 6000)
+}
+
+async function submitFinalDiscussion() {
+  if (sharedBusy.value) return
+  sharedBusy.value = 'discussion'
+  const result = await recordFinalDiscussion(sharedEngagementId.value, { ...discussionForm.value, idempotencyKey: idempotencyKey('final-discussion') })
+  sharedBusy.value = ''
+  sharedNotify('Final discussion recorded.', result)
+}
+
+async function submitSharedRelease() {
+  if (sharedBusy.value) return
+  sharedBusy.value = 'release'
+  const result = await runSharedAction(sharedEngagementId.value, 'RELEASE_FINAL_REPORT', { rationale: 'Presenter release after visible checklist.', idempotencyKey: idempotencyKey('release') })
+  sharedBusy.value = ''
+  sharedNotify('Final report released with matching report/FS versions.', result)
+}
+
+async function submitSharedInvoice() {
+  if (sharedBusy.value) return
+  sharedBusy.value = 'invoice'
+  const result = await runSharedAction(sharedEngagementId.value, 'CREATE_INVOICE', { ...invoiceForm.value, idempotencyKey: idempotencyKey('invoice') })
+  sharedBusy.value = ''
+  sharedNotify('Invoice ' + (result.invoiceId || 'issued') + ' committed.', result)
+}
+
+async function submitSharedClose() {
+  if (sharedBusy.value) return
+  sharedBusy.value = 'close'
+  const result = await runSharedAction(sharedEngagementId.value, 'CLOSE_ENGAGEMENT', { idempotencyKey: idempotencyKey('close') })
+  sharedBusy.value = ''
+  sharedNotify('Commercial record closed. Archive remains a separate records action.', result)
+}
 
 const releaseSteps = scenarioReleaseSteps
 const inspectedIndex = ref(0)
@@ -33,12 +100,21 @@ const safetyChecks = computed(() => [
 ])
 
 function changeEngagement(event) {
+  if (sharedDemoEnabled) {
+    event.target.value = selectedEngagement.value?.id || ''
+    toast.value = 'The shared engagement scope is server-authorized; the local release selector is read-only.'
+    return
+  }
   const result = selectEngagement(event.target.value, { actorPersonaId: activeActor()?.personaId })
   if (result.outcome !== 'COMMITTED') event.target.value = selectedEngagement.value?.id || ''
   inspectedIndex.value = 0
 }
 
 function advanceRelease() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local release controls are read-only in shared mode; use the shared release actions above.'
+    return
+  }
   if (releaseIndex.value >= releaseSteps.length - 1) return
   const actor = activeActor()
   const result = releaseIndex.value === 7 && !candidate.value.checkpointId
@@ -61,24 +137,40 @@ function inspectReleaseStep(index) {
 }
 
 async function assembleArchivePackage() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local archive controls are read-only in shared mode; use the shared release actions above.'
+    return
+  }
   const result = await assembleArchive({ candidateId: candidate.value?.id, actorPersonaId: activeActor()?.personaId, expectedRevision: candidate.value?.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `archive-${candidate.value?.id}-${candidate.value?.revision}` })
   toast.value = result.outcome === 'COMMITTED' ? `Archive ${result.data.id} verified with manifest ${result.data.manifestDigest}.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4500)
 }
 
 function openLegalHold() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local preservation controls are read-only in shared mode; use the shared release actions above.'
+    return
+  }
   const result = recordLegalHold({ engagementId: selectedEngagement.value?.id, actorPersonaId: activeActor()?.personaId, expectedRevision: selectedEngagement.value?.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `hold-${selectedEngagement.value?.id}-${scenario.legalHolds?.length || 0}`, type: 'LITIGATION', reason: 'Synthetic preservation hold recorded from the release workspace.' })
   toast.value = result.outcome === 'COMMITTED' ? `Legal hold ${result.data.id} is active; disposal remains blocked.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4500)
 }
 
 function releaseHold(hold) {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local preservation controls are read-only in shared mode; use the shared release actions above.'
+    return
+  }
   const result = releaseLegalHold({ holdId: hold.id, actorPersonaId: activeActor()?.personaId, expectedRevision: hold.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `hold-release-${hold.id}-${hold.revision}`, rationale: 'Synthetic records custodian release recorded after the preservation need ended.' })
   toast.value = result.outcome === 'COMMITTED' ? `Legal hold ${hold.id} released; the original hold event remains in the ledger.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4500)
 }
 
 function openAmendment() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local amendment controls are read-only in shared mode; use the shared release actions above.'
+    return
+  }
   const result = createAmendmentCase({ candidateId: candidate.value?.id, actorPersonaId: activeActor()?.personaId, expectedRevision: candidate.value?.revision, idempotencyKey: `amendment-${candidate.value?.id}-${candidate.value?.revision}`, reason: 'Synthetic post-issuance fact requires a linked new assessment.' })
   toast.value = result.outcome === 'COMMITTED' ? `Amendment ${result.data.id} opened; original package ${result.data.originalCandidateId} remains preserved.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4500)
@@ -90,6 +182,43 @@ function openAmendment() {
     <PageHeader eyebrow="Controlled finalization" title="Release & archive" description="A signed package is a durable, version-bound business event. Release, delivery, records protection and amendments are shown as separate controls." action-label="Inspect release candidate" @action="createReleaseCandidate" />
     <WorkflowGuide :guide="workflowGuides.release" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+
+    <section v-if="sharedDemoEnabled" class="panel shared-release-panel" aria-labelledby="shared-release-title">
+      <div class="panel-heading"><div><span class="eyebrow">Shared D1 completion chain · {{ sharedEngagementId }}</span><h2 id="shared-release-title">Discussion, release, invoice, close</h2></div><StatusPill :label="releaseGate?.state || 'WAITING'" :tone="releaseGate?.state === 'APPROVED' ? 'good' : releaseGate?.state === 'READY' ? 'warn' : 'neutral'" /></div>
+      <p v-if="sharedNotice" class="guide-status-message" role="status">{{ sharedNotice }}</p>
+      <div v-if="releaseChecklist.length" class="release-checklist" role="status" aria-label="Shared release checklist">
+        <div v-for="gate in releaseChecklist" :key="gate.id" class="release-check-row">
+          <span aria-hidden="true">{{ gate.state === 'APPROVED' ? '✓' : gate.state === 'READY' ? '!' : gate.state === 'WAITING' ? '·' : '✕' }}</span>
+          <span class="release-check-main"><strong>{{ gate.label }}</strong><small>{{ gate.reason }}</small></span>
+          <StatusPill :label="gate.state" :tone="gate.state === 'APPROVED' ? 'good' : gate.state === 'READY' ? 'warn' : gate.state === 'WAITING' ? 'neutral' : 'danger'" />
+        </div>
+      </div>
+      <p v-else class="guide-status-message">Release checklist unavailable{{ sharedProgressError ? ' (' + sharedProgressError.code + ')' : '' }}.</p>
+      <div class="split-grid">
+        <form class="shared-completion-form" @submit.prevent="submitFinalDiscussion">
+          <span class="eyebrow">Final client discussion</span>
+          <label>Date<input v-model="discussionForm.date" type="text" /></label>
+          <label>Attendees<input v-model="discussionForm.attendees" type="text" placeholder="Names and roles" /></label>
+          <label>Topics<input v-model="discussionForm.topics" type="text" placeholder="Opinion, adjustments, next steps" /></label>
+          <label>Outcome<input v-model="discussionForm.outcome" type="text" placeholder="Agreed outcome and matters" /></label>
+          <button type="submit" class="button secondary" :disabled="!canSharedPartner || sharedBusy === 'discussion'">{{ sharedBusy === 'discussion' ? 'Recording…' : 'Record discussion' }}</button>
+          <small v-if="!canSharedPartner">Needs the Partner demo persona, after the opinion.</small>
+        </form>
+        <div class="shared-completion-form">
+          <span class="eyebrow">Release then commercial close</span>
+          <button type="button" class="button primary" :disabled="!canSharedPartner || sharedBusy === 'release'" @click="submitSharedRelease">{{ sharedBusy === 'release' ? 'Releasing…' : 'Release final report' }}</button>
+          <label>Actual hours<input v-model="invoiceForm.actualHours" type="text" /></label>
+          <label>Actual cost (QAR)<input v-model="invoiceForm.actualCost" type="text" /></label>
+          <button type="button" class="button secondary" :disabled="!canSharedFinance || sharedBusy === 'invoice'" @click="submitSharedInvoice">{{ sharedBusy === 'invoice' ? 'Issuing…' : 'Generate invoice' }}</button>
+          <button type="button" class="button secondary" :disabled="!canSharedFinance || sharedBusy === 'close'" @click="submitSharedClose">{{ sharedBusy === 'close' ? 'Closing…' : 'Close commercial record' }}</button>
+          <small>Release needs the Partner persona; invoice and close need Finance. Every button is validated server-side.</small>
+        </div>
+      </div>
+    </section>
+
+    <LocalFixtureNotice v-if="sharedDemoEnabled"
+      title="Local release fixtures are read-only"
+      description="The shared release, invoice and close controls above are authoritative in shared mode. The candidate rail, archive, legal-hold and amendment panels below remain browser-local reference data." />
 
     <section class="panel engagement-selector release-scope-selector"><div><span class="eyebrow">Release scope</span><strong>Compare candidates without leaving the control page</strong><small>Switch between assigned service-period candidates. Every release command remains bound to the selected engagement and exact candidate revision.</small></div><label>Engagement<select :value="selectedEngagement?.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
 

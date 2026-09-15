@@ -3,8 +3,10 @@ import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
+import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 import { client, workflowGuides } from '../data'
 import { activeActor, recordClientInformationResponse, scenario, selectedClient, selectedEngagement } from '../domain/scenario.js'
+import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 
 const emit = defineEmits(['navigate'])
 const topics = [
@@ -25,6 +27,10 @@ function navigate(route) {
 }
 
 function submitInformationResponse() {
+  if (sharedDemoEnabled) {
+    responseStatus.value = 'Local communication fixtures are read-only in shared mode; use the shared command surface.'
+    return
+  }
   const request = selectedInformationRequest.value
   const actor = activeActor()
   if (!request || responding.value) return
@@ -40,6 +46,9 @@ function submitInformationResponse() {
   <div class="page client-communications-page">
     <PageHeader eyebrow="Client portal · communication" title="Portal communications" description="Keep questions, clarifications, and delivery updates in one shared thread with the engagement team." />
     <WorkflowGuide :guide="workflowGuides['client-communications']" />
+    <LocalFixtureNotice v-if="sharedDemoEnabled"
+      title="Local communications are read-only"
+      description="The shared workflow owns client responses and handoffs in shared mode. This browser-local thread is available for inspection only." />
 
     <section class="panel portal-thread-banner"><span class="thread-icon"><Icon name="message" :size="20" /></span><div><span class="eyebrow">Shared portal thread</span><h2>{{ scopedClient.name }} · Engagement team</h2><p>{{ messagePolicy }} Use the response composer below for the next message.</p></div><span class="thread-policy"><strong>Portal only</strong><small>No email side-channel in this prototype</small></span></section>
 

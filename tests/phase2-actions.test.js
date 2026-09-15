@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../worker/index.js';
+import { clientEvaluationQuestionIds } from '../src/domain/questionBanks.js';
 
 const TRUSTED = {
   'Cf-Access-Jwt-Assertion': 'synthetic-jwt',
@@ -26,6 +27,8 @@ function makeFakeDb() {
     ]),
     profiles: new Map(),
     decisions: [],
+    assessments: new Map(),
+    assessmentResponses: [],
     commercial: new Map(),
     commercialWrites: 0,
     credentials: [],
@@ -52,28 +55,51 @@ function makeFakeDb() {
       state.commercial.set(p[0], { engagement_id: p[0], advance_state: 'VERIFIED', advance_reference: p[1], revision: (prev?.revision || 0) + 1 });
     }
     else if (sql.includes('INSERT INTO auditflow_credentials')) state.credentials.push({ credential_id: p[0], engagement_id: p[1], password_hash: p[3] });
+    else if (sql.includes('INSERT INTO auditflow_assessments')) state.assessments.set(p[0], { assessment_id: p[0], engagement_id: p[1], type: p[2], template_version: p[3], revision: 1, updated_at: '2026-09-14 00:00:00' });
+    else if (sql.includes('INSERT INTO auditflow_assessment_responses')) state.assessmentResponses.push({ assessment_id: p[0], question_id: p[1], answer: p[2], applicability: p[3], verification: p[4], explanation: p[5], evidence_ref: p[6], responder: p[7], verifier: p[8], updated_at: '2026-09-14 00:00:00' });
+    else if (sql.includes('UPDATE auditflow_assessments SET revision')) { const a = state.assessments.get(p[0]); if (a) a.revision += 1; }
     else if (sql.includes('INSERT INTO auditflow_artifacts')) state.artifacts.push({ document_id: p[0] });
     else if (sql.includes('INSERT INTO auditflow_outbox')) state.outbox.push({ message_id: p[0] });
   }
   function one(sql, p) {
     if (sql.includes('FROM auditflow_demo_sessions')) return state.sessions.get(p[0]) || null;
+    if (sql.includes('FROM auditflow_assessments')) return [...state.assessments.values()].find((a) => a.engagement_id === p[0]) || null;
     if (sql.includes('FROM auditflow_engagement_state')) return state.engagements.get(p[0]) || null;
     if (sql.includes('FROM auditflow_events WHERE engagement_id')) return state.events.find((e) => e.engagement_id === p[0] && e.idempotency_key === p[1]) || null;
     if (sql.includes('FROM auditflow_commercial')) return state.commercial.get(p[0]) || null;
     if (sql.includes('FROM auditflow_credentials')) return [...state.credentials].reverse().find((c) => c.engagement_id === p[0]) ? { credential_id: state.credentials[state.credentials.length - 1].credential_id } : null;
     return null;
   }
+  function all(sql, p) {
+    if (sql.includes('FROM auditflow_assessment_responses')) return { results: state.assessmentResponses.filter((r) => r.assessment_id === p[0]) };
+    return { results: [] };
+  }
   const db = {
     prepare(sql) {
       const bound = (...params) => ({
         async run() { apply(sql, params); return { success: true }; },
         async first() { return one(sql, params); },
-        async all() { return { results: [] }; },
+        async all() { return all(sql, params); },
       });
-      return { bind: (...params) => bound(...params), async run() { apply(sql, []); return { success: true }; }, async first() { return one(sql, []); }, async all() { return { results: [] }; } };
+      return { bind: (...params) => bound(...params), async run() { apply(sql, []); return { success: true }; }, async first() { return one(sql, []); }, async all() { return all(sql, []); } };
     },
   };
   return { state, db };
+}
+
+function seedClearAssessment(fake, engagementId, skipIds = []) {
+  const assessmentId = 'ASMT-seed-' + engagementId;
+  fake.state.assessments.set(assessmentId, { assessment_id: assessmentId, engagement_id: engagementId, type: 'acceptance', template_version: 'v4-2026-01', revision: 4, updated_at: '2026-09-14 00:00:00' });
+  for (const questionId of clientEvaluationQuestionIds) {
+    if (skipIds.includes(questionId)) continue;
+    fake.state.assessmentResponses.push({
+      assessment_id: assessmentId, question_id: questionId,
+      answer: questionId === 'CE-032' ? 'NO_MATCH' : 'YES',
+      applicability: 'APPLICABLE', verification: 'VERIFIED', explanation: 'Seeded synthetic evidence.',
+      evidence_ref: '', responder: 'ACT-SARA', verifier: 'ACT-PARTNER', updated_at: '2026-09-14 00:00:00',
+    });
+  }
+  return assessmentId;
 }
 
 function envFor(fake) {
@@ -126,6 +152,16 @@ test('acceptance: partner decides with rationale, stale revision conflicts, clie
   assert.equal(stale.status, 409);
   assert.equal((await stale.json()).error.code, 'REVISION_CONFLICT');
 
+  const notStarted = await worker.fetch(actionReq('ENG-0018-AUD-2026', sid, { action: 'ACCEPT_CLIENT', decision: 'ACCEPT', rationale: 'Evidence complete.', expectedRevision: 1 }), envFor(fake));
+  assert.equal(notStarted.status, 409);
+  assert.equal((await notStarted.json()).error.code, 'EVALUATION_NOT_STARTED');
+
+  seedClearAssessment(fake, 'ENG-0018-AUD-2026', ['CE-011']);
+  const held = await worker.fetch(actionReq('ENG-0018-AUD-2026', sid, { action: 'ACCEPT_CLIENT', decision: 'ACCEPT', rationale: 'Evidence complete.', expectedRevision: 1 }), envFor(fake));
+  assert.equal(held.status, 409);
+  assert.equal((await held.json()).error.code, 'EVALUATION_HOLDS');
+
+  seedClearAssessment(fake, 'ENG-0018-AUD-2026');
   const ok = await worker.fetch(actionReq('ENG-0018-AUD-2026', sid, { action: 'ACCEPT_CLIENT', decision: 'ACCEPT', rationale: 'Evidence complete.', expectedRevision: 1 }), envFor(fake));
   assert.equal(ok.status, 201);
   const body = await ok.json();

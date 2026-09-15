@@ -132,8 +132,12 @@ export function recordPartnerDecision(assessment, { actor, expectedRevision, dec
   if (!actor?.active || !actor.roles?.includes('engagement_partner')) return { ok: false, code: 'PARTNER_AUTHORITY_REQUIRED', message: 'Only the scoped engagement partner can record the decision.' }
   if (expectedRevision != null && expectedRevision !== assessment.revision) return { ok: false, code: 'REVISION_CONFLICT', message: `Expected assessment revision ${expectedRevision}, current revision is ${assessment.revision}.` }
   const evaluation = evaluateAssessment(assessment)
-  if (evaluation.prohibitions.length) return { ok: false, code: 'CONFIRMED_PROHIBITION', message: 'A confirmed prohibition cannot be overridden by a partner or administrator.', evaluation }
   if (!['ACCEPT', 'CONTINUE', 'DECLINE', 'ESCALATE'].includes(decision)) return { ok: false, code: 'DECISION_INVALID', message: 'Choose ACCEPT, CONTINUE, DECLINE, or ESCALATE.' }
+  // A confirmed prohibition blocks a favorable acceptance/continuation, but
+  // the Partner must still be able to record a documented decline or
+  // escalation.  Requiring the prohibition to be cleared would erase the
+  // very compliance fact the decision is meant to preserve.
+  if (evaluation.prohibitions.length && ['ACCEPT', 'CONTINUE'].includes(decision)) return { ok: false, code: 'CONFIRMED_PROHIBITION', message: 'A confirmed prohibition cannot be overridden by a partner or administrator.', evaluation }
   if (['ACCEPT', 'CONTINUE'].includes(decision) && evaluation.holds.length) return { ok: false, code: 'ASSESSMENT_HOLDS', message: 'Resolve every hold before recording a favorable decision.', evaluation }
   assessment.decision = { decision, rationale: String(rationale).trim(), actorId: actor.id, recordedAt: now(), revision: assessment.revision }
   assessment.revision += 1

@@ -5,13 +5,27 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import SharedPipelineStatus from '../components/SharedPipelineStatus.vue'
+import ProcessValidityInspector from '../components/ProcessValidityInspector.vue'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { SHARED_ENGAGEMENT_ID } from '../sharedDemo.js'
+import { useDemoContext } from '../demoContext.js'
 import { loadDemoSession } from '../auth'
 import { workflowGuides } from '../data'
 import { pipelineLanes, pipelineStages } from '../pipelineData'
 
 const emit = defineEmits(['navigate'])
+
+// Phase B — validity is derived from D1 for the active shared engagement.
+// In local mode the inspector says it is a projection.
+const {
+  mode: demoMode,
+  activeEngagementId: demoActiveEngagementId,
+  progress: demoProgress,
+  progressError: demoProgressError,
+  loading: demoLoading,
+  lastSync: demoLastSync,
+} = useDemoContext()
+const sharedEngagementId = computed(() => demoActiveEngagementId.value || SHARED_ENGAGEMENT_ID)
 
 const rootEl = ref(null)
 const activeIndex = ref(0)
@@ -169,7 +183,8 @@ onBeforeUnmount(() => {
     />
 
     <WorkflowGuide :guide="workflowGuides.pipeline" />
-    <SharedPipelineStatus v-if="sharedDemoEnabled" :engagement-id="SHARED_ENGAGEMENT_ID" @navigate="emit('navigate', $event)" />
+    <ProcessValidityInspector :progress="demoProgress" :loading="demoLoading" :error="demoProgressError" :mode="demoMode" :last-sync="demoLastSync" @navigate="emit('navigate', $event)" />
+    <SharedPipelineStatus v-if="sharedDemoEnabled" :engagement-id="sharedEngagementId" @navigate="emit('navigate', $event)" />
 
     <section class="panel pipeline-intro" aria-labelledby="pipeline-intro-title">
       <div class="pipeline-intro-copy">

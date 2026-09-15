@@ -3,11 +3,16 @@ import { computed, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
+import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 import Icon from '../components/Icon.vue'
 import { client, formatMoney, practiceJournals, reconciliationAreas, workflowGuides } from '../data'
 import { baselineFixture, fixtureRows, mappingSummary, parseCsv, replacementFixture, sourceReflection, summarizeRows } from '../domain/accounting.js'
 import { subtractMoney } from '../domain/money.js'
 import { activeActor, accountingPackageFor, engagementById, recordDraftFsDecision, replaceAccountingSource, scenario, selectedEngagement as scenarioEngagement, stageAccountingJournal, submitAccountingStatement } from '../domain/scenario.js'
+import { loadDemoSession } from '../auth.js'
+import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
+import { useDemoContext } from '../demoContext.js'
+import { approveAccountingFs, idempotencyKey, runSharedAction } from '../sharedDemo.js'
 
 const activeTab = ref('Data intake')
 const tabs = ['Data intake', 'Mappings & reconciliations', 'Financial statements']
@@ -39,6 +44,62 @@ const mappings = {
   '520100': 'Depreciation',
   '530100': 'Finance costs',
 }
+// Phase C — shared D1 accounting tracker. Local fixtures above stay
+// browser-local; everything below reads and writes the Worker.
+const {
+  activeEngagementId: sharedEngagementId,
+  accountingStatus: sharedAcctStatus,
+  accountingSteps: sharedAcctSteps,
+  refresh: refreshSharedContext,
+} = useDemoContext()
+const sharedNotice = ref('')
+const sharedBusy = ref('')
+const tbForm = ref({ sourceId: 'TB-BASELINE-001', sourceVersion: 'v03', period: 'FY2026', currency: 'QAR', rowCount: 14, debitTotal: '1250000.00', creditTotal: '1250000.00', validationState: 'VALIDATED', mappingComplete: true })
+const trackerForm = ref({ mapping_state: 'COMPLETE', mapping_coverage: '14/14 reviewed', recon_state: 'IN_PROGRESS', open_recon_count: 1, journal_state: 'PENDING', pending_journal_count: 1, fs_version: '', fs_state: 'DRAFT' })
+const packageDecision = ref('ACCEPT')
+const packageExplanation = ref('')
+
+const sharedDemoRole = computed(() => loadDemoSession()?.role || '')
+const canSharedAccountant = computed(() => ['accountant', 'accounting-reviewer', 'preparer', 'client', 'admin', 'system-admin'].includes(sharedDemoRole.value))
+const canSharedMgmtApprove = computed(() => ['client-management', 'admin'].includes(sharedDemoRole.value))
+const acctGenerations = computed(() => {
+  const status = sharedAcctStatus.value
+  if (!status) return null
+  return { input: status.inputGeneration, evaluated: status.auditEvaluatedGeneration, current: status.inputGeneration === status.auditEvaluatedGeneration }
+})
+
+function sharedAcctNotify(message, result) {
+  sharedNotice.value = result.ok ? message : ('Not committed (' + (result.error?.code || 'ERROR') + '): ' + (result.error?.message || ''))
+  if (result.ok) refreshSharedContext()
+  window.setTimeout(() => { sharedNotice.value = '' }, 6000)
+}
+
+async function submitSharedTb() {
+  if (sharedBusy.value) return
+  sharedBusy.value = 'tb'
+  const rows = sourceRows.value.length ? sourceRows.value : baselineRows.value
+  const result = await runSharedAction(sharedEngagementId.value, 'RECORD_TB_SOURCE', { ...tbForm.value, rows, rowCount: rows.length, idempotencyKey: idempotencyKey('tb-source') })
+  sharedBusy.value = ''
+  sharedAcctNotify(result.ok ? 'TB ' + (result.sourceVersion || '') + ' recorded; accounting input generation advanced — audit must re-evaluate.' : '', result)
+}
+
+async function submitSharedTracker() {
+  if (sharedBusy.value) return
+  sharedBusy.value = 'tracker'
+  const result = await runSharedAction(sharedEngagementId.value, 'UPDATE_ACCOUNTING_STATUS', { ...trackerForm.value, idempotencyKey: idempotencyKey('accounting-status') })
+  sharedBusy.value = ''
+  sharedAcctNotify('Accounting tracker updated.', result)
+}
+
+async function submitSharedPackageApproval() {
+  if (sharedBusy.value) return
+  sharedBusy.value = 'approval'
+  const result = await approveAccountingFs(sharedEngagementId.value, { decision: packageDecision.value, explanation: packageExplanation.value, idempotencyKey: idempotencyKey('accounting-fs') })
+  sharedBusy.value = ''
+  if (result.ok) packageExplanation.value = ''
+  sharedAcctNotify('Management ' + packageDecision.value + ' recorded for the accounting package.', result)
+}
+
 const selectedEngagement = computed(() => scenarioEngagement())
 const accountingEngagement = computed(() => selectedEngagement.value?.service === 'accounting' ? selectedEngagement.value : engagementById(selectedEngagement.value?.linkedEngagementId) || scenario.engagements.find((item) => item.clientId === selectedEngagement.value?.clientId && item.service === 'accounting') || null)
 const packageRecord = computed(() => accountingPackageFor(accountingEngagement.value?.id))
@@ -101,6 +162,10 @@ function csvFromRows(rows) {
 }
 
 function openImport() {
+  if (sharedDemoEnabled) {
+    toast.value = 'The local source importer is read-only in shared mode; use the shared accounting tracker above.'
+    return
+  }
   importOpen.value = true
   importError.value = ''
 }
@@ -112,6 +177,10 @@ function closeImport() {
 }
 
 function useFixture(kind) {
+  if (sharedDemoEnabled) {
+    toast.value = 'The local source fixtures are read-only in shared mode; use the shared accounting tracker above.'
+    return
+  }
   const rows = fixtureRows(kind === 'baseline' ? baselineFixture : replacementFixture, { entityId: accountingEngagement.value?.clientId || 'CLI-0018', period: accountingEngagement.value?.period || 'FY2026', currency: accountingEngagement.value?.currency || 'QAR', sourceId: kind === 'baseline' ? 'TB-BASELINE-001' : 'TB-REPLACEMENT-001' })
   const label = kind === 'baseline' ? 'TB v02 · baseline fixture' : 'TB v03 · reflected replacement fixture'
   const result = replaceAccountingSource({ engagementId: accountingEngagement.value?.id, actorPersonaId: activeActor()?.personaId, expectedRevision: accountingEngagement.value?.revision, idempotencyKey: `source-${accountingEngagement.value?.id}-${accountingEngagement.value?.revision}-${kind}`, sourceId: rows[0]?.sourceId || (kind === 'baseline' ? 'TB-BASELINE-001' : 'TB-REPLACEMENT-001'), sourceLabel: label, rows })
@@ -123,6 +192,10 @@ function useFixture(kind) {
 }
 
 async function readImport(event) {
+  if (sharedDemoEnabled) {
+    toast.value = 'The local source importer is read-only in shared mode.'
+    return
+  }
   const file = event.target.files?.[0]
   if (!file) return
   try {
@@ -155,12 +228,20 @@ function markJournal(index) {
 }
 
 function submitStatement() {
+  if (sharedDemoEnabled) {
+    toast.value = 'The local statement package is read-only in shared mode; use the shared accounting handoff.'
+    return
+  }
   const result = submitAccountingStatement({ engagementId: accountingEngagement.value?.id, actorPersonaId: activeActor()?.personaId, expectedRevision: packageRecord.value?.revision, idempotencyKey: `statement-submit-${accountingEngagement.value?.id}-${packageRecord.value?.revision}` })
   toast.value = result.outcome === 'COMMITTED' ? 'Statement package submitted for management approval with an exact package revision.' : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4500)
 }
 
 function saveDraftFsDecision() {
+  if (sharedDemoEnabled) {
+    toast.value = 'The local Draft FS decision is read-only in shared mode; use the shared approval action.'
+    return
+  }
   if (decisionWorking.value || !packageRecord.value) return
   const actor = activeActor()
   decisionWorking.value = true
@@ -186,6 +267,52 @@ function journalStatusFor(index) {
     <WorkflowGuide :guide="workflowGuides.accounting" />
 
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+
+    <section v-if="sharedDemoEnabled" class="panel shared-accounting-panel" aria-labelledby="shared-accounting-title">
+      <div class="panel-heading"><div><span class="eyebrow">Shared D1 accounting process · {{ sharedEngagementId }}</span><h2 id="shared-accounting-title">Accounting tracker</h2></div><StatusPill :label="acctGenerations ? (acctGenerations.current ? 'Input g' + acctGenerations.input + ' · evaluated' : 'Input g' + acctGenerations.input + ' · audit at g' + acctGenerations.evaluated) : 'Loading…'" :tone="acctGenerations ? (acctGenerations.current ? 'good' : 'warn') : 'neutral'" /></div>
+      <p v-if="sharedNotice" class="guide-status-message" role="status">{{ sharedNotice }}</p>
+      <ol class="tracker-steps">
+        <li v-for="step in sharedAcctSteps" :key="step.id" class="tracker-row">
+          <span aria-hidden="true">{{ step.state === 'COMPLETE' || step.state === 'READY' ? '✓' : step.state === 'IN_PROGRESS' ? '!' : '·' }}</span>
+          <span class="tracker-main"><strong>{{ step.label }}</strong><small>{{ step.detail }}</small></span>
+          <StatusPill :label="step.state" :tone="step.state === 'COMPLETE' || step.state === 'READY' ? 'good' : step.state === 'IN_PROGRESS' ? 'warn' : 'neutral'" />
+        </li>
+      </ol>
+      <div class="split-grid">
+        <form class="shared-completion-form" @submit.prevent="submitSharedTb">
+          <span class="eyebrow">Record TB source (advances input generation)</span>
+          <label>Source ID<input v-model="tbForm.sourceId" type="text" /></label>
+          <label>Version<input v-model="tbForm.sourceVersion" type="text" /></label>
+          <label>Debit total<input v-model="tbForm.debitTotal" type="text" /></label>
+          <label>Credit total<input v-model="tbForm.creditTotal" type="text" /></label>
+          <button type="submit" class="button secondary" :disabled="!canSharedAccountant || sharedBusy === 'tb'">{{ sharedBusy === 'tb' ? 'Recording…' : 'Record TB source' }}</button>
+          <small v-if="!canSharedAccountant">Needs a Client, Accountant or Reviewer demo persona.</small>
+        </form>
+        <form class="shared-completion-form" @submit.prevent="submitSharedTracker">
+          <span class="eyebrow">Update tracker</span>
+          <label>Mapping<input v-model="trackerForm.mapping_coverage" type="text" placeholder="e.g. 14/14 reviewed" /></label>
+          <label>Recon state<select v-model="trackerForm.recon_state"><option>PENDING</option><option>IN_PROGRESS</option><option>COMPLETE</option></select></label>
+          <label>Open recons<input v-model.number="trackerForm.open_recon_count" type="number" min="0" /></label>
+          <label>Journal state<select v-model="trackerForm.journal_state"><option>PENDING</option><option>IN_PROGRESS</option><option>COMPLETE</option></select></label>
+          <label>Pending journals<input v-model.number="trackerForm.pending_journal_count" type="number" min="0" /></label>
+          <label>FS version<input v-model="trackerForm.fs_version" type="text" placeholder="e.g. FS-v04" /></label>
+          <label>FS state<select v-model="trackerForm.fs_state"><option>DRAFT</option><option>IN_REVIEW</option><option>FINAL</option></select></label>
+          <button type="submit" class="button secondary" :disabled="!canSharedAccountant || sharedBusy === 'tracker'">{{ sharedBusy === 'tracker' ? 'Saving…' : 'Save tracker' }}</button>
+        </form>
+        <form class="shared-completion-form" @submit.prevent="submitSharedPackageApproval">
+          <span class="eyebrow">Management package approval</span>
+          <label>Decision<select v-model="packageDecision"><option>ACCEPT</option><option>REJECT</option></select></label>
+          <label>Explanation<input v-model="packageExplanation" type="text" placeholder="Required when rejecting" /></label>
+          <button type="submit" class="button secondary" :disabled="!canSharedMgmtApprove || sharedBusy === 'approval'">{{ sharedBusy === 'approval' ? 'Recording…' : 'Record approval' }}</button>
+          <small v-if="!canSharedMgmtApprove">Needs the Client Management demo persona.</small>
+        </form>
+      </div>
+      <p class="panel-footnote"><Icon name="info" :size="15" /><span>Every new TB source advances the input generation; audit, draft, manager and opinion records against older inputs go stale until re-evaluated.</span></p>
+    </section>
+
+    <LocalFixtureNotice v-if="sharedDemoEnabled"
+      title="Local accounting fixtures are read-only"
+      description="The shared accounting tracker above is authoritative in shared mode. The browser-local receipt, journal and Draft FS panels below remain reference views and cannot change shared workflow state." />
 
     <section v-if="importOpen" class="panel import-panel" aria-labelledby="import-title">
       <div class="panel-heading"><div><span class="eyebrow">Synthetic import</span><h2 id="import-title">Load a trial-balance receipt</h2></div><button type="button" class="icon-button" aria-label="Close import" title="Close import" @click="closeImport"><Icon name="x" :size="17" /></button></div>

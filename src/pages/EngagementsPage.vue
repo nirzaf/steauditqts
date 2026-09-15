@@ -1,10 +1,12 @@
 <script setup>
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
+import NextBestActionCard from '../components/NextBestActionCard.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import SharedTimeline from '../components/SharedTimeline.vue'
+import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { client, timeline, workflowGuides } from '../data'
 import { activateEngagement, activationBlockers, activationFor, activeActor, createContinuanceShell, gateSummary, renewalCaseFor, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, selectEngagement, termsFor } from '../domain/scenario.js'
@@ -33,6 +35,11 @@ const canActivate = computed(() => Boolean(activeActor()?.roles?.includes('engag
 function navigate(route) { emit('navigate', route) }
 
 function changeEngagement(event) {
+  if (sharedEnabled) {
+    event.target.value = selectedEngagement.value?.id || ''
+    toast.value = 'Use the global shared context selector to change the authoritative engagement.'
+    return
+  }
   const engagementId = event.target.value
   selectEngagement(engagementId, { actorPersonaId: activeActor()?.personaId })
   selectedGate.value = 0
@@ -44,6 +51,10 @@ function showResult(result, successMessage) {
 }
 
 function activate() {
+  if (sharedEnabled) {
+    toast.value = 'Commencement controls are read-only here; use a server-authorized shared handoff.'
+    return
+  }
   if (actionWorking.value || !selectedEngagement.value) return
   actionWorking.value = true
   const result = activateEngagement({ engagementId: selectedEngagement.value.id, actorPersonaId: activeActor()?.personaId, expectedRevision: selectedEngagement.value.revision, idempotencyKey: `activate-${selectedEngagement.value.id}-${selectedEngagement.value.revision}` })
@@ -52,6 +63,10 @@ function activate() {
 }
 
 function createShell() {
+  if (sharedEnabled) {
+    toast.value = 'Continuance shells are read-only here; use the shared workflow owner action.'
+    return
+  }
   if (actionWorking.value || !selectedEngagement.value) return
   actionWorking.value = true
   const result = createContinuanceShell({ sourceEngagementId: selectedEngagement.value.id, actorPersonaId: activeActor()?.personaId, expectedRevision: selectedEngagement.value.revision, idempotencyKey: `shell-${selectedEngagement.value.id}-${selectedEngagement.value.revision}` })
@@ -64,9 +79,11 @@ function createShell() {
   <div class="page">
     <PageHeader :eyebrow="`Engagement workspace · ${selectedEngagement.id}`" :title="selectedClient.name" :description="`${selectedEngagement.serviceLabel} · ${selectedEngagement.periodLabel} · ${selectedEngagement.currency}. Planning and PBC work can continue only within this selected scope.`" action-label="Open PBC workspace" @action="navigate('pbc')" />
     <WorkflowGuide :guide="workflowGuides.engagements" />
+    <NextBestActionCard v-if="sharedEnabled" title="Next best action for the shared engagement" @navigate="navigate" />
+    <LocalFixtureNotice v-if="sharedEnabled" title="Engagement details below are a local reference" description="The shared context bar, progress projection and task queue are authoritative. Local gates and controls are inspection-only while shared mode is active." />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 
-    <section class="panel engagement-selector"><div><span class="eyebrow">Selected service-period scope</span><strong>Every command is revision-bound to one engagement</strong><small>Use the selector to demonstrate how accounting-only and audit routes keep separate gates and authorities.</small></div><label>Engagement<select :value="selectedEngagement.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
+    <section class="panel engagement-selector"><div><span class="eyebrow">Selected service-period scope</span><strong>Every command is revision-bound to one engagement</strong><small>{{ sharedEnabled ? 'Use the global shared context selector to change the authoritative engagement.' : 'Use the selector to demonstrate how accounting-only and audit routes keep separate gates and authorities.' }}</small></div><label>Engagement<select :value="selectedEngagement.id" :disabled="sharedEnabled" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
 
     <section class="engagement-hero panel">
       <div class="engagement-identity"><div class="large-avatar">{{ selectedClient.name.split(' ').map((part) => part[0]).slice(0, 2).join('') }}</div><div><div class="title-line"><h2>{{ selectedEngagement.periodLabel }}</h2><StatusPill :label="selectedEngagement.service === 'audit' ? 'Fieldwork in progress' : 'Preparation in progress'" tone="warn" /></div><p>{{ selectedEngagement.serviceLabel }} · {{ selectedEngagement.currency }} · {{ selectedClient.name }}</p><div class="tag-row"><span class="tag">{{ selectedEngagement.service === 'audit' ? 'Independent auditor route' : 'Accounting-only route' }}</span><span class="tag">{{ selectedEngagement.evidence.eqrRequired ? 'EQR required' : 'EQR not applicable' }}</span><span class="tag">Client {{ selectedClient.id }} · explicit scope</span></div></div></div>
@@ -74,8 +91,8 @@ function createShell() {
     </section>
 
     <section class="split-grid engagement-controls">
-      <article class="panel"><div class="panel-heading"><div><span class="eyebrow">Commencement control</span><h2>{{ activation?.state === 'ACTIVE' ? 'Engagement active' : 'Activation readiness' }}</h2></div><StatusPill :label="activation?.state || 'PENDING'" :tone="activation?.state === 'ACTIVE' ? 'good' : blockers.length ? 'danger' : 'warn'" /></div><p class="panel-copy">Activation requires a favorable acceptance or continuance decision, signed terms, eligible assignments, a verified workspace, and a ready firm profile. A green gate is evidence—not an automatic command.</p><ul v-if="blockers.length" class="check-list"><li v-for="blocker in blockers.slice(0, 4)" :key="`${blocker.code}-${blocker.message}`"><span class="list-icon danger"><Icon name="lock" :size="14" /></span><span><strong>{{ blocker.code }}</strong><small>{{ blocker.message }}</small></span></li></ul><div v-else class="prototype-note"><Icon name="check-circle" :size="16" /><span>All commencement prerequisites are satisfied for this synthetic scope.</span></div><div class="card-footer"><span>Terms: {{ terms?.state || 'Not recorded' }} · revision {{ selectedEngagement.revision }}</span><button v-if="canActivate" type="button" class="button primary" :disabled="actionWorking || activation?.state === 'ACTIVE'" @click="activate">{{ actionWorking ? 'Working…' : activation?.state === 'ACTIVE' ? 'Active' : 'Activate engagement' }}</button><StatusPill v-else label="Partner action required" tone="neutral" /></div></article>
-      <article class="panel"><div class="panel-heading"><div><span class="eyebrow">Next-period continuity</span><h2>{{ renewal ? 'Renewal case in progress' : 'Create a fresh shell' }}</h2></div><StatusPill :label="renewal?.state || 'Not started'" :tone="renewal?.state === 'NON_RENEWED' ? 'warn' : renewal ? 'good' : 'neutral'" /></div><p class="panel-copy">Continuance copies prior facts for context, then resets current answers to UNKNOWN. The next-period shell cannot inherit acceptance, terms, or evidence silently.</p><div v-if="renewal" class="detail-list compact-details"><div><dt>Shell</dt><dd>{{ renewal.shellEngagementId }}</dd></div><div><dt>Copied facts</dt><dd>{{ renewal.copiedFacts?.length || 0 }} responses retained as prior context</dd></div><div><dt>Decision</dt><dd>{{ renewal.decision?.decision || 'Pending partner decision' }}</dd></div></div><div class="card-footer"><span>{{ selectedEngagement.nextPeriodEngagementId ? `Shell ${selectedEngagement.nextPeriodEngagementId} linked` : 'No next-period shell linked' }}</span><button v-if="canActivate && !selectedEngagement.nextPeriodEngagementId" type="button" class="button secondary" :disabled="actionWorking" @click="createShell">Create FY2027 shell</button><StatusPill v-else-if="selectedEngagement.nextPeriodEngagementId" label="Linked shell" tone="good" /><StatusPill v-else label="Partner action required" tone="neutral" /></div></article>
+      <article class="panel"><div class="panel-heading"><div><span class="eyebrow">Commencement control</span><h2>{{ activation?.state === 'ACTIVE' ? 'Engagement active' : 'Activation readiness' }}</h2></div><StatusPill :label="activation?.state || 'PENDING'" :tone="activation?.state === 'ACTIVE' ? 'good' : blockers.length ? 'danger' : 'warn'" /></div><p class="panel-copy">Activation requires a favorable acceptance or continuance decision, signed terms, eligible assignments, a verified workspace, and a ready firm profile. A green gate is evidence—not an automatic command.</p><ul v-if="blockers.length" class="check-list"><li v-for="blocker in blockers.slice(0, 4)" :key="`${blocker.code}-${blocker.message}`"><span class="list-icon danger"><Icon name="lock" :size="14" /></span><span><strong>{{ blocker.code }}</strong><small>{{ blocker.message }}</small></span></li></ul><div v-else class="prototype-note"><Icon name="check-circle" :size="16" /><span>All commencement prerequisites are satisfied for this local reference scope.</span></div><div class="card-footer"><span>Terms: {{ terms?.state || 'Not recorded' }} · revision {{ selectedEngagement.revision }}</span><button v-if="canActivate" type="button" class="button primary" :disabled="sharedEnabled || actionWorking || activation?.state === 'ACTIVE'" @click="activate">{{ actionWorking ? 'Working…' : activation?.state === 'ACTIVE' ? 'Active' : 'Activate engagement' }}</button><StatusPill v-else label="Partner action required" tone="neutral" /></div></article>
+      <article class="panel"><div class="panel-heading"><div><span class="eyebrow">Next-period continuity</span><h2>{{ renewal ? 'Renewal case in progress' : 'Create a fresh shell' }}</h2></div><StatusPill :label="renewal?.state || 'Not started'" :tone="renewal?.state === 'NON_RENEWED' ? 'warn' : renewal ? 'good' : 'neutral'" /></div><p class="panel-copy">Continuance copies prior facts for context, then resets current answers to UNKNOWN. The next-period shell cannot inherit acceptance, terms, or evidence silently.</p><div v-if="renewal" class="detail-list compact-details"><div><dt>Shell</dt><dd>{{ renewal.shellEngagementId }}</dd></div><div><dt>Copied facts</dt><dd>{{ renewal.copiedFacts?.length || 0 }} responses retained as prior context</dd></div><div><dt>Decision</dt><dd>{{ renewal.decision?.decision || 'Pending partner decision' }}</dd></div></div><div class="card-footer"><span>{{ selectedEngagement.nextPeriodEngagementId ? `Shell ${selectedEngagement.nextPeriodEngagementId} linked` : 'No next-period shell linked' }}</span><button v-if="canActivate && !selectedEngagement.nextPeriodEngagementId" type="button" class="button secondary" :disabled="sharedEnabled || actionWorking" @click="createShell">Create FY2027 shell</button><StatusPill v-else-if="selectedEngagement.nextPeriodEngagementId" label="Linked shell" tone="good" /><StatusPill v-else label="Partner action required" tone="neutral" /></div></article>
     </section>
 
     <nav class="sub-tabs" aria-label="Engagement views"><button v-for="tab in tabs" :key="tab" type="button" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button></nav>

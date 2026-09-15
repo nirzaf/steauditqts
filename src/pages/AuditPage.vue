@@ -6,6 +6,11 @@ import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { client, formatMoney, workpapers as templateWorkpapers, workflowGuides } from '../data'
 import { activeActor, actorById, auditChainSummary, auditFindingFor, auditPopulationFor, auditSampleFor, createWorkpaperDraft, recordAlternativeWork, recordFindingDisposition, recordMaterialitySelection, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, submitWorkpaper } from '../domain/scenario.js'
+import { loadDemoSession } from '../auth.js'
+import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
+import { useDemoContext } from '../demoContext.js'
+import { evaluateAccountingInput, idempotencyKey } from '../sharedDemo.js'
+import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 
 const activeTab = ref('Planning')
 const selectedRiskId = ref('RISK-AR-019')
@@ -15,6 +20,34 @@ const toast = ref('')
 const workpaperDraftOpen = ref(false)
 const workpaperDraft = ref({ title: '', procedureId: '', reviewerActorId: 'ACT-OMAR', detail: '' })
 const workpaperDraftWorking = ref(false)
+// Phase C — accounting → audit invalidation. When the shared input
+// generation advances, audit evaluates it back before release.
+const {
+  activeEngagementId: sharedEngagementId,
+  accountingStatus: sharedAcctStatus,
+  refresh: refreshSharedContext,
+} = useDemoContext()
+const sharedNotice = ref('')
+const sharedBusy = ref(false)
+const auditGenerations = computed(() => {
+  const status = sharedAcctStatus.value
+  if (!sharedDemoEnabled || !status) return null
+  return { input: status.inputGeneration, evaluated: status.auditEvaluatedGeneration, stale: status.inputGeneration !== status.auditEvaluatedGeneration }
+})
+const canEvaluateInput = computed(() => ['audit-senior', 'audit-manager', 'admin'].includes(loadDemoSession()?.role || ''))
+
+async function submitEvaluateInput() {
+  if (sharedBusy.value) return
+  sharedBusy.value = true
+  const result = await evaluateAccountingInput(sharedEngagementId.value, { idempotencyKey: idempotencyKey('evaluate-input') })
+  sharedBusy.value = false
+  sharedNotice.value = result.ok
+    ? (result.duplicate ? 'Input already current — nothing to re-evaluate.' : 'Input g' + result.inputGeneration + ' evaluated. Re-confirm impacted work before release.')
+    : ('Not committed (' + (result.error?.code || 'ERROR') + '): ' + (result.error?.message || ''))
+  if (result.ok) refreshSharedContext()
+  window.setTimeout(() => { sharedNotice.value = '' }, 6000)
+}
+
 const selectedEngagement = computed(() => scenarioEngagement())
 const selectedClient = computed(() => scenarioClient())
 const liveWorkpapers = computed(() => {
@@ -52,11 +85,19 @@ const testedSampleCount = computed(() => selectedPlanSamples.value.filter((item)
 const canPerformIndependentWork = computed(() => Boolean(activeActor()?.roles?.some((role) => ['independent_reviewer', 'engagement_partner'].includes(role))))
 
 function addWorkpaper() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local workpaper fixtures are read-only in shared mode; use the shared audit workflow above.'
+    return
+  }
   workpaperDraft.value = { title: '', procedureId: selectedRisk.value?.procedureId || '', reviewerActorId: 'ACT-OMAR', detail: '' }
   workpaperDraftOpen.value = true
 }
 
 function saveWorkpaperDraft() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local workpaper fixtures are read-only in shared mode; use the shared audit workflow above.'
+    return
+  }
   if (workpaperDraftWorking.value || !workpaperDraft.value.title.trim()) return
   workpaperDraftWorking.value = true
   const actor = activeActor()
@@ -68,12 +109,20 @@ function saveWorkpaperDraft() {
 }
 
 async function submitSnapshot(workpaper) {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local evidence snapshots are read-only in shared mode; use the shared audit workflow above.'
+    return
+  }
   const result = await submitWorkpaper({ workpaperId: workpaper.id, actorPersonaId: activeActor()?.personaId, expectedRevision: workpaper.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `workpaper-${workpaper.id}-${workpaper.revision}`, content: `${workpaper.id}|${selectedClient.value?.id}|${selectedEngagement.value?.period}|synthetic-snapshot` })
   toast.value = result.outcome === 'COMMITTED' ? `${workpaper.id} submitted as an exact snapshot ${result.data.snapshot.id}. Reviewer sees this snapshot, not a mutable “latest” file.` : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4000)
 }
 
 function recordAlternative() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local evidence fixtures are read-only in shared mode; use the shared audit workflow above.'
+    return
+  }
   const sample = selectedSample.value
   if (!sample) return
   const evidence = selectedRisk.value.id === 'RISK-AR-019' ? 'Independent customer confirmation SNAP-AR-019-AW' : 'Independent inventory count observation SNAP-INV-001-AW'
@@ -84,6 +133,10 @@ function recordAlternative() {
 }
 
 function disposeFinding() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local finding fixtures are read-only in shared mode; use the shared audit workflow above.'
+    return
+  }
   const finding = selectedFinding.value
   if (!finding) return
   const result = recordFindingDisposition({ engagementId: selectedEngagement.value.id, findingId: finding.id, actorPersonaId: activeActor()?.personaId, expectedRevision: finding.revision, idempotencyKey: `finding-${finding.id}-${finding.revision}`, decision: 'ACCEPT_EXCEPTION', rationale: 'Synthetic partner disposition after alternative work is documented.' })
@@ -92,6 +145,10 @@ function disposeFinding() {
 }
 
 function recordMateriality() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local materiality fixtures are read-only in shared mode; use the shared audit workflow above.'
+    return
+  }
   const result = recordMaterialitySelection({ engagementId: selectedEngagement.value.id, actorPersonaId: activeActor()?.personaId, expectedRevision: chain.value.materialityRecord?.revision, idempotencyKey: `materiality-${selectedEngagement.value.id}-${chain.value.materialityRecord?.revision}`, normalizedBenchmark: chain.value.materialityRecord?.normalizedBenchmark, selectedRate: chain.value.materialityRecord?.selectedRate, performanceRate: chain.value.materialityRecord?.performanceRate, trivialRate: chain.value.materialityRecord?.trivialRate, rationale: chain.value.materialityRecord?.rationale })
   toast.value = result.outcome === 'COMMITTED' ? 'Materiality selection recorded as a new revision with computed thresholds.' : `${result.outcome}: ${result.code} — ${result.message}`
   window.setTimeout(() => { toast.value = '' }, 4000)
@@ -103,6 +160,17 @@ function recordMateriality() {
     <PageHeader eyebrow="Audit execution" title="Audit & fieldwork" description="Move from approved materiality and risk responses to populations, selected items, evidence and supported conclusions. The platform records the chain; professionals evaluate it." action-label="Add workpaper" @action="addWorkpaper" />
     <WorkflowGuide :guide="workflowGuides.audit" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+
+    <div v-if="auditGenerations?.stale" class="permission-notice" role="alert">
+      <Icon name="warning" :size="17" />
+      <span><strong>AUDIT INPUT CHANGED</strong> — accounting is at g{{ auditGenerations.input }}, audit evaluated g{{ auditGenerations.evaluated }}. Reviews, draft response, manager recommendation and opinion against the older input are stale. Re-evaluate impacted work before release.</span>
+      <button type="button" class="button secondary" :disabled="!canEvaluateInput || sharedBusy" @click="submitEvaluateInput">{{ sharedBusy ? 'Evaluating…' : 'Evaluate input g' + auditGenerations.input }}</button>
+    </div>
+    <p v-if="sharedNotice" class="guide-status-message" role="status">{{ sharedNotice }}</p>
+
+    <LocalFixtureNotice v-if="sharedDemoEnabled"
+      title="Local audit fixtures are read-only"
+      description="The shared audit workflow and approval center are authoritative in shared mode. Risk, workpaper, sample and materiality panels below remain browser-local reference data." />
 
     <section v-if="workpaperDraftOpen" class="panel workpaper-draft-panel" aria-labelledby="workpaper-draft-title"><div class="panel-heading"><div><span class="eyebrow">Scoped workpaper workspace</span><h2 id="workpaper-draft-title">Open a working-paper draft</h2></div><button type="button" class="icon-button" aria-label="Close workpaper draft" title="Close workpaper draft" @click="workpaperDraftOpen = false"><Icon name="x" :size="17" /></button></div><p class="panel-copy">Create the draft record first, then submit an exact evidence snapshot from Fieldwork. A draft does not clear a review point or imply a conclusion.</p><form class="portal-form" @submit.prevent="saveWorkpaperDraft"><div class="form-grid"><label>Workpaper title<input v-model="workpaperDraft.title" required maxlength="140" placeholder="e.g. Payroll completeness testing" /></label><label>Procedure ID<input v-model="workpaperDraft.procedureId" maxlength="60" placeholder="PROC-PAY-01" /></label><label>Reviewer<select v-model="workpaperDraft.reviewerActorId"><option value="ACT-OMAR">Omar Aziz · manager</option><option value="ACT-FATIMA">Fatima Saleh · independent reviewer</option></select></label><label class="form-span-2">Evidence plan<textarea v-model="workpaperDraft.detail" rows="3" maxlength="500" placeholder="Describe the evidence and expected conclusion support"></textarea></label></div><div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />Synthetic draft is scoped to {{ selectedEngagement?.id || 'the selected engagement' }}.</span><button type="submit" class="button primary" :disabled="workpaperDraftWorking || !workpaperDraft.title.trim()">{{ workpaperDraftWorking ? 'Saving…' : 'Create draft record' }}<Icon name="arrow-right" :size="17" /></button></div></form></section>
 

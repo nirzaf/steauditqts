@@ -4,8 +4,10 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
+import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 import { client, formatMoney, workflowGuides } from '../data'
 import { activeActor, actorById, createPbcRequest, recordHardCopyReadiness, recordPbcUpload, requestPbcClarification, reviewPbcReceipt, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
+import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 
 const selectedId = ref('PBC-019')
 const toast = ref('')
@@ -37,6 +39,10 @@ const canCreateRequest = computed(() => activeActor()?.roles?.some((role) => ['a
 
 function selectRequest(id) { selectedId.value = id }
 async function markReceived() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    return
+  }
   if (working.value) return
   const request = selectedRequest.value
   if (!selectedClient.value || !selectedEngagement.value || request.id === '—') return
@@ -49,6 +55,10 @@ async function markReceived() {
 }
 
 async function reviewReceipt(decision = 'ACCEPT') {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    return
+  }
   if (working.value) return
   const request = selectedRequest.value
   if (!request?.receipts?.length) {
@@ -64,6 +74,10 @@ async function reviewReceipt(decision = 'ACCEPT') {
 }
 
 function askClarification() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    return
+  }
   if (working.value) return
   const request = selectedRequest.value
   const result = requestPbcClarification({ requestId: request.id, actorPersonaId: activeActor()?.personaId, expectedRevision: request.revision, idempotencyKey: `pbc-clarification-${request.id}-${request.revision}`, message: 'Please confirm the requested entity, FY2026 period, and complete supporting file set.' })
@@ -72,6 +86,10 @@ function askClarification() {
 }
 
 function markHardCopyReady() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    return
+  }
   if (working.value) return
   const request = selectedRequest.value
   const result = recordHardCopyReadiness({ requestId: request.id, actorPersonaId: activeActor()?.personaId, expectedRevision: request.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `hard-copy-${request.id}-${request.revision}`, state: request.hardCopyState === 'READY_FOR_COLLECTION' ? 'RECEIVED_PHYSICAL' : 'READY_FOR_COLLECTION', note: 'Synthetic client declaration from the portal.' })
@@ -80,11 +98,19 @@ function markHardCopyReady() {
 }
 
 function createRequest() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    return
+  }
   requestDraft.value = { title: '', classification: 'AUDIT_EVIDENCE', due: '', ownerActorId: 'ACT-NADIA', acceptanceCriteria: '' }
   requestDraftOpen.value = true
 }
 
 function saveRequestDraft() {
+  if (sharedDemoEnabled) {
+    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    return
+  }
   if (working.value || !requestDraft.value.title.trim()) return
   working.value = true
   const result = createPbcRequest({ engagementId: selectedEngagement.value?.id, actorPersonaId: activeActor()?.personaId, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `pbc-create-${selectedEngagement.value?.id}-${requestDraft.value.title.trim().toLowerCase()}`, ...requestDraft.value })
@@ -99,6 +125,9 @@ function saveRequestDraft() {
   <div class="page">
     <PageHeader eyebrow="Restricted client surface" title="PBC portal" description="Track requests, bounded uploads, clarifications and accepted evidence without exposing internal review notes or unrestricted SharePoint access." :action-label="canCreateRequest ? 'New request' : ''" @action="createRequest" />
     <WorkflowGuide :guide="workflowGuides.pbc" />
+    <LocalFixtureNotice v-if="sharedDemoEnabled"
+      title="Local PBC fixture is read-only"
+      description="Use the shared command surface for authoritative evidence requests, receipts and review decisions. This PBC page remains a browser-local reference while shared mode is active." />
 
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 

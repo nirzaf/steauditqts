@@ -19,6 +19,7 @@ import {
   isSharedDemoEnabled,
 } from '../sharedDemo.js'
 import { useSharedEngagement } from '../composables/useSharedEngagement.js'
+import { useDemoContext } from '../demoContext.js'
 
 const emit = defineEmits(['navigate'])
 
@@ -42,13 +43,31 @@ const actionDefinitions = [
   { key: 'PUBLISH_DRAFT_FS', label: 'Publish Draft FS', icon: 'file', roles: ['audit-senior', 'audit-manager', 'admin'], help: 'Publishes the exact Draft FS version and creates a management response task.', fields: [['summary', 'Conclusion summary', 'Synthetic Draft FS prepared from the validated source.']] },
   { key: 'RESPOND_DRAFT_FS', label: 'Respond to Draft FS', icon: 'message', roles: ['client-management', 'admin'], help: 'Records management acceptance, rejection or revision against the exact version.', fields: [['decision', 'Decision (ACCEPT / REJECT / REVISION)', 'ACCEPT'], ['version', 'Exact Draft FS version', 'v01'], ['explanation', 'Explanation', 'Synthetic management response to the exact draft version.']] },
   { key: 'COMPLETE_EQR', label: 'Complete EQR', icon: 'shield', roles: ['eqr', 'admin'], help: 'Records the independent quality review that gates release.', fields: [['decision', 'Decision (APPROVE / RETURN / HOLD)', 'APPROVE'], ['candidateId', 'Candidate version', 'v01'], ['note', 'Note', 'Synthetic EQR review completed against the release candidate.']] },
+  { key: 'RECORD_ASSESSMENT_RESPONSE', label: 'Record assessment response', icon: 'users', roles: ['client', 'client-management', 'preparer', 'audit-senior', 'audit-manager', 'partner', 'compliance', 'admin'], help: 'Records one shared evaluation answer against the canonical bank; holds recompute immediately.', fields: [['questionId', 'Question ID (e.g. CE-011)', 'CE-011'], ['answer', 'Answer (YES / NO)', 'YES'], ['applicability', 'Applicability', 'APPLICABLE'], ['explanation', 'Explanation / evidence', 'UBO declaration verified against registry.']] },
+  { key: 'UPDATE_ACCOUNTING_STATUS', label: 'Update accounting tracker', icon: 'calculator', roles: ['accountant', 'accounting-reviewer', 'preparer', 'admin'], help: 'Updates reconciliations, journals and the FS package on the shared tracker.', fields: [['recon_state', 'Recon state', 'IN_PROGRESS'], ['open_recon_count', 'Open recons', '1'], ['journal_state', 'Journal state', 'PENDING'], ['pending_journal_count', 'Pending journals', '1'], ['fs_version', 'FS version', 'FS-v04'], ['fs_state', 'FS state', 'IN_REVIEW']] },
+  { key: 'APPROVE_ACCOUNTING_FS', label: 'Approve accounting package', icon: 'check-circle', roles: ['client-management', 'admin'], help: 'Records management approval of the shared accounting FS package.', fields: [['decision', 'Decision (ACCEPT / REJECT)', 'ACCEPT'], ['explanation', 'Explanation', 'Package agreed for audit handoff.']] },
+  { key: 'EVALUATE_ACCOUNTING_INPUT', label: 'Evaluate accounting input', icon: 'refresh', roles: ['audit-senior', 'audit-manager', 'admin'], help: 'Marks the current accounting input generation evaluated by audit.', fields: [] },
+  { key: 'RECORD_MANAGER_COMPLETION', label: 'Recommend completion', icon: 'check-circle', roles: ['audit-manager', 'admin'], help: 'Records the manager completion recommendation with the evaluated input generation.', fields: [['decision', 'Decision (RECOMMEND_COMPLETE / RETURN_TO_TEAM / HOLD)', 'RECOMMEND_COMPLETE'], ['rationale', 'Rationale', 'File reviewed; workpapers submitted and points cleared.']] },
+  { key: 'RECORD_PARTNER_REVIEW', label: 'Partner completion review', icon: 'shield', roles: ['partner', 'admin'], help: 'Records partner approval of the file for opinion.', fields: [['decision', 'Decision (APPROVE_FOR_OPINION / RETURN_TO_MANAGER / HOLD)', 'APPROVE_FOR_OPINION'], ['rationale', 'Rationale', 'Completion recommendation reviewed against the current input.']] },
+  { key: 'SUBMIT_AUDIT_FILE', label: 'Submit audit file', icon: 'upload', roles: ['audit-senior', 'preparer'], help: 'Submits the current file manifest and routes it to the Manager review queue.', fields: [['fileId', 'File / manifest ID (optional)', 'AUDIT-FILE-0018'], ['procedureTitle', 'Submission title', 'FY2026 audit file manifest'], ['evidenceReference', 'Evidence reference', 'WP-EVIDENCE-SIM-0018'], ['conclusion', 'Conclusion', 'Submitted for manager review against the current generation.']] },
+  { key: 'RECOMMEND_COMPLETION', label: 'Recommend completion', icon: 'check-circle', roles: ['audit-manager'], help: 'Hands the submitted file to the Partner with an explicit recommendation.', fields: [['rationale', 'Rationale', 'File reviewed; submitted work and review points are current.']] },
+  { key: 'RETURN_TO_TEAM', label: 'Return file to team', icon: 'undo', roles: ['audit-manager'], help: 'Creates a correction loop and records why the current file cannot proceed.', fields: [['rationale', 'Correction reason', 'Add the missing evidence reference and resubmit the affected workpaper.']] },
+  { key: 'REVIEW_PARTNER_COMPLETION', label: 'Review partner completion', icon: 'shield', roles: ['partner'], help: 'Approves the manager handoff for opinion formation.', fields: [['rationale', 'Rationale', 'Manager completion reviewed against the current candidate.']] },
+  { key: 'RETURN_TO_MANAGER', label: 'Return to manager', icon: 'undo', roles: ['partner'], help: 'Returns the manager handoff with a durable correction reason.', fields: [['rationale', 'Correction reason', 'Please address the open completion item and resubmit.']] },
+  { key: 'RECORD_FINAL_DISCUSSION', label: 'Record final discussion', icon: 'message', roles: ['partner', 'admin'], help: 'Records the final client discussion after the opinion.', fields: [['date', 'Date', '2026-09-20'], ['attendees', 'Attendees', 'Maya Rahman, Nadia Faris'], ['topics', 'Topics', 'Opinion, adjustments, subsequent events'], ['outcome', 'Outcome', 'No outstanding matters.']] },
   { key: 'RECORD_AUDIT_OPINION', label: 'Record audit opinion', icon: 'shield', roles: ['partner', 'admin'], help: 'Binds the Partner opinion to the latest published Draft FS.', fields: [['opinionType', 'Opinion (UNMODIFIED / QUALIFIED / ADVERSE / DISCLAIMER)', 'UNMODIFIED'], ['candidateVersion', 'Candidate version', 'v01'], ['rationale', 'Rationale', 'Synthetic opinion based on completed procedures and review evidence.']] },
   { key: 'RELEASE_FINAL_REPORT', label: 'Release final report', icon: 'lock', roles: ['partner', 'admin'], help: 'Publishes the final report and FS pair and queues the Finance invoice task.', fields: [['rationale', 'Release rationale', 'Synthetic release after completion and required EQR approval.']] },
+  { key: 'VERIFY_RELEASE_CHECKPOINT', label: 'Verify release checkpoint', icon: 'shield', roles: ['records'], help: 'Verifies the exact final report and FS pair before delivery/archive.', fields: [['releaseId', 'Release decision ID', 'RELEASE-ID'], ['note', 'Checkpoint note', 'Final report and financial statements pair reconciled to the release event.']] },
+  { key: 'DELIVER_FINAL_REPORT', label: 'Deliver final report', icon: 'send', roles: ['partner'], help: 'Makes the exact checkpointed report and financial statements visible to the client and records the delivery event.', fields: [['releaseId', 'Release decision ID', 'RELEASE-ID'], ['note', 'Delivery note', 'Delivered the checkpointed final report and financial statements to the client portal.']] },
+  { key: 'ASSEMBLE_ARCHIVE', label: 'Assemble archive', icon: 'archive', roles: ['records'], help: 'Assembles the protected manifest after delivery; this does not close Finance.', fields: [['releaseId', 'Release decision ID', 'RELEASE-ID'], ['checkpointId', 'Checkpoint ID (optional)', 'CHECKPOINT-ID'], ['note', 'Archive note', 'Archive manifest assembled from the delivered release checkpoint.']] },
   { key: 'CREATE_INVOICE', label: 'Generate final invoice', icon: 'calculator', roles: ['finance', 'admin'], help: 'Stores actual hours/cost and queues simulated email, WhatsApp and portal notifications.', fields: [['actualHours', 'Actual hours', '156'], ['actualCost', 'Actual cost (QAR)', '28700.00']] },
   { key: 'CLOSE_ENGAGEMENT', label: 'Close commercial record', icon: 'archive', roles: ['finance', 'admin'], help: 'Closes the commercial record only after the invoice exists; archive completion alone is not enough.', fields: [] },
 ]
 
-const engagementId = SHARED_ENGAGEMENT_ID
+// Phase C — the Control Room follows the global demo context like every
+// other page; it stays the presenter/QA command surface.
+const { activeEngagementId: demoActiveEngagementId, allowedActions: sharedAllowedActions } = useDemoContext()
+const engagementId = computed(() => demoActiveEngagementId.value || SHARED_ENGAGEMENT_ID)
 const sharedEnabled = isSharedDemoEnabled
 const currentUser = ref(loadDemoSession())
 const serverSession = ref(null)
@@ -61,8 +80,18 @@ const artifacts = ref([])
 const outbox = ref([])
 const pbc = ref({ requests: [], receipts: [] })
 
-const { engagement, tasks, events, generationChanged, loading, error, lastSync, runAction, refresh } = useSharedEngagement(() => engagementId, { assignee: '' })
-const availableActions = computed(() => actionDefinitions.filter((item) => item.roles.includes(currentUser.value?.role) || currentUser.value?.role === 'admin'))
+const { engagement, tasks, events, generationChanged, loading, error, lastSync, runAction, refresh } = useSharedEngagement(() => engagementId.value, { assignee: '' })
+const availableActions = computed(() => {
+  // In shared mode the Worker owns the action allow-list.  The local role
+  // labels are only a compatibility fallback while an older Worker is being
+  // upgraded; an empty server list is intentionally treated as read-only,
+  // never as permission to expose every presenter action.
+  if (sharedEnabled) {
+    const keys = Array.isArray(sharedAllowedActions.value) ? sharedAllowedActions.value : []
+    return actionDefinitions.filter((item) => keys.includes(item.key))
+  }
+  return []
+})
 const activeAction = computed(() => actionDefinitions.find((item) => item.key === selectedAction.value) || availableActions.value[0] || null)
 const isClosed = computed(() => String(engagement.value?.gStatus?.commercialClose || '').toUpperCase() === 'CLOSED')
 const stageLabel = computed(() => {
@@ -84,7 +113,7 @@ function navigate(route) { emit('navigate', route) }
 
 async function refreshExtras() {
   if (!sharedEnabled) return
-  const [artifactResult, outboxResult, pbcResult] = await Promise.all([getSharedArtifacts(engagementId), getSharedOutbox(engagementId), getSharedPbc(engagementId)])
+  const [artifactResult, outboxResult, pbcResult] = await Promise.all([getSharedArtifacts(engagementId.value), getSharedOutbox(engagementId.value), getSharedPbc(engagementId.value)])
   let meResult = await getDemoMe()
   // A first visit can race the App-level session bootstrap. Retry once by
   // minting the same allow-listed persona session; no role is accepted from
@@ -171,7 +200,7 @@ watch(availableActions, (items) => {
     </section>
 
     <section v-if="sharedEnabled" class="shared-demo-lower-grid">
-      <SharedTasks :engagement-id="engagementId" title="Shared task queue · all roles" />
+      <SharedTasks :engagement-id="engagementId" title="Shared task queue · all roles" @navigate="navigate" />
       <SharedTimeline :engagement-id="engagementId" title="Append-only shared timeline" />
       <article class="panel shared-record-panel"><div class="panel-heading"><div><span class="eyebrow">Published record metadata</span><h2>Artifacts</h2></div><StatusPill :label="`${artifacts.length} visible`" tone="neutral" /></div><ul v-if="artifacts.length" class="shared-record-list"><li v-for="artifact in artifacts" :key="artifact.document_id"><span><strong>{{ artifact.title || artifact.document_type }}</strong><small>{{ artifact.document_type }} · {{ artifact.version }} · {{ artifact.visibility }}</small></span><StatusPill :label="artifact.state" tone="good" /></li></ul><p v-else class="guide-empty-state">No shared artifacts yet. Published announcements, Draft FS and final outputs appear here as the workflow advances.</p></article>
       <article class="panel shared-record-panel"><div class="panel-heading"><div><span class="eyebrow">Portal delivery simulation</span><h2>Outbox</h2></div><StatusPill :label="`${outbox.length} queued`" tone="neutral" /></div><ul v-if="outbox.length" class="shared-record-list"><li v-for="message in outbox.slice(0, 8)" :key="message.message_id"><span><strong>{{ message.subject }}</strong><small>{{ message.channel }} · {{ message.recipient }} · {{ message.state }}</small></span><Icon name="send" :size="16" /></li></ul><p v-else class="guide-empty-state">Email, WhatsApp and portal notifications will appear as simulated outbox rows.</p></article>

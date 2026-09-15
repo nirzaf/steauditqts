@@ -1,3 +1,13 @@
+import { deriveProgressFromSnapshot } from './progress.js';
+import { buildPortfolioRows, deriveProcessHealth, rankTasks, resolveScenarioPreset, SCENARIO_PRESETS } from './portfolio.js';
+import { clientEvaluationQuestionIds, clientEvaluationQuestions, QUESTION_BANK_VERSION } from '../src/domain/questionBanks.js';
+import { evaluateAssessment } from '../src/domain/assessments.js';
+import { SHARED_ACTION_SET, validateActionPayload, validateCommandEnvelope } from '../shared/actionContracts.js';
+import { questionPolicyFor, validateQuestionResponse } from '../shared/questionPolicy.js';
+import { buildWorkspaceProjection, isWorkspaceEventPublic } from './application/workspace.js';
+import { actionAllowed, actionDefinition } from './application/actions.js';
+import { CommandInputError, readCommandEnvelope } from './http/commandEnvelope.js';
+
 const DEFAULT_ENGAGEMENT_ID = 'ENG-0018-AUD-2026'
 const MAX_REQUEST_BYTES = 16_000
 const MAX_COMMENT_LENGTH = 1_200
@@ -32,8 +42,8 @@ function baseHeaders(request, correlationId = requestCorrelationId(request)) {
   const origin = originFor(request)
   if (origin) {
     headers['Access-Control-Allow-Origin'] = origin
-    headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, OPTIONS'
-    headers['Access-Control-Allow-Headers'] = 'Content-Type, X-AuditFlow-Request-Id, X-Correlation-Id'
+    headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    headers['Access-Control-Allow-Headers'] = 'Content-Type, X-AuditFlow-Request-Id, X-Correlation-Id, X-AuditFlow-View, X-AuditFlow-Context-Version, X-AuditFlow-Command'
     headers.Vary = 'Origin'
   }
   return headers
@@ -82,7 +92,10 @@ async function readJson(request) {
   const contentLength = Number(request.headers.get('Content-Length') || 0)
   if (contentLength > MAX_REQUEST_BYTES) throw new Error('Request body is too large.')
   const text = await request.text()
-  if (text.length > MAX_REQUEST_BYTES) throw new Error('Request body is too large.')
+  // Content-Length and JS string length count different things for non-ASCII
+  // input. The Worker boundary is capped in UTF-8 bytes so a multi-byte
+  // payload cannot bypass the limit.
+  if (new TextEncoder().encode(text).byteLength > MAX_REQUEST_BYTES) throw new Error('Request body is too large.')
   try {
     const payload = JSON.parse(text || '{}')
     return payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null
@@ -98,6 +111,10 @@ function cleanText(value, maxLength, fallback = '') {
 
 function readBoolean(value) {
   return value === true || String(value ?? '').trim().toLowerCase() === 'true';
+}
+
+function isStrictCommandPayload(payload) {
+  return payload?.__strictCommand === true;
 }
 
 function serializeComment(row) {
@@ -136,6 +153,8 @@ const profileColumns = 'engagement_id, legal_name, registration, contact_name, c
 async function getClientProfile(request, env, url) {
   const engagementId = readEngagementId(url.searchParams.get('engagementId'))
   if (!engagementId) return error(request, 'A valid engagementId is required.')
+  const checked = await requireEngagementScope(request, env, engagementId)
+  if (checked.response) return checked.response
   const profile = await env.DB.prepare(`SELECT ${profileColumns} FROM auditflow_client_profiles WHERE engagement_id = ?1`).bind(engagementId).first()
   return json(request, { ok: true, profile: profile ? serializeProfile(profile) : null })
 }
@@ -145,6 +164,9 @@ async function saveClientProfile(request, env) {
   const payload = await readJson(request)
   if (!payload) return error(request, 'Send a JSON object in the request body.')
   const engagementId = readEngagementId(payload.engagementId)
+  if (!engagementId) return error(request, 'A valid engagementId is required.')
+  const checked = await requireEngagementScope(request, env, engagementId)
+  if (checked.response) return checked.response
   const legalName = cleanText(payload.legalName, 160)
   const registration = cleanText(payload.registration, 80)
   const contactName = cleanText(payload.contactName, 80)
@@ -154,7 +176,7 @@ async function saveClientProfile(request, env) {
   const serviceRequested = cleanText(payload.serviceRequested, 160)
   const context = cleanText(payload.context, MAX_CONTEXT_LENGTH, '') ?? ''
   const submittedBy = cleanText(payload.submittedBy, 80, 'Client contact')
-  if (!engagementId || !legalName || !registration || !contactName || !contactEmail || !phone || !servicePeriod || !serviceRequested || !submittedBy || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail)) {
+  if (!legalName || !registration || !contactName || !contactEmail || !phone || !servicePeriod || !serviceRequested || !submittedBy || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail)) {
     return error(request, 'Complete each required client detail with a valid email address.')
   }
   await env.DB.prepare(
@@ -180,6 +202,8 @@ async function saveClientProfile(request, env) {
 async function listComments(request, env, url) {
   const scope = parseScope(url, true)
   if (!scope) return error(request, 'A valid engagementId and pageKey are required.')
+  const checked = await requireEngagementScope(request, env, scope.engagementId)
+  if (checked.response) return checked.response
   const requestedLimit = Number(url.searchParams.get('limit') || 20)
   const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), MAX_PAGE_SIZE) : 20
   const result = await env.DB.prepare(
@@ -197,10 +221,19 @@ async function createComment(request, env) {
   const payload = await readJson(request)
   if (!payload) return error(request, 'Send a JSON object in the request body.')
   const engagementId = readEngagementId(payload.engagementId)
+  if (!engagementId) return error(request, 'A valid engagementId is required.')
+  const checked = await requireEngagementScope(request, env, engagementId)
+  if (checked.response) return checked.response
   const pageKey = readKey(payload.pageKey)
   const stepKey = readKey(payload.stepKey, pageKey || '')
-  const authorName = cleanText(payload.authorName, 80)
-  const authorRole = cleanText(payload.authorRole, 80, 'Client contact')
+  const requestedAuthorName = cleanText(payload.authorName, 80)
+  const requestedAuthorRole = cleanText(payload.authorRole, 80, 'Client contact')
+  const strictCommand = payload.__strictCommand === true
+  // In the strict command path the effective actor comes from the verified
+  // session/view.  A caller may provide a display hint in legacy/local mode,
+  // but cannot spoof the author of a durable shared comment.
+  const authorName = strictCommand ? checked.session.actorId : requestedAuthorName
+  const authorRole = strictCommand ? (checked.session.roles?.[0] || 'Client contact') : requestedAuthorRole
   const body = cleanText(payload.body, MAX_COMMENT_LENGTH)
   if (!engagementId || !pageKey || !stepKey || !authorName || !authorRole || !body) {
     return error(request, 'Provide a valid step, author name, and comment (maximum 1,200 characters).')
@@ -221,6 +254,8 @@ async function createComment(request, env) {
 async function listStepPreferences(request, env, url) {
   const engagementId = readEngagementId(url.searchParams.get('engagementId'))
   if (!engagementId) return error(request, 'A valid engagementId is required.')
+  const checked = await requireEngagementScope(request, env, engagementId)
+  if (checked.response) return checked.response
   const result = await env.DB.prepare(
     `SELECT engagement_id, step_key, is_optional, updated_by, updated_at
      FROM auditflow_step_preferences
@@ -243,6 +278,9 @@ async function saveStepPreference(request, env) {
   const payload = await readJson(request)
   if (!payload) return error(request, 'Send a JSON object in the request body.')
   const engagementId = readEngagementId(payload.engagementId)
+  if (!engagementId) return error(request, 'A valid engagementId is required.')
+  const checked = await requireEngagementScope(request, env, engagementId)
+  if (checked.response) return checked.response
   const stepKey = readKey(payload.stepKey)
   const updatedBy = cleanText(payload.updatedBy, 80, 'Client contact')
   if (!engagementId || !stepKey || !updatedBy || typeof payload.isOptional !== 'boolean') {
@@ -316,10 +354,13 @@ async function resolveDemoSession(request, env) {
   if (new Date(`${row.expires_at}Z`.replace(/ZZ$/, 'Z')).getTime() < Date.now()) return null;
   const persona = DEMO_PERSONAS[row.persona_id];
   if (!persona) return null;
-  // Keep the session useful for the demo's bounded activity window. This is
-  // deliberately best-effort; a read must not fail only because an activity
-  // timestamp update was unavailable.
-  void env.DB.prepare("UPDATE auditflow_demo_sessions SET last_activity = datetime('now') WHERE session_id = ?1").bind(sessionId).run().catch(() => {});
+  // Keep the session useful for the demo's bounded activity window without
+  // turning every read/poll into a D1 write. Activity is best-effort and a
+  // read must not fail only because this throttle update is unavailable.
+  const lastActivity = row.last_activity ? new Date(`${row.last_activity}Z`.replace(/ZZ$/, 'Z')).getTime() : 0;
+  if (!Number.isFinite(lastActivity) || Date.now() - lastActivity > 60_000) {
+    void env.DB.prepare("UPDATE auditflow_demo_sessions SET last_activity = datetime('now') WHERE session_id = ?1").bind(sessionId).run().catch(() => {});
+  }
   return { sessionId: row.session_id, personaId: row.persona_id, actorId: row.actor_id, roles: persona.roles };
 }
 
@@ -353,6 +394,15 @@ function serializeTask(row) {
     linkedObjectId: row.linked_object_id,
     createdAt: row.created_at,
     completedAt: row.completed_at,
+    priority: row.priority || 'NORMAL',
+    blockerCode: row.blocker_code || '',
+    route: row.route || '',
+    target: row.target || '',
+    stage: row.stage || '',
+    creator: row.creator || '',
+    slaDueAt: row.sla_due_at || row.due_date || '',
+    escalationState: row.escalation_state || 'NONE',
+    updatedAt: row.updated_at || row.created_at || '',
   };
 }
 
@@ -378,21 +428,41 @@ async function createDemoSession(request, env) {
   const personaId = String(payload.personaId || '').trim();
   const persona = DEMO_PERSONAS[personaId];
   if (!persona) return error(request, 'Choose one of the demo personas.', 400, 'UNKNOWN_PERSONA');
-  const sessionId = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '').slice(0, 8);
-  await env.DB.prepare(
-    `INSERT INTO auditflow_demo_sessions (session_id, persona_id, actor_id, expires_at)
-     VALUES (?1, ?2, ?3, datetime('now', '+1 day'))`,
-  ).bind(sessionId, personaId, persona.actorId).run();
+  // Keep the viewer's parent session stable across tabs. A login/persona
+  // change rotates the effective actor in the new view, while existing views
+  // remain bound to their own persona and cannot be changed by that tab.
+  const existing = await resolveDemoSession(request, env);
+  const sessionId = existing?.sessionId || (crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '').slice(0, 8));
+  if (existing) {
+    await env.DB.prepare(
+      `UPDATE auditflow_demo_sessions SET persona_id = ?1, actor_id = ?2, expires_at = datetime('now', '+1 day'), last_activity = datetime('now') WHERE session_id = ?3`,
+    ).bind(personaId, persona.actorId, sessionId).run();
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO auditflow_demo_sessions (session_id, persona_id, actor_id, expires_at)
+       VALUES (?1, ?2, ?3, datetime('now', '+1 day'))`,
+    ).bind(sessionId, personaId, persona.actorId).run();
+  }
   const correlationId = requestCorrelationId(request);
   const headers = baseHeaders(request, correlationId);
   headers['Set-Cookie'] = sessionCookie(sessionId);
-  return Response.json({ ok: true, session: { personaId, actorId: persona.actorId, roles: persona.roles }, evidenceLevel: 'SIMULATION' }, { status: 201, headers });
+  let view = null;
+  try {
+    const descriptor = await ensureDemoRunAndView(env, { sessionId, personaId, actorId: persona.actorId, roles: persona.roles }, { personaId, engagementId: DEFAULT_ENGAGEMENT_ID, reuse: false });
+    if (descriptor) view = serializeView(descriptor.row, { sessionId, personaId, actorId: persona.actorId, roles: persona.roles }, descriptor.contexts);
+  } catch { /* M7 view migration can be applied independently of legacy login. */ }
+  return Response.json({ ok: true, session: { personaId, actorId: persona.actorId, roles: persona.roles }, view, evidenceLevel: 'SIMULATION' }, { status: 201, headers });
 }
 
 async function getDemoMe(request, env) {
   const session = await resolveDemoSession(request, env);
   if (!session) return error(request, 'No active shared demo session. Choose a persona first.', 401, 'SESSION_REQUIRED');
-  return json(request, { ok: true, session, evidenceLevel: 'SIMULATION' });
+  // Never expose the HttpOnly session identifier; it is only an internal
+  // parent for tab-scoped demo views and command receipts.
+  const viewId = readViewId(request);
+  const view = viewId ? await readDemoView(env, session, viewId) : null;
+  const effective = view ? effectiveSessionForView(view, session) : session;
+  return json(request, { ok: true, session: { personaId: effective.personaId, actorId: effective.actorId, roles: effective.roles }, view: view ? serializeView(view, effective, await listAuthorizedContexts(env, effective)) : null, evidenceLevel: 'SIMULATION' });
 }
 
 async function getEngagement(request, env, engagementId) {
@@ -412,6 +482,8 @@ async function getEngagementTasks(request, env, engagementId, url) {
   if (checked.response) return checked.response;
   const id = readEngagementId(engagementId);
   if (!id) return error(request, 'A valid engagement id is required.');
+  const effective = checked.session;
+  const staffWide = effective.roles?.some((role) => ['system_admin', 'engagement_partner', 'audit_manager'].includes(role));
   const assignee = String(url.searchParams.get('assignee') || '').trim();
   const requestedLimit = Number(url.searchParams.get('limit') || 50);
   const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), MAX_PAGE_SIZE) : 50;
@@ -422,7 +494,10 @@ async function getEngagementTasks(request, env, engagementId, url) {
     : await env.DB.prepare(
       'SELECT * FROM auditflow_tasks WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT ?2',
     ).bind(id, limit).all();
-  return json(request, { ok: true, tasks: (result.results || []).map(serializeTask), evidenceLevel: 'SIMULATION' });
+  const visible = staffWide
+    ? (result.results || [])
+    : (result.results || []).filter((task) => task.assignee_persona === effective.actorId || effective.roles?.includes(task.assignee_role));
+  return json(request, { ok: true, tasks: rankTasks(visible.map(serializeTask)), evidenceLevel: 'SIMULATION' });
 }
 
 async function getEngagementTimeline(request, env, engagementId, url) {
@@ -435,13 +510,15 @@ async function getEngagementTimeline(request, env, engagementId, url) {
   const result = await env.DB.prepare(
     'SELECT * FROM auditflow_events WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT ?2',
   ).bind(id, limit).all();
-  return json(request, { ok: true, events: (result.results || []).map(serializeEvent), evidenceLevel: 'SIMULATION' });
+  const includeInternal = checked.session.roles?.some((role) => ['system_admin', 'engagement_partner', 'audit_manager'].includes(role));
+  const visible = includeInternal ? (result.results || []) : (result.results || []).filter(isWorkspaceEventPublic);
+  return json(request, { ok: true, events: visible.map(serializeEvent), evidenceLevel: 'SIMULATION' });
 }
 
 async function listArtifacts(request, env, url) {
-  const checked = await requireDemoSession(request, env);
-  if (checked.response) return checked.response;
   const engagementId = readEngagementId(url.searchParams.get('engagementId'));
+  const checked = await requireEngagementScope(request, env, engagementId);
+  if (checked.response) return checked.response;
   if (!engagementId) return error(request, 'A valid engagementId is required.');
   if (!(ACTOR_ASSIGNMENTS[checked.session.actorId] || []).includes(engagementId)) return error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
   const result = await env.DB.prepare(
@@ -457,15 +534,19 @@ async function listArtifacts(request, env, url) {
 }
 
 async function listOutbox(request, env, url) {
-  const checked = await requireDemoSession(request, env);
-  if (checked.response) return checked.response;
   const engagementId = readEngagementId(url.searchParams.get('engagementId'));
+  const checked = await requireEngagementScope(request, env, engagementId);
+  if (checked.response) return checked.response;
   if (!engagementId) return error(request, 'A valid engagementId is required.');
   if (!(ACTOR_ASSIGNMENTS[checked.session.actorId] || []).includes(engagementId)) return error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
   const result = await env.DB.prepare(
     'SELECT * FROM auditflow_outbox WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT 100',
   ).bind(engagementId).all();
-  return json(request, { ok: true, messages: result.results || [], evidenceLevel: 'SIMULATION' });
+  const rows = result.results || [];
+  const messages = isClientOnlySession(checked.session)
+    ? rows.filter((row) => row.recipient === 'client' || row.channel === 'PORTAL_NOTIFICATION' || row.client_visible === 1)
+    : rows;
+  return json(request, { ok: true, messages, evidenceLevel: 'SIMULATION' });
 }
 
 const ACTOR_ASSIGNMENTS = {
@@ -486,6 +567,310 @@ const ACTOR_ASSIGNMENTS = {
   'ACT-RECORDS': ['ENG-0018-AUD-2026', 'ENG-0009-ACC-2026'],
 };
 
+// Phase A — unified demo navigation directory. Client and service labels are
+// presentation-only; authorization always comes from ACTOR_ASSIGNMENTS plus
+// the live engagement_state rows. Never return an engagement the session
+// actor is not assigned to.
+const DEMO_CLIENT_DIRECTORY = {
+  'CLI-0018': { name: 'Northstar Trading W.L.L.', shortName: 'Northstar Trading' },
+  'CLI-0009': { name: 'Cedar & Coast Logistics', shortName: 'Cedar & Coast' },
+};
+
+const DEMO_SERVICE_LABELS = {
+  AUDIT: 'Financial Statement Audit',
+  ACCOUNTING: 'Accounting',
+  ACC: 'Accounting',
+};
+
+function serializeDemoContext(row) {
+  const client = DEMO_CLIENT_DIRECTORY[row.client_id] || { name: row.client_id, shortName: row.client_id };
+  const service = String(row.service || '').toUpperCase();
+  return {
+    engagementId: row.engagement_id,
+    clientId: row.client_id,
+    clientName: client.name,
+    clientShortName: client.shortName,
+    service,
+    serviceLabel: DEMO_SERVICE_LABELS[service] || row.service || service,
+    period: row.period,
+    currentStage: row.current_stage,
+    revision: row.revision,
+    generationId: row.generation_id,
+    updatedAt: row.updated_at,
+  };
+}
+
+const WORKER_TO_ROUTE_ROLE = Object.freeze({
+  system_admin: 'admin',
+  engagement_partner: 'partner',
+  signatory: 'partner',
+  client_contributor: 'client',
+  client_finance: 'client',
+  management_approver: 'client-management',
+  audit_senior: 'audit-senior',
+  audit_manager: 'audit-manager',
+  preparer: 'preparer',
+  independent_reviewer: 'audit-manager',
+  accounting_reviewer: 'accounting-reviewer',
+  finance_team: 'finance',
+  eqr_reviewer: 'eqr',
+  compliance_reviewer: 'compliance',
+  records_custodian: 'records',
+});
+
+function frontendRolesForSession(session) {
+  const roles = new Set((session?.roles || []).map((role) => WORKER_TO_ROUTE_ROLE[role]).filter(Boolean));
+  return [...roles];
+}
+
+function routeKeysForSession(session, service = '') {
+  const roles = frontendRolesForSession(session);
+  const keys = new Set(['role-workspace', 'pipeline', 'artifacts']);
+  const add = (key, allowedRoles) => { if (allowedRoles.some((role) => roles.includes(role))) keys.add(key); };
+  add('clients', ['admin', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'compliance']);
+  add('engagements', ['admin', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'finance']);
+  add('pbc', ['admin', 'audit-senior', 'audit-manager', 'accountant', 'accounting-reviewer', 'preparer']);
+  add('accounting', ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'client-management']);
+  add('audit', ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'audit-senior', 'audit-manager', 'partner']);
+  add('reviews', ['admin', 'audit-manager', 'partner', 'accounting-reviewer', 'eqr']);
+  add('release', ['admin', 'partner', 'eqr', 'records', 'finance', 'compliance']);
+  add('integration', ['admin', 'system-admin', 'records']);
+  add('architecture', ['admin', 'audit-senior', 'audit-manager', 'partner', 'finance', 'eqr', 'records', 'system-admin', 'compliance']);
+  add('blueprint', ['admin', 'finance']);
+  add('cycle', ['admin']);
+  add('shared-demo', ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'client', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'finance', 'eqr', 'records', 'system-admin', 'compliance']);
+  add('portfolio', ['admin', 'audit-manager', 'partner']);
+  add('admin-console', ['admin', 'system-admin']);
+  if (roles.includes('client') || roles.includes('client-management')) {
+    keys.add('client-home'); keys.add('client-details'); keys.add('client-communications'); keys.add('client-architecture');
+  }
+  if (roles.includes('accountant') || roles.includes('accounting-reviewer') || roles.includes('preparer')) {
+    keys.add('accountant-home'); keys.add('accountant-client'); keys.add('accountant-architecture');
+  }
+  // Keep accounting-only users inside their service boundary; the linked audit
+  // route is granted only when the assignment itself includes that audit.
+  if (String(service).toUpperCase() === 'ACCOUNTING') keys.delete('release');
+  return [...keys];
+}
+
+function serializeView(row, session, contexts = []) {
+  if (!row) return null;
+  const context = contexts.find((item) => item.engagementId === row.engagement_id) || null;
+  const roleIds = frontendRolesForSession({ roles: DEMO_PERSONAS[row.persona_id]?.roles || session?.roles || [] });
+  const allowedRouteKeys = routeKeysForSession({ roles: DEMO_PERSONAS[row.persona_id]?.roles || session?.roles || [] }, context?.service);
+  return {
+    viewId: row.view_id,
+    personaId: row.persona_id,
+    actorId: row.actor_id,
+    roles: roleIds,
+    engagementId: row.engagement_id,
+    generationId: row.generation_id,
+    revision: Number(context?.revision || 0),
+    contextVersion: Number(row.context_version || 1),
+    state: row.state,
+    contexts,
+    allowedRouteKeys,
+    switchOptions: contexts.map((item) => ({
+      key: `${row.persona_id}|${item.engagementId}`,
+      personaId: row.persona_id,
+      engagementId: item.engagementId,
+      label: `${item.clientShortName || item.clientName} · ${item.serviceLabel} · ${item.period}`,
+    })),
+    scope: context ? { clientId: context.clientId, clientName: context.clientName, service: context.service, period: context.period } : null,
+  };
+}
+
+async function listAuthorizedContexts(env, session) {
+  const allowed = ACTOR_ASSIGNMENTS[session?.actorId] || [];
+  if (!allowed.length) return [];
+  const placeholders = allowed.map((_, index) => `?${index + 1}`).join(', ');
+  const result = await env.DB.prepare(
+    `SELECT engagement_id, client_id, service, period, revision, current_stage, generation_id, updated_at FROM auditflow_engagement_state WHERE engagement_id IN (${placeholders}) ORDER BY engagement_id`,
+  ).bind(...allowed).all();
+  return (result.results || [])
+    .filter((row) => row && allowed.includes(row.engagement_id))
+    .map((row) => {
+      const context = serializeDemoContext(row);
+      return {
+        ...context,
+        allowedRouteKeys: routeKeysForSession(session, context.service),
+        linkedEngagementId: context.service === 'ACCOUNTING' ? (context.clientId === 'CLI-0018' ? 'ENG-0018-AUD-2026' : null) : null,
+      };
+    });
+}
+
+async function getDemoContexts(request, env) {
+  const checked = await requireDemoSession(request, env);
+  if (checked.response) return checked.response;
+  const viewId = readViewId(request);
+  const view = viewId ? await readDemoView(env, checked.session, viewId) : null;
+  const effective = view ? effectiveSessionForView(view, checked.session) : checked.session;
+  const contexts = await listAuthorizedContexts(env, effective);
+  return json(request, { ok: true, contexts, evidenceLevel: 'SIMULATION' });
+}
+
+function readViewId(request) {
+  const value = String(request.headers.get('X-AuditFlow-View') || '').trim();
+  return /^[A-Za-z0-9_-]{8,120}$/.test(value) ? value : null;
+}
+
+async function readDemoView(env, session, viewId = '') {
+  if (!env.DB || !session || !viewId) return null;
+  try {
+    const row = await env.DB.prepare(
+      `SELECT view_id, parent_session_id, run_id, persona_id, actor_id, engagement_id,
+        generation_id, context_version, state, created_at, updated_at, expires_at
+       FROM auditflow_demo_views WHERE view_id = ?1 AND parent_session_id = ?2 AND state = 'ACTIVE'`,
+    ).bind(viewId, session.sessionId).first();
+    if (!row) return null;
+    const expiresAt = row.expires_at ? new Date(`${row.expires_at}Z`.replace(/ZZ$/, 'Z')).getTime() : 0;
+    if (Number.isFinite(expiresAt) && expiresAt < Date.now()) return null;
+    return row;
+  } catch {
+    // M7 tables are additive. A Worker deployed before the migration keeps
+    // the legacy session path instead of leaking an internal error.
+    return null;
+  }
+}
+
+function canRolePlayPersona(session, personaId) {
+  if (!DEMO_PERSONAS[personaId]) return false;
+  if (session?.personaId === personaId) return true;
+  return hasAnyRole(session, ['system_admin', 'engagement_partner']);
+}
+
+async function ensureDemoRunAndView(env, session, { personaId = session?.personaId, engagementId = '', reuse = true } = {}) {
+  if (!session?.sessionId || !env.DB) return null;
+  const chosenPersona = String(personaId || session.personaId || '').trim();
+  if (!canRolePlayPersona(session, chosenPersona)) throw new Error('The viewer is not permitted to role-play that persona.');
+  const persona = DEMO_PERSONAS[chosenPersona];
+  // Resolve the selectable scope as the effective actor, not as the viewer.
+  // A presenter may be allowed to role-play a persona with a narrower
+  // assignment set; exposing the viewer's broader contexts would leak that
+  // scope into the tab UI.
+  const effectiveCandidate = { ...session, personaId: chosenPersona, actorId: persona.actorId, roles: persona.roles };
+  const contexts = await listAuthorizedContexts(env, effectiveCandidate);
+  const personaAssignments = ACTOR_ASSIGNMENTS[persona.actorId] || [];
+  const selected = contexts.find((context) => context.engagementId === engagementId && personaAssignments.includes(context.engagementId))
+    || contexts.find((context) => personaAssignments.includes(context.engagementId))
+    || contexts[0];
+  if (!selected) throw new Error('No authorized engagement is available for this demo view.');
+  const runId = `run-${session.sessionId.slice(0, 24)}`;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO auditflow_demo_runs (run_id, name, generation_id, state, host_session_id)
+       VALUES (?1, 'Workshop demo', ?2, 'ACTIVE', ?3)
+       ON CONFLICT (run_id) DO UPDATE SET generation_id = excluded.generation_id, updated_at = datetime('now')`,
+    ).bind(runId, selected.generationId, session.sessionId).run();
+    const existing = await env.DB.prepare(
+      `SELECT view_id, parent_session_id, run_id, persona_id, actor_id, engagement_id,
+        generation_id, context_version, state, created_at, updated_at, expires_at
+       FROM auditflow_demo_views WHERE view_id = (SELECT view_id FROM auditflow_demo_views
+        WHERE parent_session_id = ?1 AND state = 'ACTIVE' ORDER BY updated_at DESC LIMIT 1)`,
+    ).bind(session.sessionId).first();
+    if (reuse && existing && existing.persona_id === chosenPersona && existing.engagement_id === selected.engagementId && existing.generation_id === selected.generationId) {
+      return { row: existing, contexts };
+    }
+    // A view switch owns only the requested tab. New tab bootstraps retain
+    // sibling views under the same viewer session, so switching one cannot
+    // silently change another tab's effective actor.
+    if (existing && reuse) {
+      await env.DB.prepare("UPDATE auditflow_demo_views SET state = 'CLOSED', updated_at = datetime('now') WHERE view_id = ?1 AND parent_session_id = ?2").bind(existing.view_id, session.sessionId).run();
+    }
+    const viewId = `view-${crypto.randomUUID().replaceAll('-', '')}`;
+    await env.DB.prepare(
+      `INSERT INTO auditflow_demo_views
+        (view_id, parent_session_id, run_id, persona_id, actor_id, engagement_id, generation_id, context_version, state, expires_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 'ACTIVE', datetime('now', '+1 day'))`,
+    ).bind(viewId, session.sessionId, runId, chosenPersona, persona.actorId, selected.engagementId, selected.generationId).run();
+    const row = await env.DB.prepare(
+      `SELECT view_id, parent_session_id, run_id, persona_id, actor_id, engagement_id,
+        generation_id, context_version, state, created_at, updated_at, expires_at
+       FROM auditflow_demo_views WHERE view_id = ?1 AND parent_session_id = ?2`,
+    ).bind(viewId, session.sessionId).first();
+    return { row: row || { view_id: viewId, parent_session_id: session.sessionId, run_id: runId, persona_id: chosenPersona, actor_id: persona.actorId, engagement_id: selected.engagementId, generation_id: selected.generationId, context_version: 1, state: 'ACTIVE' }, contexts };
+  } catch {
+    return null;
+  }
+}
+
+async function createDemoView(request, env) {
+  const checked = await requireDemoSession(request, env);
+  if (checked.response) return checked.response;
+  const payload = await readJson(request);
+  if (!payload) return error(request, 'Send a JSON object in the request body.');
+  const view = await ensureDemoRunAndView(env, checked.session, { personaId: payload.personaId, engagementId: readEngagementId(payload.engagementId) || '', reuse: false });
+  if (!view) return error(request, 'Workspace views are not available until the M7 migration is applied.', 503, 'VIEW_STORAGE_UNAVAILABLE');
+  const descriptor = serializeView(view.row, checked.session, view.contexts);
+  return json(request, { ok: true, view: descriptor, evidenceLevel: 'SIMULATION' }, 201);
+}
+
+async function getDemoView(request, env, viewId) {
+  const checked = await requireDemoSession(request, env);
+  if (checked.response) return checked.response;
+  const row = await readDemoView(env, checked.session, viewId);
+  if (!row) return error(request, 'The requested workspace view is not active for this session.', 404, 'VIEW_NOT_FOUND');
+  const effective = effectiveSessionForView(row, checked.session);
+  const contexts = await listAuthorizedContexts(env, effective);
+  return json(request, { ok: true, view: serializeView(row, effective, contexts), evidenceLevel: 'SIMULATION' });
+}
+
+async function updateDemoView(request, env, viewId) {
+  const checked = await requireDemoSession(request, env);
+  if (checked.response) return checked.response;
+  const row = await readDemoView(env, checked.session, viewId);
+  if (!row) return error(request, 'The requested workspace view is not active for this session.', 404, 'VIEW_NOT_FOUND');
+  const payload = await readJson(request);
+  if (!payload) return error(request, 'Send a JSON object in the request body.');
+  if (payload.expectedContextVersion != null && Number(payload.expectedContextVersion) !== Number(row.context_version)) return error(request, 'The workspace view changed. Re-read it before switching.', 409, 'CONTEXT_VERSION_CONFLICT');
+  const personaId = String(payload.personaId || row.persona_id).trim();
+  if (!canRolePlayPersona(checked.session, personaId)) return error(request, 'The viewer is not permitted to role-play that persona.', 403, 'PERSONA_SWITCH_DENIED');
+  const persona = DEMO_PERSONAS[personaId];
+  const effectiveCandidate = { ...checked.session, personaId, actorId: persona.actorId, roles: persona.roles };
+  const contexts = await listAuthorizedContexts(env, effectiveCandidate);
+  const selected = contexts.find((context) => context.engagementId === (readEngagementId(payload.engagementId) || row.engagement_id));
+  if (!selected) return error(request, 'That persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
+  await env.DB.prepare(
+    `UPDATE auditflow_demo_views
+       SET persona_id = ?1, actor_id = ?2, engagement_id = ?3, generation_id = ?4,
+           context_version = context_version + 1, updated_at = datetime('now')
+     WHERE view_id = ?5 AND parent_session_id = ?6 AND state = 'ACTIVE'`,
+  ).bind(personaId, persona.actorId, selected.engagementId, selected.generationId, viewId, checked.session.sessionId).run();
+  const updated = await readDemoView(env, checked.session, viewId);
+  if (!updated) return error(request, 'The workspace view could not be confirmed after switching.', 409, 'VIEW_CONTEXT_INVALID');
+  return json(request, { ok: true, view: serializeView(updated, checked.session, contexts), evidenceLevel: 'SIMULATION' });
+}
+
+async function closeDemoView(request, env, viewId) {
+  const checked = await requireDemoSession(request, env);
+  if (checked.response) return checked.response;
+  const row = await readDemoView(env, checked.session, viewId);
+  if (!row) return error(request, 'The requested workspace view is not active for this session.', 404, 'VIEW_NOT_FOUND');
+  await env.DB.prepare("UPDATE auditflow_demo_views SET state = 'CLOSED', updated_at = datetime('now') WHERE view_id = ?1 AND parent_session_id = ?2").bind(viewId, checked.session.sessionId).run();
+  return json(request, { ok: true, closed: true, evidenceLevel: 'SIMULATION' });
+}
+
+async function listDemoViews(request, env) {
+  const checked = await requireDemoSession(request, env);
+  if (checked.response) return checked.response;
+  try {
+    const result = await env.DB.prepare(
+      `SELECT view_id, parent_session_id, run_id, persona_id, actor_id, engagement_id,
+        generation_id, context_version, state, created_at, updated_at, expires_at
+       FROM auditflow_demo_views WHERE parent_session_id = ?1 AND state = 'ACTIVE' ORDER BY updated_at DESC`,
+    ).bind(checked.session.sessionId).all();
+    const views = [];
+    for (const row of (result.results || [])) {
+      const effective = effectiveSessionForView(row, checked.session);
+      const contexts = await listAuthorizedContexts(env, effective);
+      views.push(serializeView(row, effective, contexts));
+    }
+    return json(request, { ok: true, views, evidenceLevel: 'SIMULATION' });
+  } catch {
+    return json(request, { ok: true, views: [], evidenceLevel: 'SIMULATION' });
+  }
+}
+
 function hasAnyRole(session, roles) {
   return roles.some((role) => session.roles.includes(role));
 }
@@ -495,6 +880,29 @@ async function findEventByIdempotency(env, engagementId, key) {
   return env.DB.prepare(
     'SELECT * FROM auditflow_events WHERE engagement_id = ?1 AND idempotency_key = ?2',
   ).bind(engagementId, key).first();
+}
+
+// A receipt is the authoritative replay record.  The event lookup is only a
+// reconciliation fallback for a very narrow failure window where the command
+// committed its business rows but the receipt write was unavailable.  Keep the
+// actor predicate in the real-D1 query so a key used by another effective actor
+// can never be replayed into this view.  The fallback query keeps old migration
+// fixtures (which pre-date the actor predicate) usable.
+async function findScopedEventByIdempotency(env, engagementId, key, actorId = '') {
+  if (!key || !actorId) return null;
+  try {
+    const scoped = await env.DB.prepare(
+      'SELECT * FROM auditflow_events WHERE engagement_id = ?1 AND idempotency_key = ?2 AND actor = ?3 ORDER BY created_at DESC LIMIT 1',
+    ).bind(engagementId, key, actorId).first();
+    if (scoped) return scoped;
+  } catch { /* old schema/fake DB: use the legacy lookup below */ }
+  try {
+    const legacy = await findEventByIdempotency(env, engagementId, key);
+    // A legacy row without an actor is not safe to reconcile into a strict
+    // command: returning it could expose another viewer's result. Only an
+    // exact actor match is authoritative.
+    return legacy && legacy.actor === actorId ? legacy : null;
+  } catch { return null; }
 }
 
 async function appendEvent(env, { engagementId, actor, action, objectType = '', objectId = '', previousRevision = 0, newRevision = 1, idempotencyKey = '', correlationId = '' }) {
@@ -526,11 +934,74 @@ async function touchEngagement(env, engagementId, stage) {
 }
 
 async function upsertTask(env, task) {
+  const routeForObjectType = {
+    assessment: 'clients',
+    commercial: 'blueprint',
+    credential: 'role-workspace',
+    pbc_request: 'pbc',
+    pbc_receipt: 'pbc',
+    tb_source: 'accounting',
+    workpaper: 'audit',
+    review_point: 'reviews',
+    decision: 'reviews',
+    artifact: 'artifacts',
+  };
+  const stageForObjectType = {
+    assessment: 'STAGE-01',
+    commercial: 'STAGE-02',
+    credential: 'STAGE-03',
+    pbc_request: 'STAGE-05',
+    pbc_receipt: 'STAGE-05',
+    tb_source: 'STAGE-05',
+    workpaper: 'STAGE-06',
+    review_point: 'STAGE-07',
+    decision: 'STAGE-07',
+    artifact: 'STAGE-06',
+  };
+  const state = task.state || 'OPEN';
+  const priority = String(task.priority || (state === 'BLOCKED' ? 'CRITICAL' : ['decision', 'review_point'].includes(task.linkedObjectType) ? 'HIGH' : 'NORMAL')).toUpperCase();
+  const dueDate = task.dueDate || '';
   await env.DB.prepare(
-    `INSERT INTO auditflow_tasks (task_id, engagement_id, assignee_persona, assignee_role, title, state, due_date, linked_object_type, linked_object_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-     ON CONFLICT (task_id) DO UPDATE SET state = excluded.state, title = excluded.title`,
-  ).bind(task.taskId, task.engagementId, task.assigneePersona || '', task.assigneeRole || '', task.title, task.state || 'OPEN', task.dueDate || '', task.linkedObjectType || '', task.linkedObjectId || '').run();
+    `INSERT INTO auditflow_tasks
+      (task_id, engagement_id, assignee_persona, assignee_role, title, state, due_date, linked_object_type, linked_object_id,
+       priority, blocker_code, route, target, stage, creator, sla_due_at, escalation_state, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, datetime('now'))
+     ON CONFLICT (task_id) DO UPDATE SET
+       assignee_persona = excluded.assignee_persona,
+       assignee_role = excluded.assignee_role,
+       title = excluded.title,
+       state = excluded.state,
+       due_date = excluded.due_date,
+       linked_object_type = excluded.linked_object_type,
+       linked_object_id = excluded.linked_object_id,
+       priority = excluded.priority,
+       blocker_code = excluded.blocker_code,
+       route = excluded.route,
+       target = excluded.target,
+       stage = excluded.stage,
+       creator = excluded.creator,
+       sla_due_at = excluded.sla_due_at,
+       escalation_state = excluded.escalation_state,
+       updated_at = datetime('now')`,
+  ).bind(
+    task.taskId,
+    task.engagementId,
+    task.assigneePersona || '',
+    task.assigneeRole || '',
+    task.title,
+    state,
+    dueDate,
+    task.linkedObjectType || '',
+    task.linkedObjectId || '',
+    ['CRITICAL', 'HIGH', 'NORMAL', 'LOW'].includes(priority) ? priority : 'NORMAL',
+    task.blockerCode || '',
+    task.route || routeForObjectType[task.linkedObjectType] || 'role-workspace',
+    task.target || task.assigneeRole || '',
+    task.stage || stageForObjectType[task.linkedObjectType] || '',
+    task.creator || 'WORKFLOW',
+    task.slaDueAt || dueDate,
+    task.escalationState || (state === 'BLOCKED' ? 'ESCALATED' : 'NONE'),
+  ).run();
 }
 
 async function sha256Hex(value) {
@@ -586,6 +1057,16 @@ async function actionAcceptClient(request, env, session, id, payload, correlatio
   if (payload.expectedRevision != null && Number(payload.expectedRevision) !== engagement.revision) {
     return error(request, 'The engagement changed since you loaded it. Reload and retry.', 409, 'REVISION_CONFLICT');
   }
+  if (decision === 'ACCEPT') {
+    const gate = await readAssessmentGate(env, id);
+    if (!gate.started) {
+      return error(request, 'Complete the shared client evaluation before acceptance: no assessment response is on record for this engagement.', 409, 'EVALUATION_NOT_STARTED');
+    }
+    if (gate.holds.length) {
+      const names = gate.holds.slice(0, 5).map((hold) => hold.questionId + ' (' + hold.code + ')').join(', ');
+      return error(request, gate.holds.length + ' evaluation hold(s) must be resolved before acceptance, starting with: ' + names + '.', 409, 'EVALUATION_HOLDS');
+    }
+  }
   const decisionId = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision)
@@ -626,8 +1107,33 @@ async function actionIssueTempCredential(request, env, session, id, payload, cor
   if (!hasAnyRole(session, ['engagement_partner', 'system_admin'])) {
     return error(request, 'Only the Partner or System Administrator demo persona can issue the synthetic credential.', 403, 'ROLE_NOT_AUTHORIZED');
   }
+  const strictCommand = isStrictCommandPayload(payload);
+  if (strictCommand) {
+    const profile = await env.DB.prepare('SELECT contact_name, contact_email, phone FROM auditflow_client_profiles WHERE engagement_id = ?1').bind(id).first();
+    if (!profile) return error(request, 'Submit complete client details before issuing a temporary credential.', 409, 'CLIENT_DETAILS_REQUIRED');
+    if (!String(profile.contact_name || '').trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(profile.contact_email || '').trim()) || !String(profile.phone || '').trim()) {
+      return error(request, 'A valid client contact name, email and phone are required before credential issuance.', 409, 'CLIENT_CONTACT_REQUIRED');
+    }
+    const acceptance = await latestDecision(env, id, 'ACCEPTANCE');
+    if (!acceptance || acceptance.decision !== 'ACCEPT') return error(request, 'Partner acceptance must be current before credential issuance.', 409, 'ACCEPTANCE_REQUIRED');
+    const commercialForTerms = await env.DB.prepare('SELECT * FROM auditflow_commercial WHERE engagement_id = ?1').bind(id).first();
+    if (!commercialForTerms || commercialForTerms.el_state !== 'ACCEPTED') return error(request, 'The current Engagement Letter must be accepted before credential issuance.', 409, 'TERMS_REQUIRED');
+    const terms = await latestDecision(env, id, 'ENGAGEMENT_LETTER');
+    if (!terms || terms.decision !== 'ACCEPT' || terms.object_version !== commercialForTerms.el_version) return error(request, 'The credential must bind to the accepted Engagement Letter version.', 409, 'TERMS_VERSION_MISMATCH');
+    const advanceRequired = moneyToCents(commercialForTerms.advance_required || '0.00');
+    if (advanceRequired == null) return error(request, 'The commercial advance amount is not a valid base-10 value.', 409, 'ADVANCE_INVALID');
+    if (advanceRequired > 0 && commercialForTerms.advance_state !== 'VERIFIED') return error(request, 'Verify the required advance before issuing the temporary credential.', 409, 'ADVANCE_REQUIRED');
+  }
   const commercial = await env.DB.prepare('SELECT * FROM auditflow_commercial WHERE engagement_id = ?1').bind(id).first();
-  if (!commercial || commercial.advance_state !== 'VERIFIED') {
+  if (!commercial) return error(request, 'Prepare the commercial record before issuing the synthetic credential.', 409, 'PRECONDITION_FAILED');
+  const commercialAdvanceCents = moneyToCents(commercial.advance_required || '0.00');
+  const commercialAdvanceState = String(commercial.advance_state || '').trim().toUpperCase();
+  const advanceReady = strictCommand
+    ? (commercialAdvanceCents === 0
+      ? ['NOT_REQUIRED', 'VERIFIED', 'ALLOCATED'].includes(commercialAdvanceState)
+      : ['VERIFIED', 'ALLOCATED'].includes(commercialAdvanceState))
+    : commercialAdvanceState === 'VERIFIED';
+  if (!advanceReady) {
     return error(request, 'Verify the required advance before issuing the synthetic credential.', 409, 'PRECONDITION_FAILED');
   }
   const existing = await env.DB.prepare(
@@ -789,7 +1295,7 @@ async function actionCreatePbcRequest(request, env, session, id, payload, correl
     `INSERT INTO auditflow_pbc_requests (request_id, engagement_id, title, description, category, period, due_date, client_owner, reviewer, acceptance_criteria, state)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'OPEN')`,
   ).bind(requestId, id, title, description, category, period, dueDate, clientOwner, reviewer, acceptanceCriteria).run();
-  await upsertTask(env, { taskId: `pbc-client-${requestId}`, engagementId: id, assigneeRole: 'client_contributor', title: `Respond to ${requestId}: ${title}`, state: 'OPEN', linkedObjectType: 'pbc_request', linkedObjectId: requestId });
+  await upsertTask(env, { taskId: `pbc-client-${requestId}`, engagementId: id, assigneeRole: 'client_contributor', title: `Respond to ${requestId}: ${title}`, state: 'OPEN', dueDate, slaDueAt: dueDate, priority: 'HIGH', route: 'pbc', stage: 'STAGE-05', creator: session.actorId, linkedObjectType: 'pbc_request', linkedObjectId: requestId });
   const engagement = await touchEngagement(env, id, null);
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'PBC_REQUEST_CREATED', objectType: 'pbc_request', objectId: requestId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   return json(request, { ok: true, requestId, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
@@ -839,6 +1345,42 @@ async function actionRespondPbcReceipt(request, env, session, id, payload, corre
   if (decision === 'CLARIFY' && !note) return error(request, 'Explain what the client must clarify.');
   const receipt = await env.DB.prepare('SELECT * FROM auditflow_pbc_receipts WHERE receipt_id = ?1').bind(receiptId).first();
   if (!receipt || receipt.engagement_id !== id) return error(request, 'That receipt does not belong to this engagement.', 404, 'PBC_RECEIPT_NOT_FOUND');
+  const strictCommand = isStrictCommandPayload(payload);
+  if (strictCommand) {
+    // A replacement receipt supersedes every prior version.  Looking up the
+    // selected row alone would let a late review of v1 move the parent request
+    // back to ACCEPTED after the client had already uploaded v2.
+    const latest = await env.DB.prepare(
+      `SELECT receipt_id, version, state FROM auditflow_pbc_receipts
+       WHERE request_id = ?1 ORDER BY version DESC, uploaded_at DESC, receipt_id DESC LIMIT 1`,
+    ).bind(receipt.request_id).first();
+    if (!latest || latest.receipt_id !== receipt.receipt_id || Number(latest.version) !== Number(receipt.version)) {
+      return error(request, `Receipt ${receiptId} is version ${receipt.version}; review the current receipt before changing readiness.`, 409, 'PBC_RECEIPT_STALE');
+    }
+    const engagement = await readEngagementRow(env, id);
+    if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+    const generations = await readAccountingGenerations(env, id);
+    const decisionId = crypto.randomUUID();
+    const durableNote = note || (decision === 'ACCEPT' ? 'Receipt accepted against the current request version.' : 'Clarification requested for the current receipt.');
+    await env.DB.prepare(
+      `INSERT INTO auditflow_decisions
+        (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
+       VALUES (?1, ?2, 'PBC_RECEIPT', ?3, ?4, ?5, ?6, ?7, ?8)`,
+    ).bind(decisionId, id, receipt.receipt_id, decision, session.actorId, durableNote, engagement.revision + 1, generations.input).run();
+    // Keep the receipt itself inspectable while preserving the original client
+    // comment. The decision row remains the append-only review history.
+    await env.DB.prepare(
+      `UPDATE auditflow_pbc_receipts
+       SET state = ?2, comment = CASE WHEN comment = '' THEN ?3 ELSE comment || '\nReviewer: ' || ?3 END
+       WHERE receipt_id = ?1`,
+    ).bind(receiptId, decision === 'ACCEPT' ? 'ACCEPTED' : 'CLARIFICATION', durableNote).run();
+    await env.DB.prepare(`UPDATE auditflow_pbc_requests SET state = ?2, updated_at = datetime('now') WHERE request_id = ?1`).bind(receipt.request_id, decision === 'ACCEPT' ? 'ACCEPTED' : 'CLARIFICATION').run();
+    await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`pbc-review-${receipt.request_id}`).run();
+    await upsertTask(env, { taskId: `pbc-client-${receipt.request_id}`, engagementId: id, assigneeRole: 'client_contributor', title: decision === 'ACCEPT' ? `Receipt accepted: ${receipt.request_id}` : `Clarification required for ${receipt.request_id}`, state: decision === 'ACCEPT' ? 'COMPLETE' : 'OPEN', linkedObjectType: 'pbc_receipt', linkedObjectId: receipt.receipt_id });
+    const next = await touchEngagement(env, id, null);
+    await appendEvent(env, { engagementId: id, actor: session.actorId, action: decision === 'ACCEPT' ? 'PBC_RECEIPT_ACCEPTED' : 'PBC_CLARIFICATION_REQUESTED', objectType: 'pbc_receipt', objectId: receiptId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
+    return json(request, { ok: true, decision, receiptId, version: receipt.version, decisionId, note: durableNote, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
+  }
   await env.DB.prepare(`UPDATE auditflow_pbc_receipts SET state = ?2 WHERE receipt_id = ?1`).bind(receiptId, decision === 'ACCEPT' ? 'ACCEPTED' : 'CLARIFICATION').run();
   await env.DB.prepare(`UPDATE auditflow_pbc_requests SET state = ?2, updated_at = datetime('now') WHERE request_id = ?1`).bind(receipt.request_id, decision === 'ACCEPT' ? 'ACCEPTED' : 'CLARIFICATION').run();
   await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`pbc-review-${receipt.request_id}`).run();
@@ -852,6 +1394,76 @@ function cleanCurrency(value) {
   return /^[A-Z]{3}$/.test(text) ? text : null;
 }
 
+const KNOWN_TB_ACCOUNT_CODES = new Set([
+  '100101', '110100', '120100', '150100', '159100', '200100', '220100',
+  '300100', '310100', '400100', '500100', '510100', '520100', '530100',
+]);
+
+function normalizeStrictMoney(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+(?:\.\d{1,2})?$/.test(text)) return null;
+  const [wholeRaw, fractionRaw = ''] = text.split('.');
+  const whole = wholeRaw.replace(/^0+(?=\d)/, '') || '0';
+  try {
+    const cents = BigInt(whole) * 100n + BigInt((fractionRaw + '00').slice(0, 2));
+    // Keep the bounded synthetic demo within a comfortably serializable
+    // range while still accepting equivalent forms such as 00100.0.
+    if (cents < 0n || cents > 9_000_000_000_000_00n) return null;
+    return `${(cents / 100n).toString()}.${String(cents % 100n).padStart(2, '0')}`;
+  } catch {
+    return null;
+  }
+}
+
+function sumStrictMoney(values) {
+  let total = 0n;
+  for (const value of values) {
+    const normalized = normalizeStrictMoney(value);
+    if (normalized == null) return null;
+    const [whole, fraction] = normalized.split('.');
+    total += BigInt(whole) * 100n + BigInt(fraction);
+  }
+  return `${(total / 100n).toString()}.${String(total % 100n).padStart(2, '0')}`;
+}
+
+function strictTbRows(payload, engagement) {
+  const supplied = Array.isArray(payload.rows) ? payload.rows : null;
+  if (!supplied || supplied.length === 0) return { ok: false, code: 'SOURCE_ROWS_REQUIRED', message: 'Send at least one bounded trial-balance row; a zero-row source cannot be validated.' };
+  if (supplied.length > 5000) return { ok: false, code: 'ROW_LIMIT_EXCEEDED', message: 'Trial-balance intake is limited to 5,000 rows.' };
+  const expectedEntity = String(engagement?.client_id || '').trim();
+  const expectedPeriod = String(engagement?.period || '').trim();
+  const expectedCurrency = 'QAR';
+  const seen = new Set();
+  const rows = [];
+  for (let index = 0; index < supplied.length; index += 1) {
+    const item = supplied[index] || {};
+    const accountCode = String(item.accountCode ?? item.account_code ?? item.code ?? '').trim();
+    const entityId = String(item.entityId ?? item.entity_id ?? payload.entityId ?? '').trim();
+    const period = String(item.period ?? payload.period ?? '').trim();
+    const currency = String(item.currency ?? payload.currency ?? '').trim().toUpperCase();
+    const account = cleanText(item.account ?? item.accountName ?? item.account_name, 240, '') || '';
+    // Area is useful presentation metadata but is not a source identity
+    // requirement. Keep a visible fallback so minimal, well-formed fixture
+    // rows are not rejected solely because the import omitted a grouping.
+    const area = cleanText(item.area, 120, '') || 'Unassigned';
+    const debit = normalizeStrictMoney(item.debit);
+    const credit = normalizeStrictMoney(item.credit);
+    if (!/^\d{1,20}$/.test(accountCode) || !account) return { ok: false, code: 'ROW_INVALID', message: `Row ${index + 1} has an invalid account identity.` };
+    if (seen.has(accountCode)) return { ok: false, code: 'DUPLICATE_SOURCE_ROW', message: `Account ${accountCode} appears more than once.` };
+    if (!debit || !credit) return { ok: false, code: 'MONEY_INVALID', message: `Row ${index + 1} has an invalid non-negative debit or credit amount.` };
+    if (!entityId || entityId !== expectedEntity) return { ok: false, code: 'ENTITY_MISMATCH', message: `Row ${index + 1} belongs to ${entityId || 'no entity'}, not ${expectedEntity}.` };
+    if (!period || period !== expectedPeriod) return { ok: false, code: 'PERIOD_MISMATCH', message: `Row ${index + 1} is for ${period || 'no period'}, not ${expectedPeriod}.` };
+    if (!currency || currency !== expectedCurrency) return { ok: false, code: 'CURRENCY_MISMATCH', message: `Row ${index + 1} is ${currency || 'uncoded'}, not ${expectedCurrency}.` };
+    seen.add(accountCode);
+    rows.push({ accountCode, account, area, entityId, period, currency, debit, credit });
+  }
+  const debitTotal = sumStrictMoney(rows.map((row) => row.debit));
+  const creditTotal = sumStrictMoney(rows.map((row) => row.credit));
+  if (!debitTotal || !creditTotal || debitTotal !== creditTotal) return { ok: false, code: 'UNBALANCED_SOURCE', message: `Debit ${debitTotal || '—'} does not equal credit ${creditTotal || '—'}.` };
+  const mappingComplete = rows.every((row) => KNOWN_TB_ACCOUNT_CODES.has(row.accountCode));
+  return { ok: true, rows, debitTotal, creditTotal, mappingComplete, entityId: expectedEntity, period: expectedPeriod, currency: expectedCurrency };
+}
+
 async function actionRecordTbSource(request, env, session, id, payload, correlationId) {
   if (!hasAnyRole(session, ['client_contributor', 'preparer', 'accounting_reviewer', 'system_admin'])) {
     return error(request, 'Only the Client, Accountant or Reviewer demo persona can load the trial balance.', 403, 'ROLE_NOT_AUTHORIZED');
@@ -861,28 +1473,88 @@ async function actionRecordTbSource(request, env, session, id, payload, correlat
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(sourceId) || !/^[A-Za-z0-9_.-]{1,20}$/.test(sourceVersion)) {
     return error(request, 'Provide a valid sourceId and sourceVersion (for example TB-BASELINE-001 / v03).');
   }
-  const currency = cleanCurrency(payload.currency);
-  const debitTotal = cleanMoney(payload.debitTotal);
-  const creditTotal = cleanMoney(payload.creditTotal);
-  const rowCount = Number(payload.rowCount || 0);
-  if (!currency || !debitTotal || !creditTotal || !Number.isSafeInteger(rowCount) || rowCount < 0 || rowCount > 5000) {
+  const strictCommand = isStrictCommandPayload(payload);
+  let currency = cleanCurrency(payload.currency);
+  let debitTotal = cleanMoney(payload.debitTotal);
+  let creditTotal = cleanMoney(payload.creditTotal);
+  let rowCount = Number(payload.rowCount || 0);
+  if (!strictCommand && (!currency || !debitTotal || !creditTotal || !Number.isSafeInteger(rowCount) || rowCount < 0 || rowCount > 5000)) {
     return error(request, 'Provide currency (3-letter code), debit/credit totals and a row count up to 5,000.');
   }
-  if (debitTotal !== creditTotal) return error(request, `Debit ${debitTotal} does not equal credit ${creditTotal}. The source was not recorded.`, 400, 'UNBALANCED_SOURCE');
+  if (!strictCommand && debitTotal !== creditTotal) return error(request, `Debit ${debitTotal} does not equal credit ${creditTotal}. The source was not recorded.`, 400, 'UNBALANCED_SOURCE');
   const validationState = String(payload.validationState || 'VALIDATED').trim().toUpperCase();
   if (!['DRAFT', 'VALIDATED', 'REJECTED'].includes(validationState)) return error(request, 'Validation state must be DRAFT, VALIDATED, or REJECTED.');
   const replacesVersion = String(payload.replacesVersion || '').trim().slice(0, 20);
+  let normalizedRows = null;
+  let parsedSource = null;
+  let sourceHash = '';
+  let derivedMappingComplete = readBoolean(payload.mappingComplete);
+  if (strictCommand) {
+    const engagement = await readEngagementRow(env, id);
+    if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+    const parsed = strictTbRows(payload, engagement);
+    if (!parsed.ok) return error(request, parsed.message, 400, parsed.code);
+    parsedSource = parsed;
+    normalizedRows = parsed.rows;
+    if (payload.rowCount != null && Number(payload.rowCount) !== normalizedRows.length) return error(request, `rowCount ${payload.rowCount} does not match the ${normalizedRows.length} supplied rows.`, 400, 'ROW_COUNT_MISMATCH');
+    if (payload.debitTotal != null && normalizeStrictMoney(payload.debitTotal) !== parsed.debitTotal) return error(request, 'The submitted debit total does not match the source rows.', 400, 'TOTAL_MISMATCH');
+    if (payload.creditTotal != null && normalizeStrictMoney(payload.creditTotal) !== parsed.creditTotal) return error(request, 'The submitted credit total does not match the source rows.', 400, 'TOTAL_MISMATCH');
+    if (readBoolean(payload.mappingComplete) && !parsed.mappingComplete) return error(request, 'Mapping is not verified for every source account; the caller cannot promote this source.', 400, 'MAPPING_UNVERIFIED');
+    derivedMappingComplete = parsed.mappingComplete;
+    currency = parsed.currency;
+    debitTotal = parsed.debitTotal;
+    creditTotal = parsed.creditTotal;
+    rowCount = normalizedRows.length;
+    if (validationState === 'VALIDATED' && !derivedMappingComplete) return error(request, 'A source is VALIDATED only when every bounded row has a known mapping.', 409, 'MAPPING_INCOMPLETE');
+    sourceHash = await sha256Hex(JSON.stringify({
+      sourceId,
+      sourceVersion,
+      entityId: parsedSource.entityId,
+      period: parsedSource.period,
+      currency: parsedSource.currency,
+      rows: normalizedRows.map((row) => ({ accountCode: row.accountCode, account: row.account, area: row.area, entityId: row.entityId, period: row.period, currency: row.currency, debit: row.debit, credit: row.credit })).sort((a, b) => a.accountCode.localeCompare(b.accountCode)),
+    }));
+    let existing = null;
+    try {
+      existing = await env.DB.prepare('SELECT id, source_id, source_version, period, currency, row_count, debit_total, credit_total, validation_state, mapping_complete, replaces_version, source_hash FROM auditflow_tb_sources WHERE engagement_id = ?1 AND source_version = ?2').bind(id, sourceVersion).first();
+    } catch (sourceHashError) {
+      if (!/no such column|unknown column|source_hash/i.test(String(sourceHashError?.message || sourceHashError))) throw sourceHashError;
+      existing = await env.DB.prepare('SELECT id, source_id, source_version, period, currency, row_count, debit_total, credit_total, validation_state, mapping_complete, replaces_version FROM auditflow_tb_sources WHERE engagement_id = ?1 AND source_version = ?2').bind(id, sourceVersion).first();
+    }
+    if (existing) {
+      const same = existing.source_hash ? existing.source_hash === sourceHash : String(existing.source_id) === sourceId && Number(existing.row_count) === normalizedRows.length && normalizeStrictMoney(existing.debit_total) === parsed.debitTotal && normalizeStrictMoney(existing.credit_total) === parsed.creditTotal && String(existing.period) === parsed.period && String(existing.currency).toUpperCase() === parsed.currency;
+      if (same) return json(request, { ok: true, duplicate: true, sourceVersion, sourceHash, evidenceLevel: 'SIMULATION' });
+      return error(request, `Source version ${sourceVersion} is immutable; submit a new replacement version.`, 409, 'SOURCE_VERSION_IMMUTABLE');
+    }
+    const latest = await env.DB.prepare('SELECT source_version FROM auditflow_tb_sources WHERE engagement_id = ?1 ORDER BY created_at DESC, source_version DESC LIMIT 1').bind(id).first();
+    if (latest && latest.source_version && !replacesVersion) return error(request, `Link replacement ${sourceVersion} to the current source ${latest.source_version}.`, 409, 'SOURCE_REPLACEMENT_LINK_REQUIRED');
+    if (latest && replacesVersion && replacesVersion !== latest.source_version) return error(request, `Source ${sourceVersion} must replace the current source ${latest.source_version}, not ${replacesVersion}.`, 409, 'SOURCE_REPLACEMENT_MISMATCH');
+  }
+  const effectiveDebit = strictCommand ? normalizeStrictMoney(debitTotal) : debitTotal;
+  const effectiveCredit = strictCommand ? normalizeStrictMoney(creditTotal) : creditTotal;
+  const effectiveRowCount = strictCommand ? normalizedRows.length : rowCount;
+  const effectiveValidation = strictCommand ? validationState : validationState;
   await env.DB.prepare(
-    `INSERT INTO auditflow_tb_sources (id, engagement_id, source_id, source_version, period, currency, row_count, debit_total, credit_total, validation_state, mapping_complete, replaces_version, created_by)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-     ON CONFLICT (engagement_id, source_version) DO UPDATE SET source_id = excluded.source_id, period = excluded.period,
-       currency = excluded.currency, row_count = excluded.row_count, debit_total = excluded.debit_total, credit_total = excluded.credit_total,
-       validation_state = excluded.validation_state, mapping_complete = excluded.mapping_complete, replaces_version = excluded.replaces_version, created_by = excluded.created_by`,
-  ).bind(crypto.randomUUID(), id, sourceId, sourceVersion, cleanText(payload.period, 40, '') ?? '', currency, rowCount, debitTotal, creditTotal, validationState, readBoolean(payload.mappingComplete) ? 1 : 0, replacesVersion, session.actorId).run();
+    strictCommand
+      ? `INSERT INTO auditflow_tb_sources (id, engagement_id, source_id, source_version, period, currency, row_count, debit_total, credit_total, validation_state, mapping_complete, replaces_version, created_by, source_hash)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`
+      : `INSERT INTO auditflow_tb_sources (id, engagement_id, source_id, source_version, period, currency, row_count, debit_total, credit_total, validation_state, mapping_complete, replaces_version, created_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         ON CONFLICT (engagement_id, source_version) DO UPDATE SET source_id = excluded.source_id, period = excluded.period,
+           currency = excluded.currency, row_count = excluded.row_count, debit_total = excluded.debit_total, credit_total = excluded.credit_total,
+           validation_state = excluded.validation_state, mapping_complete = excluded.mapping_complete, replaces_version = excluded.replaces_version, created_by = excluded.created_by`,
+  ).bind(...(strictCommand
+    ? [crypto.randomUUID(), id, sourceId, sourceVersion, normalizedRows[0].period, normalizedRows[0].currency, effectiveRowCount, parsedSource?.debitTotal || effectiveDebit, parsedSource?.creditTotal || effectiveCredit, effectiveValidation, derivedMappingComplete ? 1 : 0, replacesVersion, session.actorId, sourceHash]
+    : [crypto.randomUUID(), id, sourceId, sourceVersion, cleanText(payload.period, 40, '') ?? '', currency, effectiveRowCount, effectiveDebit, effectiveCredit, effectiveValidation, readBoolean(payload.mappingComplete) ? 1 : 0, replacesVersion, session.actorId])).run();
+  const priorStatus = await readAccountingStatus(env, id);
+  const nextInputGeneration = priorStatus.inputGeneration + 1;
+  await env.DB.prepare(
+    'INSERT INTO auditflow_accounting_status (engagement_id, source_version, source_state, mapping_state, input_generation) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (engagement_id) DO UPDATE SET source_version = excluded.source_version, source_state = excluded.source_state, mapping_state = excluded.mapping_state, input_generation = excluded.input_generation, revision = auditflow_accounting_status.revision + 1, updated_at = datetime(\'now\')',
+    ).bind(id, sourceVersion, effectiveValidation, derivedMappingComplete ? 'MAPPED' : 'PENDING', nextInputGeneration).run();
   const engagement = await touchEngagement(env, id, 'STAGE-05');
   await upsertTask(env, { taskId: `tb-review-${id}-${sourceVersion}`, engagementId: id, assigneeRole: 'accounting_reviewer', title: `Review TB ${sourceVersion} (${debitTotal})`, state: 'OPEN', linkedObjectType: 'tb_source', linkedObjectId: sourceVersion });
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'TB_SOURCE_RECORDED', objectType: 'tb_source', objectId: sourceVersion, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
-  return json(request, { ok: true, sourceVersion, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
+  return json(request, { ok: true, sourceVersion, sourceHash: sourceHash || undefined, rowCount: effectiveRowCount, debitTotal: effectiveDebit, creditTotal: effectiveCredit, mappingComplete: derivedMappingComplete, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
 }
 
 async function actionSubmitWorkpaper(request, env, session, id, payload, correlationId) {
@@ -958,18 +1630,30 @@ async function actionClearReviewPoint(request, env, session, id, payload, correl
       return error(request, 'A significant review point cannot be cleared by its own author (separation of duties).', 403, 'SOD_VIOLATION');
     }
   }
-  await env.DB.prepare(`UPDATE auditflow_review_points SET response = ?2, state = 'CLEARED', cleared_at = datetime('now') WHERE review_id = ?1`).bind(reviewId, response).run();
+  const clearGenerations = await readAccountingGenerations(env, id);
+  await env.DB.prepare(`UPDATE auditflow_review_points SET response = ?2, state = 'CLEARED', cleared_at = datetime('now'), cleared_generation = ?3 WHERE review_id = ?1`).bind(reviewId, response, clearGenerations.input).run();
   const engagement = await touchEngagement(env, id, null);
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'REVIEW_POINT_CLEARED', objectType: 'review_point', objectId: reviewId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   return json(request, { ok: true, reviewId, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
 }
 
+function numericVersion(value) {
+  const match = String(value || '').match(/(\d+)/);
+  return match ? Number(match[1]) : 0;
+}
+
+function compareVersionDesc(a, b) {
+  const byNumber = numericVersion(b?.version ?? b) - numericVersion(a?.version ?? a);
+  if (byNumber) return byNumber;
+  return String(b?.version ?? b ?? '').localeCompare(String(a?.version ?? a ?? ''));
+}
+
 async function latestPublishedDraftFs(env, engagementId) {
   const rows = await env.DB.prepare(
-    `SELECT * FROM auditflow_artifacts WHERE engagement_id = ?1 AND document_type = 'DRAFT_FS' AND state = 'PUBLISHED' ORDER BY created_at DESC LIMIT 10`,
+    `SELECT * FROM auditflow_artifacts WHERE engagement_id = ?1 AND document_type = 'DRAFT_FS' AND state = 'PUBLISHED' ORDER BY created_at DESC, document_id DESC LIMIT 200`,
   ).bind(engagementId).all();
   const list = rows.results || [];
-  list.sort((a, b) => String(b.version || '').localeCompare(String(a.version || '')));
+  list.sort(compareVersionDesc);
   return list[0] || null;
 }
 
@@ -978,6 +1662,26 @@ async function actionPublishDraftFs(request, env, session, id, payload, correlat
     return error(request, 'Only the Audit Senior or Manager demo persona can publish the Draft FS.', 403, 'ROLE_NOT_AUTHORIZED');
   }
   const summary = cleanText(payload.summary, MAX_CONTEXT_LENGTH, '') ?? '';
+  const strictCommand = isStrictCommandPayload(payload);
+  if (strictCommand && !summary) return error(request, 'Provide a concise Draft FS conclusion summary.', 400, 'SUMMARY_REQUIRED');
+  if (strictCommand) {
+    const engagement = await readEngagementRow(env, id);
+    if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+    const profile = await env.DB.prepare('SELECT engagement_id FROM auditflow_client_profiles WHERE engagement_id = ?1').bind(id).first();
+    if (!profile) return error(request, 'Client details must be submitted before preparing Draft FS.', 409, 'CLIENT_DETAILS_REQUIRED');
+    const acceptance = await latestDecision(env, id, 'ACCEPTANCE');
+    if (!acceptance || acceptance.decision !== 'ACCEPT') return error(request, 'A current Partner acceptance decision is required before Draft FS publication.', 409, 'ACCEPTANCE_REQUIRED');
+    const commercial = await env.DB.prepare('SELECT * FROM auditflow_commercial WHERE engagement_id = ?1').bind(id).first();
+    if (!commercial || commercial.el_state !== 'ACCEPTED') return error(request, 'The current Engagement Letter must be accepted before Draft FS publication.', 409, 'TERMS_REQUIRED');
+    const accounting = await readAccountingStatus(env, id);
+    if (!accounting.exists || accounting.sourceState !== 'VALIDATED' || !['MAPPED', 'COMPLETE'].includes(String(accounting.mappingState || '').toUpperCase()) || accounting.reconState !== 'COMPLETE' || Number(accounting.openReconCount || 0) !== 0 || accounting.journalState !== 'COMPLETE' || Number(accounting.pendingJournalCount || 0) !== 0 || !accounting.fsVersion || accounting.fsState !== 'FINAL' || accounting.mgmtApprovalState !== 'ACCEPTED') {
+      return error(request, 'Accounting source, mapping, reconciliations, journals, FS package and management approval must all be current before Draft FS publication.', 409, 'ACCOUNTING_NOT_READY');
+    }
+    const pbc = await env.DB.prepare('SELECT request_id, state FROM auditflow_pbc_requests WHERE engagement_id = ?1').bind(id).all();
+    if (!pbc.results?.length || pbc.results.some((row) => String(row.state || '').toUpperCase() !== 'ACCEPTED')) return error(request, 'Every information request must be accepted before Draft FS publication.', 409, 'PBC_NOT_EVALUATED');
+    const submitted = await env.DB.prepare('SELECT COUNT(*) AS n FROM auditflow_workpapers WHERE engagement_id = ?1 AND state = ?2').bind(id, 'SUBMITTED').first();
+    if (!Number(submitted?.n || 0)) return error(request, 'At least one submitted workpaper is required before Draft FS publication.', 409, 'NO_SUBMITTED_WORKPAPERS');
+  }
   const prior = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM auditflow_artifacts WHERE engagement_id = ?1 AND document_type = 'DRAFT_FS'`,
   ).bind(id).first();
@@ -1008,10 +1712,11 @@ async function actionRespondDraftFs(request, env, session, id, payload, correlat
     return error(request, `This response names ${version || 'no version'} but the current draft is ${latest.version}. Respond to the exact version.`, 409, 'VERSION_MISMATCH');
   }
   const decisionId = crypto.randomUUID();
+  const generations = await readAccountingGenerations(env, id);
   await env.DB.prepare(
-    `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision)
-     VALUES (?1, ?2, 'DRAFT_FS', ?3, ?4, ?5, ?6, ?7)`,
-  ).bind(decisionId, id, version, decision, session.actorId, explanation, 1).run();
+    `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
+     VALUES (?1, ?2, 'DRAFT_FS', ?3, ?4, ?5, ?6, ?7, ?8)`,
+  ).bind(decisionId, id, version, decision, session.actorId, explanation, 1, generations.input).run();
   await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`draftfs-response-${id}-${version}`).run();
   const engagement = await touchEngagement(env, id, null);
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: `DRAFT_FS_${decision === 'REVISION' ? 'REVISION_REQUESTED' : decision === 'ACCEPT' ? 'ACCEPTED' : 'REJECTED'}`, objectType: 'decision', objectId: decisionId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
@@ -1027,15 +1732,35 @@ async function actionCompleteEqr(request, env, session, id, payload, correlation
   const note = cleanText(payload.note, MAX_CONTEXT_LENGTH) || '';
   if (decision !== 'APPROVE' && !note) return error(request, 'Record a note when returning or holding the file.');
   const candidateId = String(payload.candidateId || '').trim();
+  const strictCommand = isStrictCommandPayload(payload);
+  let currentInputGeneration = 1;
+  if (strictCommand) {
+    const latest = await latestPublishedDraftFs(env, id);
+    if (!latest) return error(request, 'Publish a Draft FS before starting EQR.', 409, 'CANDIDATE_REQUIRED');
+    if (!candidateId || candidateId !== latest.version) return error(request, `EQR must name the current Draft FS candidate ${latest.version}.`, 409, 'CANDIDATE_MISMATCH');
+    const draftResponse = await latestDecision(env, id, 'DRAFT_FS');
+    if (!draftResponse || draftResponse.decision !== 'ACCEPT' || draftResponse.object_version !== latest.version) return error(request, 'EQR is available only after management accepts the current Draft FS.', 409, 'DRAFT_NOT_ACCEPTED');
+    const generations = await readAccountingGenerations(env, id);
+    currentInputGeneration = generations.input;
+    if (generations.input !== generations.evaluated) return error(request, 'Accounting input is stale; audit must evaluate the current generation before EQR.', 409, 'ACCOUNTING_INPUT_STALE');
+  }
   const decisionId = crypto.randomUUID();
-  await env.DB.prepare(
-    `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision)
-     VALUES (?1, ?2, 'EQR', ?3, ?4, ?5, ?6, 1)`,
-  ).bind(decisionId, id, candidateId, decision, session.actorId, note).run();
+  if (strictCommand) {
+    const engagement = await readEngagementRow(env, id);
+    await env.DB.prepare(
+      `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
+       VALUES (?1, ?2, 'EQR', ?3, ?4, ?5, ?6, ?7, ?8)`,
+    ).bind(decisionId, id, candidateId, decision, session.actorId, note, Number(engagement?.revision || 1) + 1, currentInputGeneration).run();
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision)
+       VALUES (?1, ?2, 'EQR', ?3, ?4, ?5, ?6, 1)`,
+    ).bind(decisionId, id, candidateId, decision, session.actorId, note).run();
+  }
   await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`eqr-${id}`).run();
   const engagement = await touchEngagement(env, id, null);
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: `EQR_${decision === 'RETURN' ? 'RETURNED' : decision === 'HOLD' ? 'ON_HOLD' : 'APPROVED'}`, objectType: 'decision', objectId: decisionId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
-  return json(request, { ok: true, decision: { decisionId, decision }, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
+  return json(request, { ok: true, decision: { decisionId, decision, candidateId, inputGeneration: currentInputGeneration }, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
 }
 
 async function actionRecordAuditOpinion(request, env, session, id, payload, correlationId) {
@@ -1054,14 +1779,56 @@ async function actionRecordAuditOpinion(request, env, session, id, payload, corr
   if (candidateVersion !== latest.version) {
     return error(request, `The opinion names ${candidateVersion || 'no version'} but the current draft is ${latest.version}. Bind the opinion to the exact candidate.`, 409, 'VERSION_MISMATCH');
   }
+  const draftResponse = await latestDecision(env, id, 'DRAFT_FS');
+  if (!draftResponse || draftResponse.decision !== 'ACCEPT' || draftResponse.object_version !== latest.version) {
+    return error(request, 'Record a current management acceptance of the latest Draft FS before forming the opinion.', 409, 'DRAFT_NOT_ACCEPTED');
+  }
+  const generations = await readAccountingGenerations(env, id);
+  if (generations.evaluated !== generations.input) {
+    return error(request, 'Accounting input g' + generations.input + ' is not yet evaluated by audit (g' + generations.evaluated + '). Evaluate it before forming the opinion.', 409, 'ACCOUNTING_INPUT_STALE');
+  }
+  const manager = await latestDecision(env, id, 'MANAGER_COMPLETION');
+  if (!manager || manager.decision !== 'RECOMMEND_COMPLETE') {
+    return error(request, 'Record a manager completion recommendation before forming the opinion.', 409, 'MANAGER_COMPLETION_REQUIRED');
+  }
+  if (Number(manager.input_generation || 1) < generations.input) {
+    return error(request, 'The manager recommendation evaluated an older accounting input. Ask the manager to re-record it against the current generation.', 409, 'MANAGER_COMPLETION_STALE');
+  }
+  const partnerReview = await latestDecision(env, id, 'PARTNER_COMPLETION_REVIEW');
+  if (!partnerReview || partnerReview.decision !== 'APPROVE_FOR_OPINION') {
+    return error(request, 'Record a partner completion review approving the file for opinion before forming the opinion.', 409, 'PARTNER_REVIEW_REQUIRED');
+  }
+  if (Number(partnerReview.input_generation || 1) < generations.input) {
+    return error(request, 'The partner review evaluated an older accounting input. Re-record it against the current generation.', 409, 'PARTNER_REVIEW_STALE');
+  }
+  const submittedWorkpapers = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM auditflow_workpapers WHERE engagement_id = ?1 AND state = ?2',
+  ).bind(id, 'SUBMITTED').first();
+  if (!Number(submittedWorkpapers?.n || 0)) return error(request, 'At least one submitted workpaper is required before forming the opinion.', 409, 'NO_SUBMITTED_WORKPAPERS');
+  const openSignificant = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM auditflow_review_points WHERE engagement_id = ?1 AND state = ?2 AND severity = ?3',
+  ).bind(id, 'OPEN', 'SIGNIFICANT').first();
+  if (Number(openSignificant?.n || 0)) return error(request, 'Significant review points must be cleared before forming the opinion.', 409, 'OPEN_SIGNIFICANT_POINTS');
+  const pbcRequests = await env.DB.prepare(
+    'SELECT request_id, state FROM auditflow_pbc_requests WHERE engagement_id = ?1',
+  ).bind(id).all();
+  const pbcList = pbcRequests.results || [];
+  if (!pbcList.length || pbcList.some((row) => String(row.state || '').toUpperCase() !== 'ACCEPTED')) {
+    return error(request, 'Every information request must be evaluated (accepted) before forming the opinion.', 409, 'PBC_NOT_EVALUATED');
+  }
+  const assessmentGate = await readAssessmentGate(env, id);
+  if (assessmentGate.blocking.length) {
+    const names = assessmentGate.blocking.slice(0, 5).map((hold) => hold.questionId + ' (' + hold.code + ')').join(', ');
+    return error(request, 'Blocking evaluation holds must be resolved before forming the opinion, starting with: ' + names + '.', 409, 'ASSESSMENT_HOLDS_FOR_OPINION');
+  }
   const decisionId = crypto.randomUUID();
   await env.DB.prepare(
-    `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision)
-     VALUES (?1, ?2, 'AUDIT_OPINION', ?3, ?4, ?5, ?6, 1)`,
-  ).bind(decisionId, id, candidateVersion, opinionType, session.actorId, rationale).run();
+    `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
+     VALUES (?1, ?2, 'AUDIT_OPINION', ?3, ?4, ?5, ?6, 1, ?7)`,
+  ).bind(decisionId, id, candidateVersion, opinionType, session.actorId, rationale, generations.input).run();
   const engagement = await touchEngagement(env, id, 'STAGE-07');
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'AUDIT_OPINION_RECORDED', objectType: 'decision', objectId: decisionId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
-  return json(request, { ok: true, decision: { decisionId, opinionType, candidateVersion }, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
+  return json(request, { ok: true, decision: { decisionId, opinionType, candidateVersion, inputGeneration: generations.input }, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
 }
 
 function moneyToCents(value) {
@@ -1077,9 +1844,316 @@ function centsToMoney(cents) {
   return `${sign}${Math.trunc(abs / 100)}.${String(abs % 100).padStart(2, '0')}`;
 }
 
+// Phase C — explicit manager completion and partner review handoffs plus
+// the final client discussion. Each record carries the accounting input
+// generation it evaluated, so later TB changes visibly stale it.
+async function actionRecordManagerCompletion(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['audit_manager'])) {
+    return error(request, 'Only the Audit Manager demo persona can record the completion recommendation.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const decision = String(payload.decision || '').trim().toUpperCase();
+  if (decision !== 'RECOMMEND_COMPLETE' && decision !== 'RETURN_TO_TEAM' && decision !== 'HOLD') {
+    return error(request, 'Decision must be RECOMMEND_COMPLETE, RETURN_TO_TEAM, or HOLD.');
+  }
+  const rationale = cleanText(payload.rationale, MAX_CONTEXT_LENGTH);
+  if (!rationale) return error(request, 'Record the basis for the completion decision (maximum 1,200 characters).');
+  const generations = await readAccountingGenerations(env, id);
+  if (decision === 'RECOMMEND_COMPLETE') {
+    const submitted = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM auditflow_workpapers WHERE engagement_id = ?1 AND state = ?2',
+    ).bind(id, 'SUBMITTED').first();
+    if (!Number(submitted?.n || 0)) return error(request, 'Recommend completion only after at least one workpaper is submitted.', 409, 'NO_SUBMITTED_WORKPAPERS');
+    const openPoints = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM auditflow_review_points WHERE engagement_id = ?1 AND state = ?2',
+    ).bind(id, 'OPEN').first();
+    if (Number(openPoints?.n || 0)) return error(request, 'Unresolved review points block a completion recommendation. Clear or return each open point first.', 409, 'REVIEW_POINTS_OPEN');
+  }
+  const engagement = await readEngagementRow(env, id);
+  if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+  const decisionId = crypto.randomUUID();
+  await env.DB.prepare(
+    'INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)',
+  ).bind(decisionId, id, 'MANAGER_COMPLETION', 'rev-' + engagement.revision, decision, session.actorId, rationale, engagement.revision + 1, generations.input).run();
+  await upsertTask(env, { taskId: 'partner-review-' + id, engagementId: id, assigneeRole: 'engagement_partner', title: 'Review manager completion recommendation', state: decision === 'RECOMMEND_COMPLETE' ? 'OPEN' : 'COMPLETE', linkedObjectType: 'decision', linkedObjectId: decisionId });
+  let correctionTaskId = '';
+  if (decision === 'RETURN_TO_TEAM') {
+    // A return is an explicit correction handoff, not just a historical
+    // decision. Keep the decision immutable and create a fresh, actionable
+    // task for the scoped senior/preparer so the approval center can surface
+    // the correction without overwriting prior review history.
+    correctionTaskId = `audit-correction-${id}-${decisionId}`;
+    await upsertTask(env, {
+      taskId: correctionTaskId,
+      engagementId: id,
+      assigneeRole: 'audit_senior',
+      title: 'Correct and resubmit audit file',
+      state: 'OPEN',
+      priority: 'HIGH',
+      blockerCode: 'MANAGER_RETURNED',
+      route: 'audit',
+      stage: 'STAGE-07',
+      linkedObjectType: 'decision',
+      linkedObjectId: decisionId,
+      creator: session.actorId,
+    });
+  }
+  const next = await touchEngagement(env, id, null);
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'MANAGER_COMPLETION_RECORDED', objectType: 'decision', objectId: decisionId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId: correlationId });
+  return json(request, { ok: true, decision: { decisionId: decisionId, decision: decision, inputGeneration: generations.input }, correctionTaskId: correctionTaskId || null, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
+}
+
+async function actionRecordPartnerReview(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['engagement_partner'])) {
+    return error(request, 'Only the Partner demo persona can record the completion review.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const decision = String(payload.decision || '').trim().toUpperCase();
+  if (decision !== 'APPROVE_FOR_OPINION' && decision !== 'RETURN_TO_MANAGER' && decision !== 'HOLD') {
+    return error(request, 'Decision must be APPROVE_FOR_OPINION, RETURN_TO_MANAGER, or HOLD.');
+  }
+  const rationale = cleanText(payload.rationale, MAX_CONTEXT_LENGTH);
+  if (!rationale) return error(request, 'Record the basis for the completion review (maximum 1,200 characters).');
+  const generations = await readAccountingGenerations(env, id);
+  const manager = await latestDecision(env, id, 'MANAGER_COMPLETION');
+  if (!manager || manager.decision !== 'RECOMMEND_COMPLETE') {
+    return error(request, 'Record a manager completion recommendation before the partner review.', 409, 'MANAGER_COMPLETION_REQUIRED');
+  }
+  if (Number(manager.input_generation || 1) < generations.input) {
+    return error(request, 'The manager recommendation evaluated an older accounting input. Ask the manager to re-record it against the current generation.', 409, 'MANAGER_COMPLETION_STALE');
+  }
+  const engagement = await readEngagementRow(env, id);
+  if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+  const decisionId = crypto.randomUUID();
+  await env.DB.prepare(
+    'INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)',
+  ).bind(decisionId, id, 'PARTNER_COMPLETION_REVIEW', 'rev-' + engagement.revision, decision, session.actorId, rationale, engagement.revision + 1, generations.input).run();
+  await env.DB.prepare('UPDATE auditflow_tasks SET state = ?1, completed_at = datetime(\'now\') WHERE task_id = ?2').bind(decision === 'APPROVE_FOR_OPINION' ? 'COMPLETE' : 'OPEN', 'partner-review-' + id).run();
+  const next = await touchEngagement(env, id, null);
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'PARTNER_REVIEW_RECORDED', objectType: 'decision', objectId: decisionId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId: correlationId });
+  return json(request, { ok: true, decision: { decisionId: decisionId, decision: decision, inputGeneration: generations.input }, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
+}
+
+async function actionRecordFinalDiscussion(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['engagement_partner'])) {
+    return error(request, 'Only the Partner demo persona can record the final client discussion.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const date = String(payload.date || '').trim().slice(0, 40);
+  const attendees = cleanText(payload.attendees, 400);
+  const topics = cleanText(payload.topics, MAX_CONTEXT_LENGTH);
+  const outcome = cleanText(payload.outcome, MAX_CONTEXT_LENGTH);
+  if (!date || !attendees || !topics || !outcome) {
+    return error(request, 'Record the date, attendees, topics and outcome of the final discussion.');
+  }
+  const opinion = await latestDecision(env, id, 'AUDIT_OPINION');
+  if (!opinion) return error(request, 'Form the audit opinion before recording the final client discussion.', 409, 'OPINION_REQUIRED');
+  const generations = await readAccountingGenerations(env, id);
+  const engagement = await readEngagementRow(env, id);
+  if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+  const decisionId = crypto.randomUUID();
+  const rationale = 'Attendees: ' + attendees + ' | Topics: ' + topics + ' | Outcome: ' + outcome;
+  await env.DB.prepare(
+    'INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)',
+  ).bind(decisionId, id, 'FINAL_CLIENT_DISCUSSION', date, 'RECORDED', session.actorId, rationale, engagement.revision + 1, generations.input).run();
+  const next = await touchEngagement(env, id, null);
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'FINAL_DISCUSSION_RECORDED', objectType: 'decision', objectId: decisionId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId: correlationId });
+  return json(request, { ok: true, decision: { decisionId: decisionId, date: date, inputGeneration: generations.input }, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
+}
+
+// M7 APPROVAL-02 — explicit handoff commands. The older portal action names
+// remain supported, while these concrete commands make the handoff visible in
+// the shared approval center and give each transition its own durable record.
+async function actionSubmitAuditFile(request, env, session, id, payload, correlationId) {
+  const fileId = String(payload.fileId || payload.auditFileId || '').trim();
+  const workpaperPayload = {
+    ...payload,
+    workpaperId: fileId || payload.workpaperId || '',
+    procedureTitle: payload.procedureTitle || payload.title || 'Audit file submission',
+    evidenceReference: payload.evidenceReference || payload.manifestId || 'SYNTHETIC-AUDIT-FILE',
+    conclusion: payload.conclusion || payload.summary || 'Submitted the current synthetic audit-file manifest for review.',
+  };
+  return actionSubmitWorkpaper(request, env, session, id, workpaperPayload, correlationId);
+}
+
+async function actionRecommendCompletion(request, env, session, id, payload, correlationId) {
+  return actionRecordManagerCompletion(request, env, session, id,
+    { ...payload, decision: 'RECOMMEND_COMPLETE' }, correlationId);
+}
+
+async function actionReturnToTeam(request, env, session, id, payload, correlationId) {
+  return actionRecordManagerCompletion(request, env, session, id,
+    { ...payload, decision: 'RETURN_TO_TEAM' }, correlationId);
+}
+
+async function actionReviewPartnerCompletion(request, env, session, id, payload, correlationId) {
+  return actionRecordPartnerReview(request, env, session, id,
+    { ...payload, decision: 'APPROVE_FOR_OPINION' }, correlationId);
+}
+
+async function actionReturnToManager(request, env, session, id, payload, correlationId) {
+  return actionRecordPartnerReview(request, env, session, id,
+    { ...payload, decision: 'RETURN_TO_MANAGER' }, correlationId);
+}
+
+async function actionVerifyReleaseCheckpoint(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['records_custodian'])) {
+    return error(request, 'Only the Records Custodian demo persona can verify a release checkpoint.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const strictCommand = isStrictCommandPayload(payload);
+  const release = await latestDecision(env, id, 'RELEASE');
+  if (!release) return error(request, 'Commit the release event before verifying its checkpoint.', 409, 'RELEASE_EVENT_REQUIRED');
+  const requestedReleaseId = String(payload.releaseId || payload.targetId || '').trim();
+  if (strictCommand && requestedReleaseId !== release.decision_id) {
+    return error(request, `Checkpoint targets ${requestedReleaseId || 'no release'} but the current release is ${release.decision_id}.`, 409, 'RELEASE_ID_MISMATCH');
+  }
+  const existing = await latestDecision(env, id, 'RELEASE_CHECKPOINT');
+  if (existing && existing.decision === 'VERIFIED') {
+    if (strictCommand && existing.object_version !== release.object_version) {
+      return error(request, 'The stored checkpoint belongs to another release candidate.', 409, 'CHECKPOINT_TARGET_MISMATCH');
+    }
+    return json(request, { ok: true, duplicate: true, checkpointId: existing.decision_id, targetVersion: existing.object_version, engagement: null, evidenceLevel: 'SIMULATION' });
+  }
+  const artifacts = await env.DB.prepare(
+    `SELECT document_id, document_type, version, state, visibility FROM auditflow_artifacts
+     WHERE engagement_id = ?1 AND document_type IN ('FINAL_REPORT', 'FINAL_FS') AND state = 'PUBLISHED' ORDER BY created_at DESC`,
+  ).bind(id).all();
+  const rows = artifacts.results || [];
+  // The checkpoint is an exact pair. A report from a previous candidate must
+  // not be paired with the current financial statements just because it is
+  // the newest row of that document type.
+  const report = rows.find((row) => row.document_type === 'FINAL_REPORT' && row.version === release.object_version);
+  const fs = rows.find((row) => row.document_type === 'FINAL_FS' && row.version === release.object_version);
+  if (!report || !fs) return error(request, 'The exact final report and financial-statement pair is not available for checkpointing.', 409, 'ARTIFACT_PAIR_REQUIRED');
+  const engagement = await readEngagementRow(env, id);
+  if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+  const checkpointId = `CHK-${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`;
+  const rationale = cleanText(payload.note || payload.rationale, MAX_CONTEXT_LENGTH, '') || `Verified ${report.document_id} + ${fs.document_id} for release ${release.decision_id}.`;
+  await env.DB.prepare(
+    `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
+      VALUES (?1, ?2, 'RELEASE_CHECKPOINT', ?3, 'VERIFIED', ?4, ?5, ?6, ?7)`,
+  ).bind(checkpointId, id, release.object_version, session.actorId, rationale, engagement.revision + 1, Number(release.input_generation || 1)).run();
+  const next = await touchEngagement(env, id, null);
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'RELEASE_CHECKPOINT_VERIFIED', objectType: 'checkpoint', objectId: checkpointId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
+  return json(request, { ok: true, duplicate: false, checkpointId, targetVersion: release.object_version, reportId: report.document_id, fsId: fs.document_id, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
+}
+
+async function actionAssembleArchive(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['records_custodian'])) {
+    return error(request, 'Only the Records Custodian demo persona can assemble the archive.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const strictCommand = isStrictCommandPayload(payload);
+  const release = await latestDecision(env, id, 'RELEASE');
+  if (strictCommand) {
+    const requestedReleaseId = String(payload.releaseId || payload.targetId || '').trim();
+    if (!release) return error(request, 'Commit the release event before assembling the archive.', 409, 'RELEASE_EVENT_REQUIRED');
+    if (requestedReleaseId !== release.decision_id) return error(request, `Archive targets ${requestedReleaseId || 'no release'} but the current release is ${release.decision_id}.`, 409, 'RELEASE_ID_MISMATCH');
+  }
+  const checkpoint = await latestDecision(env, id, 'RELEASE_CHECKPOINT');
+  if (!checkpoint || checkpoint.decision !== 'VERIFIED') return error(request, 'Verify the release checkpoint before assembling the archive.', 409, 'CHECKPOINT_REQUIRED');
+  if (strictCommand && payload.checkpointId && String(payload.checkpointId).trim() !== checkpoint.decision_id) {
+    return error(request, 'The archive targets a different release checkpoint.', 409, 'CHECKPOINT_TARGET_MISMATCH');
+  }
+  if (strictCommand) {
+    const delivery = await latestDecision(env, id, 'DELIVERY');
+    if (!delivery || delivery.decision !== 'DELIVERED' || delivery.object_version !== checkpoint.object_version) {
+      return error(request, 'Deliver the checkpointed final report before assembling the archive.', 409, 'DELIVERY_REQUIRED');
+    }
+  }
+  const existing = await latestDecision(env, id, 'ARCHIVE');
+  if (existing && existing.decision === 'ASSEMBLED') {
+    if (strictCommand && existing.object_version !== checkpoint.object_version) return error(request, 'The stored archive belongs to another checkpoint.', 409, 'ARCHIVE_TARGET_MISMATCH');
+    return json(request, { ok: true, duplicate: true, archiveId: existing.decision_id, evidenceLevel: 'SIMULATION' });
+  }
+  const engagement = await readEngagementRow(env, id);
+  if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+  const artifacts = await env.DB.prepare(
+    `SELECT document_id, document_type, version FROM auditflow_artifacts WHERE engagement_id = ?1 AND state = 'PUBLISHED' ORDER BY created_at DESC LIMIT 100`,
+  ).bind(id).all();
+  const archiveId = `ARCH-${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`;
+  const manifest = (artifacts.results || []).map((row) => `${row.document_type}:${row.document_id}:${row.version}`).join('|');
+  await env.DB.prepare(
+    `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
+     VALUES (?1, ?2, 'ARCHIVE', ?3, 'ASSEMBLED', ?4, ?5, ?6, ?7)`,
+  ).bind(archiveId, id, checkpoint.object_version, session.actorId, cleanText(payload.note || payload.rationale, MAX_CONTEXT_LENGTH, '') || `Archive manifest ${manifest || 'empty'} assembled from checkpoint ${checkpoint.decision_id}.`, engagement.revision + 1, Number(checkpoint.input_generation || 1)).run();
+  const next = await touchEngagement(env, id, null);
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'ARCHIVE_ASSEMBLED', objectType: 'archive', objectId: archiveId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
+  return json(request, { ok: true, duplicate: false, archiveId, targetVersion: checkpoint.object_version, manifest, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
+}
+
+// APPROVAL-02 — the delivery boundary is deliberately separate from release
+// and records custody. A release creates an internal, version-bound pair; a
+// Records Custodian verifies that pair; only then can the Partner make it
+// client-visible and emit a portal delivery event. The operation is replay
+// safe by release identity and the command receipt/idempotency key.
+async function actionDeliverFinalReport(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['engagement_partner'])) {
+    return error(request, 'Only the Partner demo persona can deliver the final report.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const strictCommand = isStrictCommandPayload(payload);
+  const release = await latestDecision(env, id, 'RELEASE');
+  if (!release) return error(request, 'Commit the release event before delivering the final report.', 409, 'RELEASE_EVENT_REQUIRED');
+  const releaseId = String(payload.releaseId || payload.targetId || '').trim();
+  if (strictCommand && releaseId !== release.decision_id) {
+    return error(request, `Delivery targets ${releaseId || 'no release'} but the current release is ${release.decision_id}.`, 409, 'RELEASE_ID_MISMATCH');
+  }
+  const existing = await latestDecision(env, id, 'DELIVERY');
+  if (existing && existing.decision === 'DELIVERED') {
+    if (strictCommand && existing.object_version !== release.object_version) return error(request, 'The stored delivery belongs to another release candidate.', 409, 'DELIVERY_TARGET_MISMATCH');
+    return json(request, { ok: true, duplicate: true, deliveryId: existing.decision_id, releaseId: release.decision_id, targetVersion: release.object_version, evidenceLevel: 'SIMULATION' });
+  }
+  const checkpoint = await latestDecision(env, id, 'RELEASE_CHECKPOINT');
+  if (!checkpoint || checkpoint.decision !== 'VERIFIED' || checkpoint.object_version !== release.object_version) {
+    return error(request, 'Verify the exact release checkpoint before delivery.', 409, 'CHECKPOINT_REQUIRED');
+  }
+
+  // Re-check the current file at the delivery boundary. A new review point,
+  // changed accounting generation or changed opinion after checkpointing
+  // must stop outward delivery; the checkpoint remains historical evidence.
+  const openPoints = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM auditflow_review_points WHERE engagement_id = ?1 AND state = 'OPEN'`,
+  ).bind(id).first();
+  if (Number(openPoints?.n || 0) > 0) return error(request, 'Unresolved review points were added after checkpointing. Reconcile them before delivery.', 409, 'REVIEW_POINTS_OPEN');
+  if (strictCommand) {
+    const generations = await readAccountingGenerations(env, id);
+    if (Number(release.input_generation || 1) !== Number(generations.input)) return error(request, 'Accounting input changed after release checkpointing. Re-evaluate the file before delivery.', 409, 'ACCOUNTING_INPUT_STALE');
+    const opinion = await latestDecision(env, id, 'AUDIT_OPINION');
+    if (!opinion || opinion.object_version !== release.object_version) return error(request, 'The audit opinion no longer matches the released candidate.', 409, 'OPINION_VERSION_MISMATCH');
+  }
+  const artifacts = await env.DB.prepare(
+    `SELECT document_id, document_type, version, state, visibility FROM auditflow_artifacts
+      WHERE engagement_id = ?1 AND document_type IN ('FINAL_REPORT', 'FINAL_FS') AND state = 'PUBLISHED'
+      ORDER BY created_at DESC LIMIT 100`,
+  ).bind(id).all();
+  const rows = artifacts.results || [];
+  const report = rows.find((row) => row.document_type === 'FINAL_REPORT' && row.version === release.object_version);
+  const fs = rows.find((row) => row.document_type === 'FINAL_FS' && row.version === release.object_version);
+  if (!report || !fs) return error(request, 'The exact checkpointed final report and financial-statement pair is missing.', 409, 'ARTIFACT_PAIR_REQUIRED');
+  if (strictCommand && (report.visibility === 'CLIENT_VISIBLE' && fs.visibility === 'CLIENT_VISIBLE')) {
+    // A previous delivery may have been committed without its receipt. Return
+    // a stable result rather than emitting another notification.
+    return json(request, { ok: true, duplicate: true, deliveryId: existing?.decision_id || `delivery-${release.decision_id}`, releaseId: release.decision_id, reportId: report.document_id, fsId: fs.document_id, targetVersion: release.object_version, evidenceLevel: 'SIMULATION' });
+  }
+  await env.DB.prepare(
+    `UPDATE auditflow_artifacts SET visibility = 'CLIENT_VISIBLE' WHERE engagement_id = ?1 AND document_id IN (?2, ?3) AND document_type IN ('FINAL_REPORT', 'FINAL_FS') AND version = ?4`,
+  ).bind(id, report.document_id, fs.document_id, release.object_version).run();
+  const engagement = await readEngagementRow(env, id);
+  if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+  const deliveryId = `DLV-${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`;
+  const note = cleanText(payload.note || payload.rationale, MAX_CONTEXT_LENGTH, '') || `Delivered ${report.document_id} + ${fs.document_id} for release ${release.decision_id}.`;
+  await env.DB.prepare(
+    `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
+      VALUES (?1, ?2, 'DELIVERY', ?3, 'DELIVERED', ?4, ?5, ?6, ?7)`,
+  ).bind(deliveryId, id, release.object_version, session.actorId, note, Number(engagement.revision || 1) + 1, Number(release.input_generation || 1)).run();
+  await env.DB.prepare(
+    `INSERT INTO auditflow_outbox (message_id, engagement_id, channel, recipient, subject, related_type, related_id, state)
+      VALUES (?1, ?2, 'PORTAL_NOTIFICATION', 'client', ?3, 'delivery', ?4, 'SENT_SIMULATION')`,
+  ).bind(crypto.randomUUID(), id, `Final report ${release.object_version} is available`, deliveryId).run();
+  const next = await touchEngagement(env, id, 'STAGE-08');
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'FINAL_REPORT_DELIVERED', objectType: 'delivery', objectId: deliveryId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
+  return json(request, { ok: true, duplicate: false, deliveryId, releaseId: release.decision_id, reportId: report.document_id, fsId: fs.document_id, targetVersion: release.object_version, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
+}
+
 async function latestDecision(env, engagementId, type) {
   return env.DB.prepare(
-    `SELECT * FROM auditflow_decisions WHERE engagement_id = ?1 AND decision_type = ?2 ORDER BY decided_at DESC LIMIT 1`,
+    `SELECT * FROM auditflow_decisions WHERE engagement_id = ?1 AND decision_type = ?2 ORDER BY revision DESC, decided_at DESC, decision_id DESC LIMIT 1`,
   ).bind(engagementId, type).first();
 }
 
@@ -1087,8 +2161,17 @@ async function actionReleaseFinalReport(request, env, session, id, payload, corr
   if (!hasAnyRole(session, ['engagement_partner'])) {
     return error(request, 'Only the Partner demo persona can release the final report.', 403, 'ROLE_NOT_AUTHORIZED');
   }
+  const strictCommand = isStrictCommandPayload(payload);
+  const requestedTargetId = strictCommand ? String(payload.targetId || '').trim() : '';
   const existing = await latestDecision(env, id, 'RELEASE');
   if (existing) {
+    // The engagement id remains a compatibility target for older callers,
+    // while strict callers may bind directly to the candidate/release record.
+    // Never acknowledge a different candidate as an idempotent duplicate.
+    if (strictCommand && requestedTargetId
+      && ![id, existing.object_version, existing.decision_id].includes(requestedTargetId)) {
+      return error(request, `Release target ${requestedTargetId} does not match the current release candidate.`, 409, 'RELEASE_TARGET_MISMATCH');
+    }
     return json(request, { ok: true, duplicate: true, releaseId: existing.decision_id, evidenceLevel: 'SIMULATION' });
   }
   const opinion = await latestDecision(env, id, 'AUDIT_OPINION');
@@ -1097,6 +2180,8 @@ async function actionReleaseFinalReport(request, env, session, id, payload, corr
   if (!eqr || eqr.decision !== 'APPROVE') {
     return error(request, 'Required EQR is incomplete. Release is blocked until EQR approves.', 409, 'EQR_INCOMPLETE');
   }
+  const releaseEngagement = await readEngagementRow(env, id);
+  if (!releaseEngagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
   const openPoints = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM auditflow_review_points WHERE engagement_id = ?1 AND state = 'OPEN'`,
   ).bind(id).first();
@@ -1104,40 +2189,241 @@ async function actionReleaseFinalReport(request, env, session, id, payload, corr
     return error(request, 'Unresolved review points block release. Clear or return each open point first.', 409, 'REVIEW_POINTS_OPEN');
   }
   const candidateVersion = opinion.object_version;
+  if (strictCommand && requestedTargetId
+    && ![id, candidateVersion, opinion.decision_id].includes(requestedTargetId)) {
+    return error(request, `Release target ${requestedTargetId} does not match the current Draft FS candidate ${candidateVersion}.`, 409, 'RELEASE_TARGET_MISMATCH');
+  }
+  const latestDraft = await latestPublishedDraftFs(env, id);
+  const generations = await readAccountingGenerations(env, id);
+  const manager = await latestDecision(env, id, 'MANAGER_COMPLETION');
+  const partnerReview = await latestDecision(env, id, 'PARTNER_COMPLETION_REVIEW');
+  const draftResponse = await latestDecision(env, id, 'DRAFT_FS');
+  const discussion = await latestDecision(env, id, 'FINAL_CLIENT_DISCUSSION');
+  const managerCurrent = Boolean(manager && manager.decision === 'RECOMMEND_COMPLETE' && Number(manager.input_generation || 1) >= generations.input);
+  const partnerCurrent = Boolean(partnerReview && partnerReview.decision === 'APPROVE_FOR_OPINION' && Number(partnerReview.input_generation || 1) >= generations.input);
+  const opinionCurrent = Boolean(latestDraft && opinion.object_version === latestDraft.version);
+  const draftCurrent = Boolean(latestDraft && draftResponse && draftResponse.decision === 'ACCEPT' && draftResponse.object_version === latestDraft.version);
+  const inputCurrent = generations.evaluated === generations.input;
+  const releaseChecks = [
+    { id: 'input-current', label: 'Accounting input generation current (g' + generations.input + ')', pass: inputCurrent, detail: 'Audit evaluated g' + generations.evaluated, code: 'ACCOUNTING_INPUT_STALE' },
+    { id: 'manager-completion', label: 'Manager completion recommendation', pass: managerCurrent, detail: manager ? manager.decision + ' at g' + (manager.input_generation || 1) : 'Not recorded', code: Number(manager?.input_generation || 1) < generations.input ? 'MANAGER_COMPLETION_STALE' : 'MANAGER_COMPLETION_REQUIRED' },
+    { id: 'partner-review', label: 'Partner completion review', pass: partnerCurrent, detail: partnerReview ? partnerReview.decision + ' at g' + (partnerReview.input_generation || 1) : 'Not recorded', code: Number(partnerReview?.input_generation || 1) < generations.input ? 'PARTNER_REVIEW_STALE' : 'PARTNER_REVIEW_REQUIRED' },
+    { id: 'opinion-final', label: 'Audit opinion bound to final FS ' + (latestDraft ? latestDraft.version : '(none)'), pass: opinionCurrent, detail: 'Opinion binds to ' + (opinion.object_version || 'no version'), code: 'OPINION_VERSION_MISMATCH' },
+    { id: 'eqr', label: 'EQR approved', pass: true, detail: 'Approved', code: 'EQR_INCOMPLETE' },
+    { id: 'draft-response', label: 'Client response current', pass: draftCurrent, detail: draftResponse ? draftResponse.decision + ' on ' + (draftResponse.object_version || 'no version') : 'No response', code: 'DRAFT_NOT_ACCEPTED' },
+    { id: 'review-points', label: 'No open review points', pass: true, detail: 'Clear', code: 'REVIEW_POINTS_OPEN' },
+    { id: 'opinion-current', label: 'Opinion evaluated the current input', pass: Boolean(opinion && Number(opinion.input_generation || 1) >= generations.input), detail: 'Opinion evaluated g' + (Number(opinion?.input_generation || 1)), code: 'OPINION_STALE_INPUT' },
+    { id: 'final-discussion', label: 'Final client discussion recorded', pass: Boolean(discussion) && Number(discussion?.input_generation || 1) >= generations.input, detail: discussion ? 'Recorded ' + (discussion.object_version || '') + ' at g' + (discussion.input_generation || 1) : 'Not recorded', code: !discussion ? 'FINAL_DISCUSSION_REQUIRED' : 'FINAL_DISCUSSION_STALE' },
+  ];
+  if (strictCommand) {
+    // Strict M7 release is a real handoff, not a shortcut around the ordinary
+    // portal records. Bind every prerequisite to the exact current candidate
+    // and input generation before creating the release event.
+    const pbcRows = (await env.DB.prepare('SELECT state FROM auditflow_pbc_requests WHERE engagement_id = ?1').bind(id).all()).results || [];
+    const strictChecks = [
+      { code: 'CANDIDATE_REQUIRED', ok: Boolean(latestDraft && candidateVersion === latestDraft.version), message: 'The opinion must name the current Draft FS candidate.' },
+      { code: 'EQR_CANDIDATE_MISMATCH', ok: Boolean(eqr.object_version === candidateVersion), message: 'EQR must approve the exact candidate named by the opinion.' },
+      { code: 'EQR_STALE_INPUT', ok: Number(eqr.input_generation || 1) === generations.input, message: 'EQR must evaluate the current accounting input generation.' },
+      { code: 'OPINION_STALE_INPUT', ok: Number(opinion.input_generation || 1) === generations.input, message: 'The opinion must evaluate the current accounting input generation.' },
+      { code: 'DRAFT_NOT_ACCEPTED', ok: draftCurrent, message: 'Management must accept the current Draft FS candidate.' },
+      { code: 'MANAGER_COMPLETION_REQUIRED', ok: managerCurrent, message: 'The current manager completion recommendation is required.' },
+      { code: 'PARTNER_REVIEW_REQUIRED', ok: partnerCurrent, message: 'The current partner completion review is required.' },
+      { code: 'FINAL_DISCUSSION_REQUIRED', ok: Boolean(discussion) && Number(discussion.input_generation || 1) === generations.input, message: 'The final client discussion must be current.' },
+      { code: 'ACCOUNTING_INPUT_STALE', ok: inputCurrent, message: 'Audit must evaluate the current accounting input.' },
+      { code: 'PBC_NOT_EVALUATED', ok: pbcRows.length > 0 && pbcRows.every((row) => String(row.state || '').toUpperCase() === 'ACCEPTED'), message: 'Every information request must be accepted.' },
+    ];
+    const failedStrict = strictChecks.find((check) => !check.ok);
+    if (failedStrict) return error(request, `Release blocked: ${failedStrict.message}`, 409, failedStrict.code);
+    const submitted = await env.DB.prepare('SELECT COUNT(*) AS n FROM auditflow_workpapers WHERE engagement_id = ?1 AND state = ?2').bind(id, 'SUBMITTED').first();
+    if (!Number(submitted?.n || 0)) return error(request, 'At least one submitted workpaper is required before release.', 409, 'NO_SUBMITTED_WORKPAPERS');
+  }
+  const failedCheck = releaseChecks.find((check) => !check.pass);
+  if (failedCheck) {
+    const checkCorrelationId = requestCorrelationId(request);
+    return json(request, { ok: false, checks: releaseChecks, error: { code: failedCheck.code, message: 'Release blocked: ' + failedCheck.label + ' — ' + failedCheck.detail + '.', correlationId: checkCorrelationId }, evidenceLevel: 'SIMULATION' }, 409, checkCorrelationId);
+  }
   const releaseId = crypto.randomUUID();
   const reportId = crypto.randomUUID();
   const fsId = crypto.randomUUID();
+  const releaseRevision = Number(releaseEngagement.revision || 1) + 1;
+  const artifactVisibility = strictCommand ? 'INTERNAL' : 'CLIENT_VISIBLE';
+  if (strictCommand) {
+    const reportContent = JSON.stringify({ schemaVersion: 'M7-FINAL-REPORT-1', documentType: 'FINAL_REPORT', releaseId, engagementId: id, candidateVersion, opinion: opinion.decision, generatedFor: 'synthetic-demo' });
+    const fsContent = JSON.stringify({ schemaVersion: 'M7-FINAL-FS-1', documentType: 'FINAL_FS', releaseId, engagementId: id, candidateVersion, reportingPeriod: releaseEngagement.period, currency: 'QAR', generatedFor: 'synthetic-demo' });
+    try {
+      await env.DB.prepare(
+        `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at, content_json, release_id)
+          VALUES (?1, ?2, 'FINAL_REPORT', 'Final audit report', ?3, 'PUBLISHED', ?4, ?5, datetime('now'), ?6, ?7)`,
+      ).bind(reportId, id, candidateVersion, artifactVisibility, session.actorId, reportContent, releaseId).run();
+      await env.DB.prepare(
+        `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at, content_json, release_id)
+          VALUES (?1, ?2, 'FINAL_FS', ?3, ?4, 'PUBLISHED', ?5, ?6, datetime('now'), ?7, ?8)`,
+      ).bind(fsId, id, `Final financial statements ${candidateVersion}`, candidateVersion, artifactVisibility, session.actorId, fsContent, releaseId).run();
+    } catch (artifactError) {
+      // Older installations can receive the strict release before migration
+      // 0009.  The exact IDs/version/visibility remain enforced; content is
+      // simply unavailable until the additive column is applied.
+      if (!/no such column|unknown column|content_json|release_id/i.test(String(artifactError?.message || artifactError))) throw artifactError;
+      await env.DB.prepare(
+        `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at)
+          VALUES (?1, ?2, 'FINAL_REPORT', 'Final audit report', ?3, 'PUBLISHED', ?4, ?5, datetime('now'))`,
+      ).bind(reportId, id, candidateVersion, artifactVisibility, session.actorId).run();
+      await env.DB.prepare(
+        `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at)
+          VALUES (?1, ?2, 'FINAL_FS', ?3, ?4, 'PUBLISHED', ?5, ?6, datetime('now'))`,
+      ).bind(fsId, id, `Final financial statements ${candidateVersion}`, candidateVersion, artifactVisibility, session.actorId).run();
+    }
+  } else {
+    // Keep the legacy fixture SQL/parameter order stable for existing demo
+    // walkthroughs and their compatibility tests.
+    await env.DB.prepare(
+      `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at)
+       VALUES (?1, ?2, 'FINAL_REPORT', 'Final audit report', 'v01', 'PUBLISHED', 'CLIENT_VISIBLE', ?3, datetime('now'))`,
+    ).bind(reportId, id, session.actorId).run();
+    await env.DB.prepare(
+      `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at)
+       VALUES (?1, ?2, 'FINAL_FS', ?3, ?4, 'PUBLISHED', 'CLIENT_VISIBLE', ?5, datetime('now'))`,
+    ).bind(fsId, id, `Final financial statements ${candidateVersion}`, candidateVersion, session.actorId).run();
+  }
   await env.DB.prepare(
-    `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at)
-     VALUES (?1, ?2, 'FINAL_REPORT', 'Final audit report', 'v01', 'PUBLISHED', 'CLIENT_VISIBLE', ?3, datetime('now'))`,
-  ).bind(reportId, id, session.actorId).run();
-  await env.DB.prepare(
-    `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at)
-     VALUES (?1, ?2, 'FINAL_FS', ?3, ?4, 'PUBLISHED', 'CLIENT_VISIBLE', ?5, datetime('now'))`,
-  ).bind(fsId, id, `Final financial statements ${candidateVersion}`, candidateVersion, session.actorId).run();
-  await env.DB.prepare(
-    `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision)
-     VALUES (?1, ?2, 'RELEASE', ?3, 'RELEASED', ?4, ?5, 1)`,
-  ).bind(releaseId, id, candidateVersion, session.actorId, cleanText(payload.rationale, MAX_CONTEXT_LENGTH) || '').run();
+    `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
+      VALUES (?1, ?2, 'RELEASE', ?3, 'RELEASED', ?4, ?5, ?6, ?7)`,
+  ).bind(releaseId, id, candidateVersion, session.actorId, cleanText(payload.rationale, MAX_CONTEXT_LENGTH) || '', strictCommand ? releaseRevision : 1, generations.input).run();
+  if (strictCommand) {
+    await env.DB.prepare(
+      `INSERT INTO auditflow_decision_targets
+        (decision_id, generation_id, engagement_id, target_id, target_revision, content_hash, input_generation, policy_version)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+       ON CONFLICT (decision_id) DO NOTHING`,
+    ).bind(releaseId, releaseEngagement.generation_id, id, fsId, releaseRevision, `${reportId}:${fsId}:${candidateVersion}`, generations.input, 'M7-RELEASE-2026-09').run();
+  }
   await upsertTask(env, { taskId: `invoice-${id}`, engagementId: id, assigneeRole: 'finance_team', title: 'Generate final invoice', state: 'OPEN', linkedObjectType: 'decision', linkedObjectId: releaseId });
   const engagement = await touchEngagement(env, id, 'STAGE-08');
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'FINAL_RELEASED', objectType: 'decision', objectId: releaseId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
-  return json(request, { ok: true, duplicate: false, releaseId, reportId, fsId, candidateVersion, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
+  return json(request, { ok: true, duplicate: false, releaseId, reportId, fsId, candidateVersion, checks: releaseChecks, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
 }
 
 async function actionCreateInvoice(request, env, session, id, payload, correlationId) {
   if (!hasAnyRole(session, ['finance_team'])) {
     return error(request, 'Only the Finance demo persona can generate the invoice.', 403, 'ROLE_NOT_AUTHORIZED');
   }
+  const strictCommand = isStrictCommandPayload(payload);
   const release = await latestDecision(env, id, 'RELEASE');
   if (!release) return error(request, 'Release the final report before generating the invoice.', 409, 'PRECONDITION_FAILED');
   const actualHours = cleanHours(payload.actualHours);
   const actualCost = cleanMoney(payload.actualCost);
   if (!actualHours || !actualCost) return error(request, 'Provide actualHours (whole hours) and actualCost as a base-10 money value.');
   const commercial = await env.DB.prepare('SELECT * FROM auditflow_commercial WHERE engagement_id = ?1').bind(id).first();
+  const requestedTargetId = strictCommand ? String(payload.targetId || '').trim() : '';
+  if (strictCommand && requestedTargetId
+    && ![id, release.decision_id, release.object_version, commercial?.invoice_id || ''].includes(requestedTargetId)) {
+    return error(request, `Invoice target ${requestedTargetId} does not match the released candidate.`, 409, 'INVOICE_TARGET_MISMATCH');
+  }
   const feeCents = moneyToCents(commercial?.approved_fee || '');
   const advanceCents = moneyToCents(commercial?.advance_required || '0.00');
   if (feeCents == null || advanceCents == null) return error(request, 'The commercial record has no approved fee yet.', 409, 'PRECONDITION_FAILED');
+
+  // A second key must not issue a second invoice or enqueue another set of
+  // messages.  The command-receipt path catches normal retries; this durable
+  // business-identity guard covers a receipt outage and makes invoice replay
+  // safe across tabs and sessions.
+  if (strictCommand && commercial?.invoice_state === 'ISSUED' && commercial?.invoice_id) {
+    const allocated = ['VERIFIED', 'ALLOCATED'].includes(String(commercial.advance_state || '').toUpperCase()) ? advanceCents : 0;
+    // Reconcile a lost response or a partial provider failure without
+    // emitting another notification. The commercial identity is durable;
+    // each simulated channel is a separate idempotent delivery intent.
+    const subject = `Invoice ${commercial.invoice_id}: balance ${centsToMoney(feeCents - allocated)} QAR (simulation)`;
+    const channels = ['EMAIL', 'WHATSAPP', 'PORTAL_NOTIFICATION'];
+    const existingMessages = await env.DB.prepare(
+      `SELECT channel FROM auditflow_outbox
+       WHERE engagement_id = ?1 AND related_type = 'invoice' AND related_id = ?2`,
+    ).bind(id, commercial.invoice_id).all();
+    const present = new Set((existingMessages.results || []).map((row) => String(row.channel || '').toUpperCase()));
+    for (const channel of channels) {
+      if (present.has(channel)) continue;
+      await env.DB.prepare(
+        `INSERT INTO auditflow_outbox (message_id, engagement_id, channel, recipient, subject, related_type, related_id, state)
+         VALUES (?1, ?2, ?3, 'client', ?4, 'invoice', ?5, 'QUEUED_SIMULATION')`,
+      ).bind(crypto.randomUUID(), id, channel, subject, commercial.invoice_id).run();
+    }
+    return json(request, {
+      ok: true,
+      duplicate: true,
+      invoiceId: commercial.invoice_id,
+      balance: centsToMoney(feeCents - allocated),
+      advanceApplied: centsToMoney(allocated),
+      advanceAllocated: centsToMoney(allocated),
+      advanceRequired: centsToMoney(advanceCents),
+      actualsBasis: 'ENTERED_SUMMARY',
+      commercial,
+      evidenceLevel: 'SIMULATION',
+    });
+  }
+
+  if (strictCommand) {
+    // Required advances are deducted only when the persisted commercial
+    // record says they were actually verified/allocated.  An unverified
+    // requirement remains a payable balance; it is never treated as cash.
+    const advanceState = String(commercial?.advance_state || '').toUpperCase();
+    const advanceAllocated = ['VERIFIED', 'ALLOCATED'].includes(advanceState) ? advanceCents : 0;
+    if (advanceAllocated > feeCents) return error(request, 'The allocated advance cannot exceed the approved fee.', 409, 'ADVANCE_EXCEEDS_FEE');
+    const balance = centsToMoney(feeCents - advanceAllocated);
+    const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase();
+    const engagementSuffix = id.replace(/[^0-9A-Z]/gi, '').slice(-8).toUpperCase() || 'ENG';
+    const invoiceId = `INV-2026-${engagementSuffix}-${Date.now().toString(36).toUpperCase()}-${suffix}`;
+    let invoiceUpdate;
+    try {
+      invoiceUpdate = await env.DB.prepare(
+        `UPDATE auditflow_commercial SET actual_hours = ?2, actual_cost = ?3, invoice_id = ?4, invoice_state = 'ISSUED',
+           advance_allocated = ?5, actuals_basis = 'ENTERED_SUMMARY', release_id = ?6,
+           revision = revision + 1, updated_at = datetime('now') WHERE engagement_id = ?1 AND invoice_state <> 'ISSUED'`,
+      ).bind(id, actualHours, actualCost, invoiceId, centsToMoney(advanceAllocated), release.decision_id).run();
+    } catch (invoiceError) {
+      // The finance/content columns are additive.  Keep strict commands
+      // compatible during a rolling migration while still applying the
+      // non-overwrite invoice guard.
+      if (!/no such column|unknown column|advance_allocated|actuals_basis|release_id/i.test(String(invoiceError?.message || invoiceError))) throw invoiceError;
+      invoiceUpdate = await env.DB.prepare(
+        `UPDATE auditflow_commercial SET actual_hours = ?2, actual_cost = ?3, invoice_id = ?4, invoice_state = 'ISSUED',
+           revision = revision + 1, updated_at = datetime('now') WHERE engagement_id = ?1 AND invoice_state <> 'ISSUED'`,
+      ).bind(id, actualHours, actualCost, invoiceId).run();
+    }
+    if (invoiceUpdate?.meta && Number(invoiceUpdate.meta.changes) === 0) {
+      const current = await env.DB.prepare('SELECT * FROM auditflow_commercial WHERE engagement_id = ?1').bind(id).first();
+      if (current?.invoice_state === 'ISSUED' && current.invoice_id) {
+        const allocated = ['VERIFIED', 'ALLOCATED'].includes(String(current.advance_state || '').toUpperCase()) ? advanceCents : 0;
+        return json(request, { ok: true, duplicate: true, invoiceId: current.invoice_id, balance: centsToMoney(feeCents - allocated), advanceApplied: centsToMoney(allocated), advanceAllocated: centsToMoney(allocated), actualsBasis: 'ENTERED_SUMMARY', commercial: current, evidenceLevel: 'SIMULATION' });
+      }
+      return error(request, 'The commercial record changed before the invoice could be issued. Reconcile and retry the same command.', 409, 'REVISION_CONFLICT');
+    }
+    const subject = `Invoice ${invoiceId}: balance ${balance} QAR (simulation)`;
+    for (const channel of ['EMAIL', 'WHATSAPP', 'PORTAL_NOTIFICATION']) {
+      await env.DB.prepare(
+        `INSERT INTO auditflow_outbox (message_id, engagement_id, channel, recipient, subject, related_type, related_id, state)
+         VALUES (?1, ?2, ?3, 'client', ?4, 'invoice', ?5, 'QUEUED_SIMULATION')`,
+      ).bind(crypto.randomUUID(), id, channel, subject, invoiceId).run();
+    }
+    await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`invoice-${id}`).run();
+    const engagement = await touchEngagement(env, id, null);
+    await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'INVOICE_ISSUED', objectType: 'invoice', objectId: invoiceId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
+    const updated = await env.DB.prepare('SELECT * FROM auditflow_commercial WHERE engagement_id = ?1').bind(id).first();
+    return json(request, {
+      ok: true,
+      duplicate: false,
+      invoiceId,
+      balance,
+      advanceApplied: centsToMoney(advanceAllocated),
+      advanceAllocated: centsToMoney(advanceAllocated),
+      advanceRequired: centsToMoney(advanceCents),
+      actualsBasis: 'ENTERED_SUMMARY',
+      commercial: updated || null,
+      engagement: serializeEngagementState(engagement),
+      evidenceLevel: 'SIMULATION',
+    }, 201);
+  }
+
+  // Legacy/local compatibility path.  Keep its fixed fixture arithmetic and
+  // response shape while migrated clients use the strict branch above.
   const balance = centsToMoney(feeCents - advanceCents);
   const invoiceId = `INV-2026-${id.replace(/[^0-9]/g, '').slice(-4) || '0018'}`;
   await env.DB.prepare(
@@ -1173,44 +2459,243 @@ async function actionCloseEngagement(request, env, session, id, payload, correla
   return json(request, { ok: true, duplicate: false, commercial: updated || null, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
 }
 
+async function readCommandReceipt(env, { generationId, engagementId, actorId, idempotencyKey } = {}) {
+  if (!generationId || !engagementId || !actorId || !idempotencyKey) return null;
+  try {
+    return await env.DB.prepare(
+      `SELECT command_id, request_digest, result_json, claimed_revision
+       FROM auditflow_command_receipts
+       WHERE generation_id = ?1 AND engagement_id = ?2 AND actor_id = ?3 AND idempotency_key = ?4`,
+    ).bind(generationId, engagementId, actorId, idempotencyKey).first();
+  } catch { return null; }
+}
+
+// Receipts are durable audit metadata, not a secret store.  A strict
+// credential command may return a one-time synthetic password to the caller
+// that initiated it, but that value must never be persisted for replay,
+// inspection, or event projection.  Keep this allow-list style scrub small so
+// business results remain inspectable while secret-like fields are removed.
+function receiptSafeResult(result) {
+  if (!result || typeof result !== 'object') return result;
+  const scrub = (value, key = '') => {
+    if (value == null || typeof value !== 'object') return value;
+    if (/password|token|secret/i.test(key)) return undefined;
+    if (Array.isArray(value)) return value.map((item) => scrub(item)).filter((item) => item !== undefined);
+    const copy = {};
+    for (const [childKey, childValue] of Object.entries(value)) {
+      const cleaned = scrub(childValue, childKey);
+      if (cleaned !== undefined) copy[childKey] = cleaned;
+    }
+    return copy;
+  };
+  const safe = scrub(result) || {};
+  if (result.temporaryPassword) safe.temporaryPasswordIssued = true;
+  return safe;
+}
+
+async function persistCommandReceipt(env, command, result) {
+  if (!command?.idempotencyKey || !command?.requestDigest || !result) return;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO auditflow_command_receipts
+        (command_id, generation_id, engagement_id, actor_id, idempotency_key, request_digest, result_json, claimed_revision, view_id, parent_session_id)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+       ON CONFLICT (generation_id, engagement_id, actor_id, idempotency_key) DO NOTHING`,
+    ).bind(command.commandId, command.generationId, command.engagementId, command.actorId, command.idempotencyKey, command.requestDigest, JSON.stringify(receiptSafeResult(result)), Number(result.revision || command.expectedRevision || 1), command.viewId || '', command.parentSessionId || '').run();
+  } catch { /* Legacy action remains usable if migration is not present. */ }
+}
+
+async function responseJson(response) {
+  try { return await response.clone().json(); } catch { return null; }
+}
+
+async function resolveEffectiveActionSession(request, env, session, engagementId) {
+  const viewId = readViewId(request);
+  if (!viewId) return { session, view: null };
+  const view = await readDemoView(env, session, viewId);
+  if (!view) return { response: error(request, 'The workspace view is not active for this session.', 409, 'VIEW_CONTEXT_INVALID') };
+  if (view.engagement_id !== engagementId) return { response: error(request, 'The workspace view is scoped to another engagement.', 409, 'VIEW_SCOPE_CONFLICT') };
+  const expected = request.headers.get('X-AuditFlow-Context-Version');
+  if (expected && Number(expected) !== Number(view.context_version)) return { response: error(request, 'The workspace context changed; reload before acting.', 409, 'CONTEXT_VERSION_CONFLICT') };
+  return { session: effectiveSessionForView(view, session), view };
+}
+
 async function dispatchEngagementAction(request, env, engagementId) {
   const id = readEngagementId(engagementId);
   if (!id) return error(request, 'A valid engagement id is required.');
   if (env.ALLOW_DEMO_WRITES === 'false') return error(request, 'Demo writes are currently disabled.', 403, 'WRITES_DISABLED');
-  const session = await resolveDemoSession(request, env);
-  if (!session) return error(request, 'No active shared demo session. Choose a persona first.', 401, 'SESSION_REQUIRED');
+  const parentSession = await resolveDemoSession(request, env);
+  if (!parentSession) return error(request, 'No active shared demo session. Choose a persona first.', 401, 'SESSION_REQUIRED');
+  const resolved = await resolveEffectiveActionSession(request, env, parentSession, id);
+  if (resolved.response) return resolved.response;
+  const session = resolved.session;
   if (!(ACTOR_ASSIGNMENTS[session.actorId] || []).includes(id)) {
     return error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
   }
-  const payload = await readJson(request);
-  if (!payload) return error(request, 'Send a JSON object in the request body.');
-  const action = String(payload.action || '').trim();
+  // The migrated client sends the strict envelope. Keep the legacy shape
+  // temporarily for older prototype pages and direct compatibility tests,
+  // but never treat an envelope as a business payload.
+  let envelope;
+  const commandHeader = String(request.headers.get('X-AuditFlow-Command') || '').trim().toLowerCase();
+  if (commandHeader === 'v1') {
+    try { envelope = await readCommandEnvelope(request, SHARED_ACTION_SET); }
+    catch (inputError) { return error(request, inputError.message, inputError.status || 400, inputError.code || 'COMMAND_INVALID'); }
+  } else {
+    envelope = await readJson(request);
+  }
+  if (!envelope) return error(request, 'Send a JSON object in the request body.');
+  const strictEnvelope = commandHeader === 'v1' || Object.hasOwn(envelope, 'payload');
+  if (strictEnvelope && commandHeader !== 'v1') {
+    const checkedEnvelope = validateCommandEnvelope(envelope, SHARED_ACTION_SET);
+    if (!checkedEnvelope.ok) return error(request, checkedEnvelope.message, 400, checkedEnvelope.code);
+    envelope = checkedEnvelope.value;
+  }
+  const payload = strictEnvelope
+    ? { ...(envelope.payload || {}), action: envelope.action, idempotencyKey: envelope.idempotencyKey,
+      expectedRevision: envelope.expectedRevision, expectedGenerationId: envelope.expectedGenerationId,
+      expectedContextVersion: envelope.expectedContextVersion, targetId: envelope.targetId, __strictCommand: true }
+    : envelope;
+  const action = String(envelope.action || '').trim();
   if (!/^[A-Z][A-Z0-9_]{2,59}$/.test(action)) return error(request, 'Provide a valid workflow action name.');
+  // Strict commands use the same positive role registry that shapes the
+  // workspace action list.  Individual handlers still repeat their checks as
+  // a defence-in-depth boundary, while legacy prototype payloads retain their
+  // compatibility path until callers migrate to the v1 envelope.
+  if (strictEnvelope && !actionAllowed(action, session.roles || [])) {
+    return error(request, `The ${session.personaId || 'current'} demo persona is not allowed to perform ${action}.`, 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  if (strictEnvelope) {
+    const payloadValidation = validateActionPayload(action, payload);
+    if (!payloadValidation.ok) return error(request, payloadValidation.message, 400, payloadValidation.code);
+  }
   const correlationId = requestCorrelationId(request);
-  if (action === 'SUBMIT_CLIENT_DETAILS') return actionSubmitClientDetails(request, env, session, id, payload, correlationId);
-  if (action === 'ACCEPT_CLIENT') return actionAcceptClient(request, env, session, id, payload, correlationId);
-  if (action === 'VERIFY_ADVANCE') return actionVerifyAdvance(request, env, session, id, payload, correlationId);
-  if (action === 'ISSUE_TEMP_CREDENTIAL') return actionIssueTempCredential(request, env, session, id, payload, correlationId);
-  if (action === 'ACTIVATE_PORTAL') return actionActivatePortal(request, env, session, id, payload, correlationId);
-  if (action === 'ISSUE_ANNOUNCEMENT') return actionIssueAnnouncement(request, env, session, id, payload, correlationId);
-  if (action === 'RECORD_ESTIMATE') return actionRecordEstimate(request, env, session, id, payload, correlationId);
-  if (action === 'APPROVE_FEE') return actionApproveFee(request, env, session, id, payload, correlationId);
-  if (action === 'RESPOND_EL') return actionRespondEl(request, env, session, id, payload, correlationId);
-  if (action === 'CREATE_PBC_REQUEST') return actionCreatePbcRequest(request, env, session, id, payload, correlationId);
-  if (action === 'SUBMIT_PBC_RECEIPT') return actionSubmitPbcReceipt(request, env, session, id, payload, correlationId);
-  if (action === 'RESPOND_PBC_RECEIPT') return actionRespondPbcReceipt(request, env, session, id, payload, correlationId);
-  if (action === 'RECORD_TB_SOURCE') return actionRecordTbSource(request, env, session, id, payload, correlationId);
-  if (action === 'SUBMIT_WORKPAPER') return actionSubmitWorkpaper(request, env, session, id, payload, correlationId);
-  if (action === 'CREATE_REVIEW_POINT') return actionCreateReviewPoint(request, env, session, id, payload, correlationId);
-  if (action === 'CLEAR_REVIEW_POINT') return actionClearReviewPoint(request, env, session, id, payload, correlationId);
-  if (action === 'PUBLISH_DRAFT_FS') return actionPublishDraftFs(request, env, session, id, payload, correlationId);
-  if (action === 'RESPOND_DRAFT_FS') return actionRespondDraftFs(request, env, session, id, payload, correlationId);
-  if (action === 'COMPLETE_EQR') return actionCompleteEqr(request, env, session, id, payload, correlationId);
-  if (action === 'RECORD_AUDIT_OPINION') return actionRecordAuditOpinion(request, env, session, id, payload, correlationId);
-  if (action === 'RELEASE_FINAL_REPORT') return actionReleaseFinalReport(request, env, session, id, payload, correlationId);
-  if (action === 'CREATE_INVOICE') return actionCreateInvoice(request, env, session, id, payload, correlationId);
-  if (action === 'CLOSE_ENGAGEMENT') return actionCloseEngagement(request, env, session, id, payload, correlationId);
-  return error(request, `Shared action ${action} is not enabled yet in this demo phase. The decision was not committed.`, 501, 'ACTION_NOT_ENABLED');
+  let command = null;
+  if (strictEnvelope || payload.targetId || payload.expectedGenerationId || payload.expectedContextVersion) {
+    const current = await readEngagementRow(env, id);
+    const valid = validateCommandEnvelope({
+      action,
+      targetId: String(envelope.targetId || payload.linkedObjectId || id),
+      payload: strictEnvelope ? envelope.payload : payload,
+      idempotencyKey: String(envelope.idempotencyKey || ''),
+      expectedGenerationId: String(envelope.expectedGenerationId || current?.generation_id || ''),
+      expectedRevision: Number(envelope.expectedRevision),
+      expectedContextVersion: Number(envelope.expectedContextVersion || resolved.view?.context_version || 1),
+    }, SHARED_ACTION_SET);
+    if (!valid.ok) return error(request, valid.message, 400, valid.code);
+    const requestDigest = await sha256Hex(JSON.stringify(envelope));
+    // Keep the command's expected revision immutable.  A replay is a valid
+    // operation even after a later command has advanced the aggregate; the
+    // receipt lookup therefore happens before the optimistic revision guard.
+    // Reset/generation changes still fail closed before this lookup.
+    if (!current || current.generation_id !== valid.value.expectedGenerationId) return error(request, 'The command targets an older demo generation.', 409, 'GENERATION_CONFLICT');
+    if (resolved.view && resolved.view.generation_id !== current.generation_id) return error(request, 'The workspace view targets an older demo generation.', 409, 'RESET_REQUIRED');
+    command = { commandId: `cmd-${crypto.randomUUID().replaceAll('-', '')}`, generationId: valid.value.expectedGenerationId, engagementId: id, actorId: session.actorId, idempotencyKey: valid.value.idempotencyKey, requestDigest, expectedRevision: valid.value.expectedRevision, expectedContextVersion: valid.value.expectedContextVersion, viewId: resolved.view?.view_id || '', parentSessionId: parentSession.sessionId };
+    const prior = await readCommandReceipt(env, command);
+    if (prior) {
+      if (prior.request_digest !== requestDigest) return error(request, 'The idempotency key is already bound to a different command.', 409, 'IDEMPOTENCY_CONFLICT');
+      try { return json(request, { ...JSON.parse(prior.result_json), replayed: true, evidenceLevel: 'SIMULATION' }); } catch { /* execute and reconcile */ }
+    }
+    // If the receipt was lost after the handler committed, an event with the
+    // same scoped key is enough to reconcile the intent without running the
+    // mutation a second time.  This result is deliberately marked as a
+    // replay; the next workspace refresh supplies the complete projection.
+    const priorEvent = await findScopedEventByIdempotency(env, id, valid.value.idempotencyKey, session.actorId);
+    if (priorEvent) {
+      const reconciled = {
+        ok: true,
+        outcome: 'COMMITTED',
+        duplicate: true,
+        replayed: true,
+        commandId: priorEvent.event_id || command.commandId,
+        engagementId: id,
+        generationId: current.generation_id,
+        actorId: session.actorId,
+        revision: Number(priorEvent.new_revision || current.revision),
+        eventId: priorEvent.event_id || null,
+        evidenceLevel: 'SIMULATION',
+      };
+      await persistCommandReceipt(env, command, reconciled);
+      return json(request, reconciled, 200, correlationId);
+    }
+    // Only a fresh intent is subject to the current optimistic revision guard.
+    if (Number(current.revision) !== valid.value.expectedRevision) return error(request, 'The engagement changed since this command was loaded.', 409, 'REVISION_CONFLICT');
+  }
+  let response;
+  try {
+  if (action === 'SUBMIT_AUDIT_FILE') response = await actionSubmitAuditFile(request, env, session, id, payload, correlationId);
+  else if (action === 'RECOMMEND_COMPLETION') response = await actionRecommendCompletion(request, env, session, id, payload, correlationId);
+  else if (action === 'RETURN_TO_TEAM') response = await actionReturnToTeam(request, env, session, id, payload, correlationId);
+  else if (action === 'REVIEW_PARTNER_COMPLETION') response = await actionReviewPartnerCompletion(request, env, session, id, payload, correlationId);
+  else if (action === 'RETURN_TO_MANAGER') response = await actionReturnToManager(request, env, session, id, payload, correlationId);
+  else if (action === 'VERIFY_RELEASE_CHECKPOINT') response = await actionVerifyReleaseCheckpoint(request, env, session, id, payload, correlationId);
+  else if (action === 'ASSEMBLE_ARCHIVE') response = await actionAssembleArchive(request, env, session, id, payload, correlationId);
+  else if (action === 'APPLY_SCENARIO_PRESET') response = await actionApplyScenarioPreset(request, env, session, id, payload, correlationId);
+  else if (action === 'SUBMIT_CLIENT_DETAILS') response = await actionSubmitClientDetails(request, env, session, id, payload, correlationId);
+  else if (action === 'ACCEPT_CLIENT') response = await actionAcceptClient(request, env, session, id, payload, correlationId);
+  else if (action === 'VERIFY_ADVANCE') response = await actionVerifyAdvance(request, env, session, id, payload, correlationId);
+  else if (action === 'ISSUE_TEMP_CREDENTIAL') response = await actionIssueTempCredential(request, env, session, id, payload, correlationId);
+  else if (action === 'ACTIVATE_PORTAL') response = await actionActivatePortal(request, env, session, id, payload, correlationId);
+  else if (action === 'ISSUE_ANNOUNCEMENT') response = await actionIssueAnnouncement(request, env, session, id, payload, correlationId);
+  else if (action === 'RECORD_ESTIMATE') response = await actionRecordEstimate(request, env, session, id, payload, correlationId);
+  else if (action === 'APPROVE_FEE') response = await actionApproveFee(request, env, session, id, payload, correlationId);
+  else if (action === 'RESPOND_EL') response = await actionRespondEl(request, env, session, id, payload, correlationId);
+  else if (action === 'CREATE_PBC_REQUEST') response = await actionCreatePbcRequest(request, env, session, id, payload, correlationId);
+  else if (action === 'SUBMIT_PBC_RECEIPT') response = await actionSubmitPbcReceipt(request, env, session, id, payload, correlationId);
+  else if (action === 'RESPOND_PBC_RECEIPT') response = await actionRespondPbcReceipt(request, env, session, id, payload, correlationId);
+  else if (action === 'RECORD_TB_SOURCE') response = await actionRecordTbSource(request, env, session, id, payload, correlationId);
+  else if (action === 'SUBMIT_WORKPAPER') response = await actionSubmitWorkpaper(request, env, session, id, payload, correlationId);
+  else if (action === 'CREATE_REVIEW_POINT') response = await actionCreateReviewPoint(request, env, session, id, payload, correlationId);
+  else if (action === 'CLEAR_REVIEW_POINT') response = await actionClearReviewPoint(request, env, session, id, payload, correlationId);
+  else if (action === 'PUBLISH_DRAFT_FS') response = await actionPublishDraftFs(request, env, session, id, payload, correlationId);
+  else if (action === 'RESPOND_DRAFT_FS') response = await actionRespondDraftFs(request, env, session, id, payload, correlationId);
+  else if (action === 'COMPLETE_EQR') response = await actionCompleteEqr(request, env, session, id, payload, correlationId);
+  else if (action === 'RECORD_ASSESSMENT_RESPONSE') response = await recordAssessmentResponse(request, env, session, id, payload, correlationId);
+  else if (action === 'UPDATE_ACCOUNTING_STATUS') response = await updateAccountingStatus(request, env, session, id, payload, correlationId);
+  else if (action === 'APPROVE_ACCOUNTING_FS') response = await approveAccountingFs(request, env, session, id, payload, correlationId);
+  else if (action === 'EVALUATE_ACCOUNTING_INPUT') response = await evaluateAccountingInput(request, env, session, id, payload, correlationId);
+  else if (action === 'RECORD_MANAGER_COMPLETION') response = await actionRecordManagerCompletion(request, env, session, id, payload, correlationId);
+  else if (action === 'RECORD_PARTNER_REVIEW') response = await actionRecordPartnerReview(request, env, session, id, payload, correlationId);
+  else if (action === 'RECORD_FINAL_DISCUSSION') response = await actionRecordFinalDiscussion(request, env, session, id, payload, correlationId);
+  else if (action === 'RECORD_AUDIT_OPINION') response = await actionRecordAuditOpinion(request, env, session, id, payload, correlationId);
+  else if (action === 'RELEASE_FINAL_REPORT') response = await actionReleaseFinalReport(request, env, session, id, payload, correlationId);
+  else if (action === 'DELIVER_FINAL_REPORT') response = await actionDeliverFinalReport(request, env, session, id, payload, correlationId);
+  else if (action === 'CREATE_INVOICE') response = await actionCreateInvoice(request, env, session, id, payload, correlationId);
+  else if (action === 'CLOSE_ENGAGEMENT') response = await actionCloseEngagement(request, env, session, id, payload, correlationId);
+  else return error(request, `Shared action ${action} is not enabled yet in this demo phase. The decision was not committed.`, 501, 'ACTION_NOT_ENABLED');
+  } catch (caught) {
+    // A strict command that reaches an unexpected D1/provider failure has an
+    // unconfirmed outcome. Do not turn an unknown commit state into a
+    // rejection; the caller must reconcile or retry the same intent key.
+    if (command) {
+      return json(request, {
+        ok: false,
+        outcome: 'UNCERTAIN',
+        code: 'COMMIT_UNCONFIRMED',
+        message: 'The command outcome could not be confirmed. Reconcile or retry the same idempotency key.',
+        commandId: command.commandId,
+        engagementId: id,
+        generationId: command.generationId,
+        actorId: session.actorId,
+        revision: command.expectedRevision,
+        evidenceLevel: 'SIMULATION',
+      }, 503, correlationId);
+    }
+    throw caught;
+  }
+  if (command) {
+    const body = await responseJson(response);
+    const outcomeBody = body?.ok
+      ? { ...body, outcome: body.outcome || 'COMMITTED', commandId: body.commandId || command.commandId,
+        engagementId: body.engagementId || id, generationId: body.generationId || command.generationId,
+        actorId: body.actorId || session.actorId, revision: body.revision || body.engagement?.revision || command.expectedRevision + 1 }
+      : { ...(body || {}), ok: false, outcome: 'REJECTED', commandId: command.commandId,
+        engagementId: id, generationId: command.generationId, actorId: session.actorId, revision: command.expectedRevision };
+    if (outcomeBody.ok) await persistCommandReceipt(env, command, outcomeBody);
+    // Strict callers consume the command outcome contract. Legacy callers keep
+    // the historical response shape for backward compatibility.
+    return json(request, outcomeBody, response.status, correlationId);
+  }
+  return response;
 }
 
 async function resetSharedDemo(request, env) {
@@ -1248,6 +2733,938 @@ async function resetSharedDemo(request, env) {
 
 const STAFF_ROLES = ['system_admin', 'engagement_partner', 'signatory', 'audit_senior', 'audit_manager', 'preparer', 'independent_reviewer', 'accounting_reviewer', 'finance_team', 'eqr_reviewer', 'compliance_reviewer', 'records_custodian'];
 
+// Phase C — shared client evaluation on the canonical question bank.
+// D1 stores question IDs + responses only; holds, hard stops, categories and
+// the system recommendation are always derived from the versioned bank, so
+// the bank stays the single source of question wording and rules.
+const CE032_ANSWERS = ['NO_MATCH', 'POSSIBLE_MATCH', 'MATCH_CONFIRMED', 'CONFIRMED_PROHIBITION', 'UNKNOWN'];
+const CE_STANDARD_ANSWERS = ['YES', 'NO', 'UNKNOWN'];
+
+function assessmentQuestionById(questionId) {
+  return clientEvaluationQuestions.find((question) => question.id === questionId) || null;
+}
+
+function assessmentActorCanRespond(session, question) {
+  if (question.professionalOnly) {
+    return hasAnyRole(session, ['engagement_partner', 'compliance_reviewer', 'system_admin']);
+  }
+  return hasAnyRole(session, ['client_contributor', 'client_finance', 'management_approver', 'preparer', 'compliance_reviewer', 'engagement_partner', 'system_admin']);
+}
+
+async function readAssessmentRows(env, engagementId) {
+  const assessment = await env.DB.prepare(
+    'SELECT * FROM auditflow_assessments WHERE engagement_id = ?1 AND type = ?2',
+  ).bind(engagementId, 'acceptance').first();
+  if (!assessment) return { assessment: null, responses: [] };
+  const result = await env.DB.prepare(
+    'SELECT * FROM auditflow_assessment_responses WHERE assessment_id = ?1',
+  ).bind(assessment.assessment_id).all();
+  return { assessment: assessment, responses: result.results || [] };
+}
+
+function summarizeAssessment(assessment, responses) {
+  const responseMap = {};
+  for (const row of responses) {
+    responseMap[row.question_id] = {
+      questionId: row.question_id,
+      templateVersion: QUESTION_BANK_VERSION,
+      applicability: row.applicability,
+      answer: row.answer,
+      explanation: row.explanation || '',
+      evidenceSnapshotId: row.evidence_ref || null,
+      respondentActorId: row.responder || null,
+      respondedAt: row.updated_at || null,
+      verification: row.verification,
+      disposition: row.disposition || '',
+    };
+  }
+  const evaluation = evaluateAssessment({ type: 'acceptance', responses: responseMap });
+  // The historical domain evaluator remains useful for the catalogue's
+  // directional rules.  M7 also applies the typed policy keyed by question
+  // identity so evidence, applicability and specialist dispositions cannot
+  // be inferred from human-readable prose.  Merge both sets without
+  // duplicating the same question/code hold.
+  const typedHolds = [];
+  for (const response of Object.values(responseMap)) {
+    const policy = questionPolicyFor(response.questionId);
+    if (!policy) {
+      typedHolds.push({ questionId: response.questionId, code: 'POLICY_NOT_CONFIGURED', message: 'No typed policy is configured for this question.' });
+      continue;
+    }
+    const typed = validateQuestionResponse(response);
+    for (const hold of typed.blockers || []) {
+      if (!evaluation.holds.some((existing) => existing.questionId === hold.targetId && existing.code === hold.code)) {
+        typedHolds.push({ questionId: hold.targetId || response.questionId, code: hold.code, message: hold.message });
+      }
+    }
+  }
+  const mergedHolds = [...evaluation.holds, ...typedHolds];
+  const holdsByQuestion = {};
+  for (const hold of mergedHolds) {
+    if (!holdsByQuestion[hold.questionId]) holdsByQuestion[hold.questionId] = [];
+    holdsByQuestion[hold.questionId].push(hold);
+  }
+  const categories = [];
+  const seen = {};
+  for (const question of clientEvaluationQuestions) {
+    if (!seen[question.category]) {
+      seen[question.category] = { name: question.category, total: 0, answered: 0, verified: 0, holds: 0, clear: true };
+      categories.push(seen[question.category]);
+    }
+    const entry = seen[question.category];
+    const response = responseMap[question.id];
+    entry.total += 1;
+    const questionHolds = holdsByQuestion[question.id] || [];
+    if (questionHolds.length) {
+      entry.holds += questionHolds.length;
+      entry.clear = false;
+    }
+    if (response && response.applicability !== 'NOT_APPLICABLE') {
+      const blocking = questionHolds.some((hold) => hold.code === 'RESPONSE_REQUIRED' || hold.code === 'ANSWER_INVALID');
+      if (!blocking) {
+        entry.answered += 1;
+        if (response.verification === 'VERIFIED') entry.verified += 1;
+      }
+    }
+  }
+  const hardStops = mergedHolds.filter((hold) => hold.code === 'HARD_STOP_RESPONSE');
+  const blocking = [...evaluation.prohibitions, ...mergedHolds.filter((hold) => hold.code !== 'FOLLOW_UP_RECORDED')];
+  const recommendation = evaluation.prohibitions.length ? 'DECLINE'
+    : hardStops.length ? 'HOLD'
+    : mergedHolds.length ? 'REVIEW' : 'ACCEPT';
+  return {
+    assessmentId: assessment ? assessment.assessment_id : null,
+    type: 'acceptance',
+    templateVersion: QUESTION_BANK_VERSION,
+    state: assessment ? 'IN_PROGRESS' : 'NOT_STARTED',
+    revision: assessment ? assessment.revision : 0,
+    updatedAt: assessment ? assessment.updated_at : null,
+    totalQuestions: clientEvaluationQuestions.length,
+    required: evaluation.applicable,
+    answered: evaluation.answered,
+    verified: evaluation.verified,
+    holds: mergedHolds,
+    hardStops: hardStops,
+    prohibitions: evaluation.prohibitions,
+    blocking: blocking,
+    recommendation: recommendation,
+    categories: categories,
+  };
+}
+
+// A client-facing assessment projection must not reveal professional-only
+// question IDs, reviewer rationale, or internal hold details merely because
+// the client shares the engagement scope. Keep the same canonical response
+// data for staff while reducing the summary to the questions visible to the
+// current effective actor.
+function assessmentSummaryForSession(summary, responses, session) {
+  if (!summary || !isClientOnlySession(session)) return summary;
+  const visibleQuestions = clientEvaluationQuestions.filter((question) => !question.professionalOnly);
+  const visibleIds = new Set(visibleQuestions.map((question) => question.id));
+  const visibleRows = (Array.isArray(responses) ? responses : []).filter((row) => visibleIds.has(row.question_id));
+  const holds = (summary.holds || []).filter((hold) => visibleIds.has(hold.questionId));
+  const hardStops = (summary.hardStops || []).filter((hold) => visibleIds.has(hold.questionId));
+  const prohibitions = (summary.prohibitions || []).filter((hold) => visibleIds.has(hold.questionId));
+  const blocking = (summary.blocking || []).filter((hold) => visibleIds.has(hold.questionId));
+  const categories = [];
+  const categoryMap = new Map();
+  for (const question of visibleQuestions) {
+    let category = categoryMap.get(question.category);
+    if (!category) {
+      category = { name: question.category, total: 0, answered: 0, verified: 0, holds: 0, clear: true };
+      categoryMap.set(question.category, category);
+      categories.push(category);
+    }
+    category.total += 1;
+    const response = visibleRows.find((row) => row.question_id === question.id);
+    const questionHolds = holds.filter((hold) => hold.questionId === question.id);
+    category.holds += questionHolds.length;
+    category.clear = category.clear && questionHolds.length === 0;
+    if (response && String(response.applicability || 'APPLICABLE').toUpperCase() !== 'NOT_APPLICABLE') {
+      const answer = String(response.answer || 'UNKNOWN').toUpperCase();
+      if (!['UNKNOWN', 'MISSING'].includes(answer)) category.answered += 1;
+      if (String(response.verification || '').toUpperCase() === 'VERIFIED') category.verified += 1;
+    }
+  }
+  const applicable = visibleRows.filter((row) => String(row.applicability || 'APPLICABLE').toUpperCase() !== 'NOT_APPLICABLE').length;
+  const answered = visibleRows.filter((row) => !['UNKNOWN', 'MISSING'].includes(String(row.answer || 'UNKNOWN').toUpperCase())).length;
+  const verified = visibleRows.filter((row) => String(row.applicability || 'APPLICABLE').toUpperCase() !== 'NOT_APPLICABLE' && String(row.verification || '').toUpperCase() === 'VERIFIED').length;
+  return {
+    ...summary,
+    totalQuestions: visibleQuestions.length,
+    required: applicable,
+    answered,
+    verified,
+    holds,
+    hardStops,
+    prohibitions,
+    blocking,
+    categories,
+    recommendation: prohibitions.length ? 'DECLINE' : hardStops.length ? 'HOLD' : holds.length ? 'REVIEW' : 'ACCEPT',
+  };
+}
+
+async function readAssessmentGate(env, engagementId) {
+  const found = await readAssessmentRows(env, engagementId);
+  if (!found.assessment || !found.responses.length) {
+    return { started: false, holds: [], hardStops: [], prohibitions: [], blocking: [], summary: null };
+  }
+  const summary = summarizeAssessment(found.assessment, found.responses);
+  return { started: true, holds: summary.holds, hardStops: summary.hardStops, prohibitions: summary.prohibitions, blocking: summary.blocking, summary: summary };
+}
+
+async function getAssessmentSummary(request, env, url) {
+  const engagementId = readEngagementId(url.searchParams.get('engagementId'));
+  if (!engagementId) return error(request, 'A valid engagementId is required.');
+  const checked = await requireEngagementScope(request, env, engagementId);
+  if (checked.response) return checked.response;
+  const found = await readAssessmentRows(env, engagementId);
+  if (!found.assessment) {
+    return json(request, {
+      ok: true,
+      assessment: null,
+      summary: summarizeAssessment(null, []),
+      responses: [],
+      evidenceLevel: 'SIMULATION',
+    });
+  }
+  let responses = found.responses;
+  if (isClientOnlySession(checked.session)) {
+    const internal = new Set(clientEvaluationQuestions.filter((question) => question.professionalOnly).map((question) => question.id));
+    responses = responses.filter((row) => !internal.has(row.question_id));
+  }
+  return json(request, {
+    ok: true,
+    assessment: { assessmentId: found.assessment.assessment_id, type: found.assessment.type, templateVersion: QUESTION_BANK_VERSION, revision: found.assessment.revision, updatedAt: found.assessment.updated_at },
+    summary: assessmentSummaryForSession(summarizeAssessment(found.assessment, found.responses), responses, checked.session),
+    responses: responses,
+    evidenceLevel: 'SIMULATION',
+  });
+}
+
+async function recordAssessmentResponse(request, env, session, id, payload, correlationId) {
+  const strictCommand = isStrictCommandPayload(payload);
+  const items = Array.isArray(payload.responses) && payload.responses.length
+    ? payload.responses
+    : [{ questionId: payload.questionId, answer: payload.answer, applicability: payload.applicability, explanation: payload.explanation, evidenceRef: payload.evidenceRef }];
+  if (!items.length || items.length > 70) return error(request, 'Send 1 to 70 assessment responses.');
+  const normalized = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index] || {};
+    const questionId = String(item.questionId || '').trim();
+    const question = assessmentQuestionById(questionId);
+    if (!question) return error(request, 'Row ' + (index + 1) + ': ' + (questionId || 'missing question') + ' is not in question bank ' + QUESTION_BANK_VERSION + '.', 400, 'QUESTION_NOT_FOUND');
+    if (!assessmentActorCanRespond(session, question)) return error(request, 'Row ' + (index + 1) + ' (' + questionId + ') needs a professional role this demo persona does not hold.', 403, 'ROLE_NOT_AUTHORIZED');
+    const allowed = questionId === 'CE-032' ? CE032_ANSWERS : CE_STANDARD_ANSWERS;
+    const answer = String(item.answer || 'UNKNOWN').trim().toUpperCase();
+    if (!allowed.includes(answer)) return error(request, 'Row ' + (index + 1) + ' (' + questionId + '): answer must be ' + allowed.join(' / ') + '.', 400, 'ANSWER_INVALID');
+    const applicability = String(item.applicability || 'APPLICABLE').trim().toUpperCase();
+    if (applicability !== 'APPLICABLE' && applicability !== 'NOT_APPLICABLE') return error(request, 'Row ' + (index + 1) + ' (' + questionId + '): applicability must be APPLICABLE or NOT_APPLICABLE.', 400, 'APPLICABILITY_INVALID');
+    const explanation = cleanText(item.explanation, MAX_CONTEXT_LENGTH, '') ?? '';
+    if (applicability === 'NOT_APPLICABLE' && !explanation) return error(request, 'Row ' + (index + 1) + ' (' + questionId + '): a not-applicable response needs a rationale.', 400, 'NA_RATIONALE_REQUIRED');
+    const evidenceRef = cleanText(item.evidenceRef, 200, '') ?? '';
+    const disposition = cleanText(item.disposition, MAX_CONTEXT_LENGTH, '') ?? '';
+    const policy = questionPolicyFor(questionId);
+    if (strictCommand) {
+      if (!policy) return error(request, 'Row ' + (index + 1) + ' (' + questionId + ') has no configured typed policy.', 409, 'POLICY_NOT_CONFIGURED');
+      const requestedVerification = String(item.verification || 'UNVERIFIED').trim().toUpperCase();
+      if (!['UNVERIFIED', 'SUBMITTED', 'VERIFIED'].includes(requestedVerification)) return error(request, 'Row ' + (index + 1) + ' (' + questionId + '): verification must be UNVERIFIED, SUBMITTED or VERIFIED.', 400, 'VERIFICATION_INVALID');
+      const canVerify = hasAnyRole(session, ['compliance_reviewer', 'audit_manager', 'engagement_partner']);
+      if (requestedVerification === 'VERIFIED' && !canVerify) return error(request, 'Only an authorized compliance or professional reviewer can mark evidence VERIFIED.', 403, 'VERIFIER_NOT_AUTHORIZED');
+      if (requestedVerification === 'VERIFIED' && policy.verificationRequired && applicability !== 'NOT_APPLICABLE' && !evidenceRef) return error(request, 'A verified response must name its evidence reference.', 400, 'EVIDENCE_REFERENCE_REQUIRED');
+      if (applicability === 'NOT_APPLICABLE' && !disposition) return error(request, 'A typed applicability disposition is required; a rationale alone cannot waive the control.', 400, 'NA_APPROVAL_REQUIRED');
+      const typed = validateQuestionResponse({ questionId, answer, applicability, verification: requestedVerification, evidenceRef, disposition });
+      const malformed = (typed.blockers || []).find((hold) => ['QUESTION_NOT_REGISTERED', 'ANSWER_NOT_ALLOWED', 'APPLICABILITY_NOT_ALLOWED', 'NA_APPROVAL_REQUIRED'].includes(hold.code));
+      if (malformed) return error(request, malformed.message, 400, malformed.code);
+      normalized.push({ questionId, answer, applicability, explanation, evidenceRef, disposition, verification: requestedVerification === 'VERIFIED' ? 'VERIFIED' : 'SUBMITTED', verified: requestedVerification === 'VERIFIED' });
+    } else {
+      // Compatibility mode preserves the original fixture shortcut where a
+      // Partner/Compliance response is marked verified.  New strict commands
+      // above must carry an explicit verifier decision and evidence reference.
+      const verified = hasAnyRole(session, ['engagement_partner', 'compliance_reviewer']);
+      normalized.push({ questionId, answer, applicability, explanation, evidenceRef, disposition, verified, verification: verified ? 'VERIFIED' : 'SUBMITTED' });
+    }
+  }
+  let assessment = await env.DB.prepare(
+    'SELECT * FROM auditflow_assessments WHERE engagement_id = ?1 AND type = ?2',
+  ).bind(id, 'acceptance').first();
+  let assessmentId;
+  if (!assessment) {
+    assessmentId = crypto.randomUUID();
+    await env.DB.prepare(
+      'INSERT INTO auditflow_assessments (assessment_id, engagement_id, type, template_version, revision) VALUES (?1, ?2, ?3, ?4, 1)',
+    ).bind(assessmentId, id, 'acceptance', QUESTION_BANK_VERSION).run();
+  } else {
+    assessmentId = assessment.assessment_id;
+  }
+  for (const entry of normalized) {
+    if (strictCommand) {
+      try {
+        await env.DB.prepare(
+          `INSERT INTO auditflow_assessment_responses (assessment_id, question_id, answer, applicability, verification, explanation, evidence_ref, disposition, responder, verifier) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT (assessment_id, question_id) DO UPDATE SET answer = excluded.answer, applicability = excluded.applicability, verification = excluded.verification, explanation = excluded.explanation, evidence_ref = excluded.evidence_ref, disposition = excluded.disposition, responder = excluded.responder, verifier = excluded.verifier, updated_at = datetime('now')`,
+        ).bind(assessmentId, entry.questionId, entry.answer, entry.applicability, entry.verification, entry.explanation, entry.evidenceRef, entry.disposition, session.actorId, entry.verified ? session.actorId : '').run();
+      } catch (assessmentError) {
+        // M7's disposition column is additive.  Keep a useful strict write on
+        // an older Worker while the migration is being rolled out; the typed
+        // validation above still prevents policy bypasses.
+        if (!/no such column|unknown column|disposition/i.test(String(assessmentError?.message || assessmentError))) throw assessmentError;
+        await env.DB.prepare(
+          'INSERT INTO auditflow_assessment_responses (assessment_id, question_id, answer, applicability, verification, explanation, evidence_ref, responder, verifier) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT (assessment_id, question_id) DO UPDATE SET answer = excluded.answer, applicability = excluded.applicability, verification = excluded.verification, explanation = excluded.explanation, evidence_ref = excluded.evidence_ref, responder = excluded.responder, verifier = excluded.verifier, updated_at = datetime(\'now\')',
+        ).bind(assessmentId, entry.questionId, entry.answer, entry.applicability, entry.verification, entry.explanation, entry.evidenceRef, session.actorId, entry.verified ? session.actorId : '').run();
+      }
+    } else {
+      await env.DB.prepare(
+        'INSERT INTO auditflow_assessment_responses (assessment_id, question_id, answer, applicability, verification, explanation, evidence_ref, responder, verifier) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT (assessment_id, question_id) DO UPDATE SET answer = excluded.answer, applicability = excluded.applicability, verification = excluded.verification, explanation = excluded.explanation, evidence_ref = excluded.evidence_ref, responder = excluded.responder, verifier = excluded.verifier, updated_at = datetime(\'now\')',
+      ).bind(assessmentId, entry.questionId, entry.answer, entry.applicability, entry.verification, entry.explanation, entry.evidenceRef, session.actorId, entry.verified ? session.actorId : '').run();
+    }
+  }
+  await env.DB.prepare(
+    'UPDATE auditflow_assessments SET revision = revision + 1, updated_at = datetime(\'now\') WHERE assessment_id = ?1',
+  ).bind(assessmentId).run();
+  const engagement = await touchEngagement(env, id, null);
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'ASSESSMENT_RESPONSE_RECORDED', objectType: 'assessment', objectId: assessmentId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId: correlationId });
+  const found = await readAssessmentRows(env, id);
+  return json(request, { ok: true, assessmentId: assessmentId, recorded: normalized.length, summary: summarizeAssessment(found.assessment, found.responses), engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
+}
+
+// Phase C — compact D1-backed accounting status tracker with input
+// generations. Every trial-balance source advances input_generation; the
+// audit side evaluates it back via EVALUATE_ACCOUNTING_INPUT. Release (and a
+// sound opinion) requires the evaluated generation to be current.
+const ACCOUNTING_STEP_STATES = ['PENDING', 'IN_PROGRESS', 'COMPLETE'];
+const ACCOUNTING_FS_STATES = ['DRAFT', 'IN_REVIEW', 'FINAL'];
+
+async function readAccountingStatus(env, engagementId) {
+  const row = await env.DB.prepare(
+    'SELECT * FROM auditflow_accounting_status WHERE engagement_id = ?1',
+  ).bind(engagementId).first();
+  if (!row) {
+    return {
+      engagementId: engagementId, sourceVersion: '', sourceState: 'PENDING',
+      mappingState: 'PENDING', mappingCoverage: '', reconState: 'PENDING', openReconCount: 0,
+      journalState: 'PENDING', pendingJournalCount: 0, fsVersion: '', fsState: 'DRAFT',
+      mgmtApprovalState: 'PENDING', inputGeneration: 1, auditEvaluatedGeneration: 1,
+      revision: 0, updatedAt: null, exists: false,
+    };
+  }
+  return {
+    engagementId: row.engagement_id, sourceVersion: row.source_version, sourceState: row.source_state,
+    mappingState: row.mapping_state, mappingCoverage: row.mapping_coverage,
+    reconState: row.recon_state, openReconCount: row.open_recon_count,
+    journalState: row.journal_state, pendingJournalCount: row.pending_journal_count,
+    fsVersion: row.fs_version, fsState: row.fs_state, mgmtApprovalState: row.mgmt_approval_state,
+    inputGeneration: row.input_generation, auditEvaluatedGeneration: row.audit_evaluated_generation,
+    revision: row.revision, updatedAt: row.updated_at, exists: true,
+  };
+}
+
+function accountingTrackerSteps(status) {
+  const step = (id, label, detail, state) => ({ id: id, label: label, detail: detail, state: state });
+  const handoffReady = status.mgmtApprovalState === 'ACCEPTED' && status.fsState === 'FINAL';
+  return [
+    step('source', 'Source received', status.sourceVersion ? 'TB ' + status.sourceVersion : 'No TB source recorded', status.sourceVersion ? 'COMPLETE' : 'PENDING'),
+    step('validation', 'Validation', status.sourceState === 'PENDING' && !status.sourceVersion ? 'Awaiting source' : status.sourceState, status.sourceVersion ? (status.sourceState === 'VALIDATED' ? 'COMPLETE' : 'IN_PROGRESS') : 'PENDING'),
+    step('mapping', 'Mapping', status.mappingCoverage || status.mappingState, status.mappingState === 'MAPPED' || status.mappingState === 'COMPLETE' ? 'COMPLETE' : (status.sourceVersion ? 'IN_PROGRESS' : 'PENDING')),
+    step('reconciliations', 'Reconciliations', status.openReconCount + ' open', status.reconState === 'COMPLETE' && !status.openReconCount ? 'COMPLETE' : (status.sourceVersion ? 'IN_PROGRESS' : 'PENDING')),
+    step('journals', 'Journal decisions', status.pendingJournalCount + ' pending', status.journalState === 'COMPLETE' && !status.pendingJournalCount ? 'COMPLETE' : (status.sourceVersion ? 'IN_PROGRESS' : 'PENDING')),
+    step('fs-package', 'FS package', status.fsVersion ? status.fsVersion + ' · ' + status.fsState : 'No package yet', status.fsState === 'FINAL' ? 'COMPLETE' : (status.fsVersion ? 'IN_PROGRESS' : 'PENDING')),
+    step('mgmt-approval', 'Management approval', status.mgmtApprovalState, status.mgmtApprovalState === 'ACCEPTED' ? 'COMPLETE' : (status.fsVersion ? 'IN_PROGRESS' : 'PENDING')),
+    step('audit-handoff', 'Audit handoff', handoffReady ? 'Ready for audit evaluation at g' + status.inputGeneration : 'Blocked until package approval', handoffReady ? 'READY' : 'PENDING'),
+  ];
+}
+
+async function getAccountingStatus(request, env, url) {
+  const engagementId = readEngagementId(url.searchParams.get('engagementId'));
+  if (!engagementId) return error(request, 'A valid engagementId is required.');
+  const checked = await requireEngagementScope(request, env, engagementId);
+  if (checked.response) return checked.response;
+  const status = await readAccountingStatus(env, engagementId);
+  return json(request, {
+    ok: true,
+    status: status,
+    steps: accountingTrackerSteps(status),
+    generations: { input: status.inputGeneration, evaluated: status.auditEvaluatedGeneration, current: status.inputGeneration === status.auditEvaluatedGeneration },
+    evidenceLevel: 'SIMULATION',
+  });
+}
+
+async function updateAccountingStatus(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['preparer', 'accounting_reviewer', 'system_admin'])) {
+    return error(request, 'Only the Accountant, Accounting Reviewer or System Administrator demo persona can update the accounting tracker.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const patch = {};
+  const field = (snake, camel) => (payload[snake] !== undefined ? payload[snake] : payload[camel]);
+  const putState = (key, value, allowed) => {
+    if (value === undefined) return true;
+    const text = String(value).trim().toUpperCase();
+    if (!allowed.includes(text)) return false;
+    patch[key] = text;
+    return true;
+  };
+  if (!putState('mapping_state', field('mapping_state', 'mappingState'), ACCOUNTING_STEP_STATES)) return error(request, 'mappingState must be PENDING, IN_PROGRESS or COMPLETE.');
+  if (field('mapping_coverage', 'mappingCoverage') !== undefined) {
+    const coverage = cleanText(field('mapping_coverage', 'mappingCoverage'), 40, '') ?? '';
+    patch.mapping_coverage = coverage;
+  }
+  if (!putState('recon_state', field('recon_state', 'reconState'), ACCOUNTING_STEP_STATES)) return error(request, 'reconState must be PENDING, IN_PROGRESS or COMPLETE.');
+  if (field('open_recon_count', 'openReconCount') !== undefined) {
+    const n = Number(field('open_recon_count', 'openReconCount'));
+    if (!Number.isSafeInteger(n) || n < 0 || n > 500) return error(request, 'openReconCount must be 0 to 500.');
+    patch.open_recon_count = n;
+  }
+  if (!putState('journal_state', field('journal_state', 'journalState'), ACCOUNTING_STEP_STATES)) return error(request, 'journalState must be PENDING, IN_PROGRESS or COMPLETE.');
+  if (field('pending_journal_count', 'pendingJournalCount') !== undefined) {
+    const n = Number(field('pending_journal_count', 'pendingJournalCount'));
+    if (!Number.isSafeInteger(n) || n < 0 || n > 500) return error(request, 'pendingJournalCount must be 0 to 500.');
+    patch.pending_journal_count = n;
+  }
+  if (field('fs_version', 'fsVersion') !== undefined) {
+    const version = String(field('fs_version', 'fsVersion') || '').trim().slice(0, 20);
+    if (!version) return error(request, 'fsVersion must not be empty.');
+    patch.fs_version = version;
+  }
+  if (!putState('fs_state', field('fs_state', 'fsState'), ACCOUNTING_FS_STATES)) return error(request, 'fsState must be DRAFT, IN_REVIEW or FINAL.');
+  if (!Object.keys(patch).length) return error(request, 'Send at least one tracker field to update.');
+  const columns = Object.keys(patch);
+  const sets = columns.map((column) => column + ' = excluded.' + column).join(', ');
+  const values = columns.map((_, index) => '?' + (index + 2)).join(', ');
+  await env.DB.prepare(
+    'INSERT INTO auditflow_accounting_status (engagement_id, ' + columns.join(', ') + ') VALUES (?1, ' + values + ') ON CONFLICT (engagement_id) DO UPDATE SET ' + sets + ', revision = auditflow_accounting_status.revision + 1, updated_at = datetime(\'now\')',
+  ).bind(id, ...columns.map((column) => patch[column])).run();
+  const engagement = await touchEngagement(env, id, null);
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'ACCOUNTING_STATUS_UPDATED', objectType: 'accounting_status', objectId: id, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId: correlationId });
+  const status = await readAccountingStatus(env, id);
+  return json(request, { ok: true, status: status, steps: accountingTrackerSteps(status), engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
+}
+
+async function approveAccountingFs(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['management_approver'])) {
+    return error(request, 'Only the Client Management Approver demo persona can approve the accounting package.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const decision = String(payload.decision || '').trim().toUpperCase();
+  if (decision !== 'ACCEPT' && decision !== 'REJECT') return error(request, 'Decision must be ACCEPT or REJECT.');
+  const explanation = cleanText(payload.explanation, MAX_CONTEXT_LENGTH) || '';
+  if (decision === 'REJECT' && !explanation) return error(request, 'Explain the rejection so Accounting can revise the package.');
+  const status = await readAccountingStatus(env, id);
+  if (!status.exists || !status.fsVersion) return error(request, 'No accounting FS package is awaiting management approval yet.', 409, 'PRECONDITION_FAILED');
+  await env.DB.prepare(
+    'INSERT INTO auditflow_accounting_status (engagement_id, mgmt_approval_state) VALUES (?1, ?2) ON CONFLICT (engagement_id) DO UPDATE SET mgmt_approval_state = excluded.mgmt_approval_state, revision = auditflow_accounting_status.revision + 1, updated_at = datetime(\'now\')',
+  ).bind(id, decision === 'ACCEPT' ? 'ACCEPTED' : 'REJECTED').run();
+  const engagement = await touchEngagement(env, id, null);
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: decision === 'ACCEPT' ? 'ACCOUNTING_FS_ACCEPTED' : 'ACCOUNTING_FS_REJECTED', objectType: 'accounting_status', objectId: id, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId: correlationId });
+  const updated = await readAccountingStatus(env, id);
+  return json(request, { ok: true, decision: decision, status: updated, steps: accountingTrackerSteps(updated), engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
+}
+
+async function evaluateAccountingInput(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['audit_senior', 'audit_manager'])) {
+    return error(request, 'Only the Audit Senior or Manager demo persona can evaluate the accounting input.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const status = await readAccountingStatus(env, id);
+  if (status.inputGeneration === status.auditEvaluatedGeneration) {
+    return json(request, { ok: true, duplicate: true, inputGeneration: status.inputGeneration, evaluatedGeneration: status.auditEvaluatedGeneration, evidenceLevel: 'SIMULATION' });
+  }
+  await env.DB.prepare(
+    'UPDATE auditflow_accounting_status SET audit_evaluated_generation = ?2, revision = revision + 1, updated_at = datetime(\'now\') WHERE engagement_id = ?1',
+  ).bind(id, status.inputGeneration).run();
+  const engagement = await touchEngagement(env, id, null);
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'AUDIT_INPUT_EVALUATED', objectType: 'accounting_status', objectId: 'g' + status.inputGeneration, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId: correlationId });
+  return json(request, { ok: true, duplicate: false, inputGeneration: status.inputGeneration, evaluatedGeneration: status.inputGeneration, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
+}
+
+async function readAccountingGenerations(env, engagementId) {
+  const status = await readAccountingStatus(env, engagementId);
+  return { input: status.inputGeneration, evaluated: status.auditEvaluatedGeneration };
+}
+
+// Read the related D1 projections as one bounded snapshot. D1 queries can be
+// issued concurrently for latency, but a command may advance the aggregate
+// while those reads are in flight. The revision/generation guard below makes
+// that race visible instead of serving a mixed authoritative-looking view.
+async function readProgressSnapshotOnce(env, engagementId) {
+  const id = engagementId;
+  const rows = await Promise.all([
+    readEngagementRow(env, id),
+    env.DB.prepare('SELECT engagement_id FROM auditflow_client_profiles WHERE engagement_id = ?1').bind(id).first(),
+    env.DB.prepare('SELECT decision_id, decision_type, object_version, decision, decided_by, decided_at, revision, input_generation FROM auditflow_decisions WHERE engagement_id = ?1 ORDER BY revision DESC, decided_at DESC, decision_id DESC').bind(id).all(),
+    env.DB.prepare('SELECT * FROM auditflow_commercial WHERE engagement_id = ?1').bind(id).first(),
+    env.DB.prepare('SELECT state FROM auditflow_credentials WHERE engagement_id = ?1 ORDER BY created_at DESC').bind(id).all(),
+    env.DB.prepare('SELECT request_id, state, due_date FROM auditflow_pbc_requests WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT 200').bind(id).all(),
+    env.DB.prepare('SELECT receipt_id, request_id, state FROM auditflow_pbc_receipts WHERE engagement_id = ?1 ORDER BY uploaded_at DESC LIMIT 200').bind(id).all(),
+    env.DB.prepare('SELECT source_version, validation_state, mapping_complete FROM auditflow_tb_sources WHERE engagement_id = ?1').bind(id).all(),
+    env.DB.prepare('SELECT workpaper_id, state FROM auditflow_workpapers WHERE engagement_id = ?1').bind(id).all(),
+    env.DB.prepare('SELECT review_id, state, severity, cleared_generation FROM auditflow_review_points WHERE engagement_id = ?1').bind(id).all(),
+    env.DB.prepare('SELECT * FROM auditflow_accounting_status WHERE engagement_id = ?1').bind(id).first(),
+    env.DB.prepare('SELECT document_id, document_type, version, state, created_at FROM auditflow_artifacts WHERE engagement_id = ?1').bind(id).all(),
+    env.DB.prepare('SELECT task_id, state, due_date, assignee_role FROM auditflow_tasks WHERE engagement_id = ?1').bind(id).all(),
+  ]);
+  const engagement = rows[0];
+  if (!engagement) return null;
+  const decisions = {};
+  for (const row of (rows[2].results || [])) {
+    if (row && row.decision_type && !decisions[row.decision_type]) {
+      decisions[row.decision_type] = { id: row.decision_id, decision: row.decision, version: row.object_version, by: row.decided_by, at: row.decided_at, revision: Number(row.revision || 1), generation: Number(row.input_generation || 1) };
+    }
+  }
+  const statusRow = rows[10] || null;
+  const assessmentFound = await readAssessmentRows(env, id);
+  const assessmentSummary = assessmentFound.assessment ? summarizeAssessment(assessmentFound.assessment, assessmentFound.responses) : null;
+  const finalDiscussion = decisions.FINAL_CLIENT_DISCUSSION || null;
+  const commercialRow = rows[3] || null;
+  const credentialRows = (rows[4].results || []);
+  const artifactRows = (rows[11].results || []);
+  const draftVersions = artifactRows
+    .filter((row) => row.document_type === 'DRAFT_FS' && row.state === 'PUBLISHED')
+    .map((row) => row.version)
+    .sort((a, b) => numericVersion(a) - numericVersion(b) || String(a).localeCompare(String(b)));
+  const announcementRow = artifactRows.find((row) => row.document_type === 'ANNOUNCEMENT' && row.state === 'PUBLISHED') || null;
+  return {
+    engagementId: engagement.engagement_id,
+    clientId: engagement.client_id,
+    service: engagement.service,
+    period: engagement.period,
+    cachedStage: engagement.current_stage,
+    revision: engagement.revision,
+    generationId: engagement.generation_id,
+    hasClientProfile: Boolean(rows[1]),
+    decisions: decisions,
+    commercial: commercialRow ? {
+      estimateHours: commercialRow.estimate_hours,
+      estimateCost: commercialRow.estimate_cost,
+      advanceRequired: commercialRow.advance_required,
+      feeState: commercialRow.fee_state,
+      approvedFee: commercialRow.approved_fee,
+      elVersion: commercialRow.el_version,
+      elState: commercialRow.el_state,
+      advanceState: commercialRow.advance_state,
+      advanceReference: commercialRow.advance_reference,
+      invoiceState: commercialRow.invoice_state,
+      invoiceId: commercialRow.invoice_id,
+      commercialClose: commercialRow.commercial_close,
+    } : null,
+    credentialState: credentialRows.length ? credentialRows[0].state : null,
+    portalActivated: credentialRows.some((row) => row.state === 'ACTIVATED'),
+    announcement: announcementRow ? { id: announcementRow.document_id, at: announcementRow.created_at } : null,
+    pbcRequests: (rows[5].results || []).map((row) => ({ id: row.request_id, state: row.state, dueDate: row.due_date })),
+    pbcReceipts: (rows[6].results || []).map((row) => ({ id: row.receipt_id, requestId: row.request_id, state: row.state })),
+    tbSources: (rows[7].results || []).map((row) => ({ version: row.source_version, validationState: row.validation_state, mappingComplete: row.mapping_complete })),
+    workpapers: (rows[8].results || []).map((row) => ({ id: row.workpaper_id, state: row.state })),
+    reviewPoints: (rows[9].results || []).map((row) => ({ id: row.review_id, state: row.state, severity: row.severity, clearedGeneration: Number(row.cleared_generation || 1) })),
+    draftVersions: draftVersions,
+    tasks: (rows[12].results || []).map((row) => ({ id: row.task_id, state: row.state, dueDate: row.due_date, role: row.assignee_role })),
+    artifactCount: artifactRows.length,
+    publishedArtifactCount: artifactRows.filter((row) => row.state === 'PUBLISHED').length,
+    assessment: assessmentSummary ? {
+      answered: assessmentSummary.answered, required: assessmentSummary.required, verified: assessmentSummary.verified,
+      holds: assessmentSummary.holds.map((hold) => ({ questionId: hold.questionId, code: hold.code })),
+      hardStops: assessmentSummary.hardStops.length, prohibitions: assessmentSummary.prohibitions.length,
+    } : null,
+    inputGeneration: statusRow ? Number(statusRow.input_generation) || 1 : 1,
+    evaluatedGeneration: statusRow ? Number(statusRow.audit_evaluated_generation) || 1 : 1,
+    accounting: statusRow ? {
+      sourceVersion: statusRow.source_version,
+      sourceState: statusRow.source_state,
+      mappingState: statusRow.mapping_state,
+      mappingCoverage: statusRow.mapping_coverage,
+      reconState: statusRow.recon_state, openRecons: statusRow.open_recon_count,
+      journalState: statusRow.journal_state, pendingJournals: statusRow.pending_journal_count,
+      fsVersion: statusRow.fs_version, fsState: statusRow.fs_state, mgmtApproval: statusRow.mgmt_approval_state,
+      mgmtApprovalState: statusRow.mgmt_approval_state,
+      inputGeneration: Number(statusRow.input_generation) || 1,
+      auditEvaluatedGeneration: Number(statusRow.audit_evaluated_generation) || 1,
+      revision: Number(statusRow.revision) || 0,
+      updatedAt: statusRow.updated_at || null,
+    } : null,
+    finalDiscussion: finalDiscussion ? { at: finalDiscussion.version, generation: Number(finalDiscussion.generation || 1) } : null,
+  };
+}
+
+async function readProgressSnapshot(env, engagementId) {
+  let lastSnapshot = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const before = await readEngagementRow(env, engagementId);
+    if (!before) return null;
+    const snapshot = await readProgressSnapshotOnce(env, engagementId);
+    if (!snapshot) return null;
+    const after = await readEngagementRow(env, engagementId);
+    const coherent = Boolean(after
+      && Number(after.revision) === Number(snapshot.revision)
+      && String(after.generation_id || '') === String(snapshot.generationId || ''));
+    if (coherent) return { ...snapshot, coherent: true, consistency: 'COHERENT' };
+    lastSnapshot = {
+      ...snapshot,
+      coherent: false,
+      consistency: 'STALE',
+      consistencyReason: 'The engagement changed while its related records were being read.',
+    };
+  }
+  // Preserve the last-good data for inspection, but mark it explicitly stale
+  // so version-sensitive controls remain disabled by the frontend/store.
+  return lastSnapshot;
+}
+
+async function getEngagementProgress(request, env, engagementId) {
+  const checked = await requireEngagementScope(request, env, engagementId);
+  if (checked.response) return checked.response;
+  const id = readEngagementId(engagementId);
+  if (!id) return error(request, 'A valid engagement id is required.');
+  const snapshot = await readProgressSnapshot(env, id);
+  if (!snapshot) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+  const progress = progressForSession(deriveProgressFromSnapshot(snapshot), checked.session);
+  const directory = DEMO_CLIENT_DIRECTORY[snapshot.clientId] || { name: snapshot.clientId, shortName: snapshot.clientId };
+  progress.engagementId = id;
+  progress.client = directory.name;
+  progress.service = snapshot.service;
+  progress.period = snapshot.period;
+  progress.revision = snapshot.revision;
+  progress.generationId = snapshot.generationId;
+  progress.cachedStage = snapshot.cachedStage;
+  progress.derivedFrom = 'd1';
+  return json(request, { ok: true, progress: progress, evidenceLevel: 'SIMULATION' });
+}
+
+function effectiveSessionForView(view, parentSession) {
+  const persona = DEMO_PERSONAS[view?.persona_id || parentSession?.personaId];
+  return {
+    ...parentSession,
+    personaId: view?.persona_id || parentSession?.personaId,
+    actorId: view?.actor_id || parentSession?.actorId,
+    roles: persona?.roles || parentSession?.roles || [],
+  };
+}
+
+async function resolveWorkspaceContext(request, env, engagementId) {
+  const checked = await requireDemoSession(request, env);
+  if (checked.response) return checked;
+  const id = readEngagementId(engagementId);
+  if (!id) return { response: error(request, 'A valid engagement id is required.') };
+  const viewId = readViewId(request);
+  let view = null;
+  if (viewId) {
+    view = await readDemoView(env, checked.session, viewId);
+    if (!view) return { response: error(request, 'The workspace view is not active for this session.', 409, 'VIEW_CONTEXT_INVALID') };
+    if (view.engagement_id !== id) return { response: error(request, 'The view is scoped to another engagement.', 409, 'VIEW_SCOPE_CONFLICT') };
+    const expectedVersion = request.headers.get('X-AuditFlow-Context-Version');
+    if (expectedVersion && Number(expectedVersion) !== Number(view.context_version)) return { response: error(request, 'The workspace context changed; reload before acting.', 409, 'CONTEXT_VERSION_CONFLICT') };
+  }
+  const effectiveSession = view ? effectiveSessionForView(view, checked.session) : checked.session;
+  if (!(ACTOR_ASSIGNMENTS[effectiveSession.actorId] || []).includes(id)) return { response: error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED') };
+  return { session: checked.session, effectiveSession, view, engagementId: id };
+}
+
+function decisionStaleness(row, snapshot) {
+  if (!snapshot || !row) return { stale: false, staleReason: '' };
+  const latest = snapshot.decisions?.[row.decision_type];
+  if (latest?.id && row.decision_id && latest.id !== row.decision_id) {
+    return { stale: true, staleReason: `Superseded by ${latest.id} for the current ${row.decision_type.replaceAll('_', ' ').toLowerCase()} target.` };
+  }
+  if (latest?.version && row.object_version && String(latest.version) !== String(row.object_version)) {
+    return { stale: true, staleReason: `Targets ${row.object_version}; the current target is ${latest.version}.` };
+  }
+  const generationBound = new Set(['MANAGER_COMPLETION', 'PARTNER_COMPLETION_REVIEW', 'EQR', 'AUDIT_OPINION', 'FINAL_CLIENT_DISCUSSION', 'RELEASE', 'DELIVERY']);
+  const currentGeneration = Number(snapshot.inputGeneration || 0);
+  const rowGeneration = Number(row.input_generation || 0);
+  if (generationBound.has(String(row.decision_type || '').toUpperCase()) && currentGeneration > 0 && rowGeneration > 0 && rowGeneration < currentGeneration) {
+    return { stale: true, staleReason: `Evaluated accounting generation g${rowGeneration}; current input is g${currentGeneration}.` };
+  }
+  return { stale: false, staleReason: '' };
+}
+
+function serializeApprovalQueue(decisions = [], tasks = [], session = {}, snapshot = null) {
+  const items = [];
+  for (const task of rankTasks(tasks.map(serializeTask))) {
+    const owner = task.assigneeRole || task.assigneePersona || '';
+    if (session.roles?.some((role) => ['system_admin', 'engagement_partner', 'audit_manager'].includes(role)) || owner === session.actorId || session.roles?.includes(owner)) {
+      items.push({
+        id: task.taskId,
+        kind: 'TASK',
+        targetId: task.target || task.linkedObjectId,
+        decisionType: task.linkedObjectType,
+        title: task.title,
+        owner,
+        state: task.state,
+        priority: task.priority,
+        route: task.route || 'role-workspace',
+        dueDate: task.dueDate,
+        stale: task.state === 'BLOCKED' || task.escalationState !== 'NONE',
+        staleReason: task.state === 'BLOCKED' ? (task.blockerCode || 'Task is blocked.') : task.escalationState !== 'NONE' ? `Task is ${task.escalationState.toLowerCase()}.` : '',
+        rationale: '',
+      });
+    }
+  }
+  for (const row of decisions) {
+    if (isClientOnlySession(session) && !['ENGAGEMENT_LETTER', 'DRAFT_FS'].includes(row.decision_type)) continue;
+    const stale = decisionStaleness(row, snapshot);
+    items.push({
+      id: row.decision_id,
+      kind: 'DECISION',
+      targetId: row.object_version,
+      decisionType: row.decision_type,
+      title: `${String(row.decision_type || 'Decision').replaceAll('_', ' ')} · ${row.object_version || 'current'}`,
+      owner: row.decided_by,
+      state: row.decision,
+      priority: 'NORMAL',
+      route: ['DRAFT_FS', 'ENGAGEMENT_LETTER'].includes(row.decision_type) ? 'clients' : 'reviews',
+      dueDate: '',
+      stale: stale.stale,
+      staleReason: stale.staleReason,
+      rationale: row.rationale || '',
+      revision: Number(row.revision || 1),
+      generationId: row.generation_id || '',
+    });
+  }
+  return items;
+}
+
+function progressForSession(progress, session) {
+  if (!progress || !isClientOnlySession(session)) return progress;
+  return {
+    ...progress,
+    // High-level gate state is useful to a client, but internal question,
+    // review-point and candidate identifiers are not. Keep those details in
+    // staff projections only; the client still receives the next owner/action
+    // and the permitted portal outputs.
+    gateDetails: (progress.gateDetails || []).map((gate) => ({ ...gate, sourceIds: [] })),
+    blockers: (progress.blockers || []).map((blocker) => ({ ...blocker, sourceIds: [] })),
+    contradictions: [],
+  };
+}
+
+async function getWorkspace(request, env, engagementId) {
+  const resolved = await resolveWorkspaceContext(request, env, engagementId);
+  if (resolved.response) return resolved.response;
+  const snapshot = await readProgressSnapshot(env, resolved.engagementId);
+  if (!snapshot) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+  if (resolved.view && resolved.view.generation_id !== snapshot.generationId) return error(request, 'The demo generation changed. Reopen the workspace before acting.', 409, 'RESET_REQUIRED');
+  const progress = progressForSession(deriveProgressFromSnapshot(snapshot), resolved.effectiveSession);
+  const context = serializeDemoContext({
+    engagement_id: snapshot.engagementId,
+    client_id: snapshot.clientId,
+    service: snapshot.service,
+    period: snapshot.period,
+    revision: snapshot.revision,
+    current_stage: snapshot.cachedStage,
+    generation_id: snapshot.generationId,
+    updated_at: new Date().toISOString(),
+  });
+  const taskRows = await env.DB.prepare('SELECT * FROM auditflow_tasks WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT 200').bind(resolved.engagementId).all();
+  const eventRows = await env.DB.prepare('SELECT * FROM auditflow_events WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT 50').bind(resolved.engagementId).all();
+  const decisionRows = await env.DB.prepare('SELECT * FROM auditflow_decisions WHERE engagement_id = ?1 ORDER BY revision DESC, decided_at DESC, decision_id DESC LIMIT 200').bind(resolved.engagementId).all();
+  const outboxRows = await env.DB.prepare('SELECT * FROM auditflow_outbox WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT 50').bind(resolved.engagementId).all();
+  const effective = resolved.effectiveSession;
+  const view = resolved.view || {
+    view_id: `legacy-${effective.sessionId || 'session'}`,
+    persona_id: effective.personaId,
+    actor_id: effective.actorId,
+    engagement_id: resolved.engagementId,
+    generation_id: snapshot.generationId,
+    context_version: 1,
+  };
+  const viewContexts = await listAuthorizedContexts(env, effective);
+  const descriptor = serializeView(view, effective, viewContexts);
+  descriptor.contexts = viewContexts;
+  const approvals = serializeApprovalQueue(decisionRows.results || [], taskRows.results || [], effective, snapshot);
+  const notifications = approvals.filter((item) => item.kind === 'TASK' && ['OPEN', 'IN_PROGRESS', 'BLOCKED', 'WAITING'].includes(item.state));
+  const accounting = snapshot.accounting;
+  const accountingSteps = accounting
+    ? accountingTrackerSteps({
+      ...accounting,
+      openReconCount: Number(accounting.openRecons || 0),
+      pendingJournalCount: Number(accounting.pendingJournals || 0),
+    })
+    : [];
+  const projection = buildWorkspaceProjection({
+    view: { ...view, roles: effective.roles },
+    context,
+    progress,
+    tasks: (taskRows.results || []).map(serializeTask),
+    approvals,
+    notifications,
+    recentEvents: (eventRows.results || []).map(serializeEvent),
+    outbox: outboxRows.results || [],
+    accounting,
+    accountingSteps,
+    blockers: progress.blockers || [],
+    counts: { decisions: (decisionRows.results || []).length, artifacts: snapshot.artifactCount, applicableRequirements: progress.applicableRequirements || null },
+  });
+  return json(request, {
+    ok: true,
+    workspace: {
+      ...projection,
+      view: descriptor,
+      contextVersion: Number(view.context_version || 1),
+      generationId: snapshot.generationId,
+      revision: snapshot.revision,
+      consistency: snapshot.consistency || 'COHERENT',
+      consistencyReason: snapshot.consistencyReason || '',
+    },
+    evidenceLevel: 'SIMULATION',
+  });
+}
+
+async function getApprovalCenter(request, env, url) {
+  const engagementId = readEngagementId(url.searchParams.get('engagementId'));
+  if (!engagementId) return error(request, 'A valid engagementId is required.');
+  const resolved = await resolveWorkspaceContext(request, env, engagementId);
+  if (resolved.response) return resolved.response;
+  const tasks = await env.DB.prepare('SELECT * FROM auditflow_tasks WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT 200').bind(engagementId).all();
+  const decisions = await env.DB.prepare('SELECT * FROM auditflow_decisions WHERE engagement_id = ?1 ORDER BY revision DESC, decided_at DESC, decision_id DESC LIMIT 200').bind(engagementId).all();
+  const snapshot = await readProgressSnapshot(env, engagementId);
+  const items = serializeApprovalQueue(decisions.results || [], tasks.results || [], resolved.effectiveSession, snapshot);
+  const tab = String(url.searchParams.get('tab') || 'my-decisions').toLowerCase();
+  const filtered = tab === 'returned-work' ? items.filter((item) => ['RETURNED', 'REJECTED', 'CLARIFICATION', 'REVISION'].includes(String(item.state).toUpperCase()))
+    : tab === 'stale-approvals' ? items.filter((item) => item.stale)
+      : tab === 'all-stages' ? items
+        : items.filter((item) => item.owner === resolved.effectiveSession.actorId || resolved.effectiveSession.roles?.includes(item.owner) || item.kind === 'TASK');
+  return json(request, { ok: true, items: filtered, counts: { all: items.length, mine: items.filter((item) => item.owner === resolved.effectiveSession.actorId || resolved.effectiveSession.roles?.includes(item.owner)).length, returned: items.filter((item) => ['RETURNED', 'REJECTED', 'CLARIFICATION', 'REVISION'].includes(String(item.state).toUpperCase())).length, stale: items.filter((item) => item.stale).length }, scope: { engagementId, actorId: resolved.effectiveSession.actorId }, evidenceLevel: 'SIMULATION' });
+}
+
+// Portfolio views are deliberately limited to the people who coordinate the
+// engagement. A client or preparer may see their assigned task list but never
+// a practice-wide health queue or another engagement's blockers.
+function hasPortfolioAccess(session) {
+  return hasAnyRole(session, ['system_admin', 'engagement_partner', 'audit_manager']);
+}
+
+async function requirePortfolioAccess(request, env) {
+  const checked = await requireDemoSession(request, env);
+  if (checked.response) return checked;
+  if (!hasPortfolioAccess(checked.session)) {
+    return { response: error(request, 'Only the Admin, Audit Manager, or Partner demo persona can use the operational portfolio.', 403, 'PORTFOLIO_NOT_AUTHORIZED') };
+  }
+  return checked;
+}
+
+async function getProcessHealth(request, env, url) {
+  const engagementId = readEngagementId(url.searchParams.get('engagementId'));
+  if (!engagementId) return error(request, 'A valid engagementId is required.');
+  const checked = await requirePortfolioAccess(request, env);
+  if (checked.response) return checked.response;
+  if (!(ACTOR_ASSIGNMENTS[checked.session.actorId] || []).includes(engagementId)) {
+    return error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
+  }
+  const snapshot = await readProgressSnapshot(env, engagementId);
+  if (!snapshot) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+  const progress = deriveProgressFromSnapshot(snapshot);
+  const health = deriveProcessHealth(snapshot, progress);
+  return json(request, {
+    ok: true,
+    engagementId,
+    health,
+    nextBestAction: health.nextBestAction,
+    evidenceLevel: 'SIMULATION',
+  });
+}
+
+async function getOperationalPortfolio(request, env) {
+  const checked = await requirePortfolioAccess(request, env);
+  if (checked.response) return checked.response;
+  const allowed = ACTOR_ASSIGNMENTS[checked.session.actorId] || [];
+  if (!allowed.length) return json(request, { ok: true, portfolio: [], evidenceLevel: 'SIMULATION' });
+  const placeholders = allowed.map((_, index) => `?${index + 1}`).join(', ');
+  const result = await env.DB.prepare(
+    `SELECT engagement_id, client_id, service, period, revision, current_stage, generation_id, updated_at
+     FROM auditflow_engagement_state WHERE engagement_id IN (${placeholders}) ORDER BY engagement_id`,
+  ).bind(...allowed).all();
+  const contexts = (result.results || [])
+    .filter((row) => row && allowed.includes(row.engagement_id))
+    .map(serializeDemoContext);
+  const progressById = {};
+  const healthById = {};
+  for (const context of contexts) {
+    const snapshot = await readProgressSnapshot(env, context.engagementId);
+    if (!snapshot) continue;
+    const progress = deriveProgressFromSnapshot(snapshot);
+    progressById[context.engagementId] = progress;
+    healthById[context.engagementId] = deriveProcessHealth(snapshot, progress);
+  }
+  return json(request, {
+    ok: true,
+    portfolio: buildPortfolioRows(contexts, progressById, healthById),
+    evidenceLevel: 'SIMULATION',
+  });
+}
+
+async function getScenarioPreset(request, env, url) {
+  const engagementId = readEngagementId(url.searchParams.get('engagementId'));
+  if (!engagementId) return error(request, 'A valid engagementId is required.');
+  const checked = await requireEngagementScope(request, env, engagementId);
+  if (checked.response) return checked.response;
+  if (!hasPortfolioAccess(checked.session)) return error(request, 'Only the Admin, Audit Manager, or Partner demo persona can inspect controlled scenarios.', 403, 'SCENARIO_NOT_AUTHORIZED');
+  const row = await env.DB.prepare(
+    'SELECT engagement_id, preset_key, revision, applied_by, applied_at FROM auditflow_demo_scenario_presets WHERE engagement_id = ?1',
+  ).bind(engagementId).first();
+  const preset = resolveScenarioPreset(row?.preset_key);
+  return json(request, {
+    ok: true,
+    scenario: row && preset ? {
+      engagementId: row.engagement_id,
+      ...preset,
+      revision: Number(row.revision || 1),
+      appliedBy: row.applied_by,
+      appliedAt: row.applied_at,
+    } : null,
+    presets: SCENARIO_PRESETS,
+    evidenceLevel: 'SIMULATION',
+  });
+}
+
+async function actionApplyScenarioPreset(request, env, session, id, payload, correlationId) {
+  if (!hasPortfolioAccess(session)) {
+    return error(request, 'Only the Admin, Audit Manager, or Partner demo persona can apply a controlled scenario preset.', 403, 'SCENARIO_NOT_AUTHORIZED');
+  }
+  const preset = resolveScenarioPreset(payload.presetKey);
+  if (!preset) {
+    return error(request, 'Choose one of the controlled scenario presets: NEW_CLIENT, FIELDWORK, MANAGER_REVIEW_BLOCKED, READY_FOR_PARTNER, or READY_FOR_RELEASE.', 400, 'SCENARIO_PRESET_INVALID');
+  }
+  const engagement = await readEngagementRow(env, id);
+  if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
+  if (payload.expectedRevision != null && Number(payload.expectedRevision) !== Number(engagement.revision)) {
+    return error(request, 'The engagement changed since you loaded it. Reload and retry.', 409, 'REVISION_CONFLICT');
+  }
+  let existingStatus = {};
+  try { existingStatus = JSON.parse(engagement.g_status || '{}') || {}; } catch { existingStatus = {}; }
+  const scenarioStatus = {
+    ...existingStatus,
+    demoScenario: { key: preset.key, label: preset.label, stage: preset.stage, appliedAt: new Date().toISOString() },
+  };
+  await env.DB.prepare(
+    `INSERT INTO auditflow_demo_scenario_presets (engagement_id, preset_key, revision, applied_by, applied_at)
+     VALUES (?1, ?2, 1, ?3, datetime('now'))
+     ON CONFLICT (engagement_id) DO UPDATE SET
+       preset_key = excluded.preset_key,
+       revision = auditflow_demo_scenario_presets.revision + 1,
+       applied_by = excluded.applied_by,
+       applied_at = datetime('now')`,
+  ).bind(id, preset.key, session.actorId).run();
+  await env.DB.prepare(
+    `UPDATE auditflow_engagement_state
+     SET revision = revision + 1, g_status = ?2, updated_at = datetime('now')
+     WHERE engagement_id = ?1`,
+  ).bind(id, JSON.stringify(scenarioStatus)).run();
+  const updated = await readEngagementRow(env, id);
+  await appendEvent(env, {
+    engagementId: id,
+    actor: session.actorId,
+    action: 'SCENARIO_PRESET_APPLIED',
+    objectType: 'demo_scenario_preset',
+    objectId: preset.key,
+    previousRevision: Number(engagement.revision || 1),
+    newRevision: Number(updated?.revision || Number(engagement.revision || 1) + 1),
+    idempotencyKey: String(payload.idempotencyKey || ''),
+    correlationId,
+  });
+  return json(request, {
+    ok: true,
+    scenario: { engagementId: id, ...preset, appliedBy: session.actorId, revision: Number(updated?.revision || 1) },
+    engagement: serializeEngagementState(updated),
+    // A preset is a bounded presenter marker. It never writes decisions,
+    // approvals, evidence, or an opinion; health remains D1-derived.
+    note: 'The controlled preset updates only this isolated demo engagement marker. Gates, health, and next actions remain derived from canonical D1 records.',
+    evidenceLevel: 'SIMULATION',
+  }, 201);
+}
+
 function isClientOnlySession(session) {
   return !session.roles.some((role) => STAFF_ROLES.includes(role));
 }
@@ -1263,10 +3680,20 @@ async function requireEngagementScope(request, env, engagementId) {
   if (checked.response) return checked;
   const id = readEngagementId(engagementId);
   if (!id) return { response: error(request, 'A valid engagement id is required.') };
-  if (!(ACTOR_ASSIGNMENTS[checked.session.actorId] || []).includes(id)) {
+  let effective = checked.session;
+  const viewId = readViewId(request);
+  if (viewId) {
+    const view = await readDemoView(env, checked.session, viewId);
+    if (!view) return { response: error(request, 'The workspace view is not active for this session.', 409, 'VIEW_CONTEXT_INVALID') };
+    if (view.engagement_id !== id) return { response: error(request, 'The workspace view is scoped to another engagement.', 409, 'VIEW_SCOPE_CONFLICT') };
+    const expectedVersion = request.headers.get('X-AuditFlow-Context-Version');
+    if (expectedVersion && Number(expectedVersion) !== Number(view.context_version)) return { response: error(request, 'The workspace context changed; reload before acting.', 409, 'CONTEXT_VERSION_CONFLICT') };
+    effective = effectiveSessionForView(view, checked.session);
+  }
+  if (!(ACTOR_ASSIGNMENTS[effective.actorId] || []).includes(id)) {
     return { response: error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED') };
   }
-  return checked;
+  return { ...checked, session: effective };
 }
 
 async function listPbc(request, env, url) {
@@ -1313,7 +3740,7 @@ async function listDecisions(request, env, url) {
   const checked = await requireEngagementScope(request, env, engagementId);
   if (checked.response) return checked.response;
   const result = await env.DB.prepare(
-    'SELECT * FROM auditflow_decisions WHERE engagement_id = ?1 ORDER BY decided_at DESC LIMIT 100',
+    'SELECT * FROM auditflow_decisions WHERE engagement_id = ?1 ORDER BY revision DESC, decided_at DESC, decision_id DESC LIMIT 100',
   ).bind(engagementId).all();
   const rows = result.results || [];
   const visible = isClientOnlySession(checked.session)
@@ -1342,19 +3769,34 @@ async function handle(request, env) {
   if (!env.DB) return error(request, 'D1 is not configured for this Worker.', 503, 'DATABASE_UNAVAILABLE')
   if (path === '/api/demo/session' && request.method === 'POST') return createDemoSession(request, env)
   if (path === '/api/demo/me' && request.method === 'GET') return getDemoMe(request, env)
+  if (path === '/api/demo/contexts' && request.method === 'GET') return getDemoContexts(request, env)
+  if (path === '/api/demo/views' && request.method === 'GET') return listDemoViews(request, env)
+  if (path === '/api/demo/views' && request.method === 'POST') return createDemoView(request, env)
+  const viewMatch = path.match(/^\/api\/demo\/views\/([A-Za-z0-9_-]{8,120})$/)
+  if (viewMatch && request.method === 'GET') return getDemoView(request, env, viewMatch[1])
+  if (viewMatch && request.method === 'PUT') return updateDemoView(request, env, viewMatch[1])
+  if (viewMatch && request.method === 'DELETE') return closeDemoView(request, env, viewMatch[1])
   if (path === '/api/demo/reset' && request.method === 'POST') return resetSharedDemo(request, env)
+  if (path === '/api/portfolio' && request.method === 'GET') return getOperationalPortfolio(request, env)
+  if (path === '/api/process-health' && request.method === 'GET') return getProcessHealth(request, env, url)
+  if (path === '/api/scenario-presets' && request.method === 'GET') return getScenarioPreset(request, env, url)
+  if (path === '/api/approval-center' && request.method === 'GET') return getApprovalCenter(request, env, url)
   if (path === '/api/artifacts' && request.method === 'GET') return listArtifacts(request, env, url)
   if (path === '/api/pbc' && request.method === 'GET') return listPbc(request, env, url)
   if (path === '/api/workpapers' && request.method === 'GET') return listWorkpapers(request, env, url)
   if (path === '/api/reviews' && request.method === 'GET') return listReviews(request, env, url)
   if (path === '/api/decisions' && request.method === 'GET') return listDecisions(request, env, url)
   if (path === '/api/outbox' && request.method === 'GET') return listOutbox(request, env, url)
+  if (path === '/api/assessments' && request.method === 'GET') return getAssessmentSummary(request, env, url)
+  if (path === '/api/accounting-status' && request.method === 'GET') return getAccountingStatus(request, env, url)
   {
     const engagementMatch = path.match(/^\/api\/engagements\/([A-Za-z0-9_-]{1,40})(\/.*)?$/)
     if (engagementMatch) {
       const engagementId = engagementMatch[1]
       const suffix = engagementMatch[2] || ''
       if (suffix === '' && request.method === 'GET') return getEngagement(request, env, engagementId)
+      if (suffix === '/workspace' && request.method === 'GET') return getWorkspace(request, env, engagementId)
+      if (suffix === '/progress' && request.method === 'GET') return getEngagementProgress(request, env, engagementId)
       if (suffix === '/tasks' && request.method === 'GET') return getEngagementTasks(request, env, engagementId, url)
       if (suffix === '/timeline' && request.method === 'GET') return getEngagementTimeline(request, env, engagementId, url)
       if (suffix === '/actions' && request.method === 'POST') return dispatchEngagementAction(request, env, engagementId)

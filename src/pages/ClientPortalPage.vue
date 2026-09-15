@@ -4,8 +4,10 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
+import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 import { client, workflowGuides } from '../data'
 import { activeActor, recordPbcUpload, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
+import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 
 const emit = defineEmits(['navigate'])
 const portalClient = computed(() => scenarioClient() || client)
@@ -23,6 +25,10 @@ function navigate(route) {
 }
 
 function chooseUpload(request) {
+  if (sharedDemoEnabled) {
+    uploadStatus.value = 'Local portal uploads are read-only in shared mode; use the shared command surface.'
+    return
+  }
   if (!canUpload.value) return
   uploadRequest.value = request
   uploadFileName.value = ''
@@ -34,6 +40,10 @@ function selectUploadFile(event) {
 }
 
 async function submitUpload() {
+  if (sharedDemoEnabled) {
+    uploadStatus.value = 'Local portal uploads are read-only in shared mode; use the shared command surface.'
+    return
+  }
   const request = uploadRequest.value
   const actor = activeActor()
   if (!request || !actor || !uploadFileName.value || uploading.value) return
@@ -52,6 +62,9 @@ async function submitUpload() {
   <div class="page client-portal-page">
     <PageHeader eyebrow="Client portal" title="Welcome back, Nadia" description="One clear place to submit your business details, respond to requests, and keep every question with the engagement team." />
     <WorkflowGuide :guide="workflowGuides['client-home']" />
+    <LocalFixtureNotice v-if="sharedDemoEnabled"
+      title="Local client portal is read-only"
+      description="The shared command surface is authoritative for uploads and handoffs. This portal projection remains a browser-local reference while shared mode is active." />
 
     <section class="portal-banner panel">
       <span class="portal-avatar avatar avatar-blue">NF</span>

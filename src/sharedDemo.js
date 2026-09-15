@@ -11,10 +11,12 @@ export const SHARED_ENGAGEMENT_ID = 'ENG-0018-AUD-2026';
 export const SHARED_POLL_MS = 5000;
 
 const testOverrides = { baseUrl: null, enabled: null };
+let activeViewDescriptor = null;
 /** Test-only hook: force the client on/off with a mock fetch base. */
 export function __setSharedDemoConfigForTests(config = {}) {
   testOverrides.baseUrl = config.baseUrl ?? null;
   testOverrides.enabled = config.enabled ?? null;
+  if (config.resetView === true || config.enabled === false) activeViewDescriptor = null;
 }
 
 function sharedEnabled() {
@@ -26,6 +28,15 @@ function apiBase() {
   let env = {};
   try { env = (import.meta && import.meta.env) || {}; } catch { env = {}; }
   return String(env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+}
+
+export function setActiveDemoView(view) {
+  activeViewDescriptor = view && view.viewId ? { ...view } : null;
+  return activeViewDescriptor;
+}
+
+export function getActiveDemoView() {
+  return activeViewDescriptor;
 }
 
 function requestId() {
@@ -47,7 +58,7 @@ function disabledError() {
   });
 }
 
-async function sharedRequest(path, { method = 'GET', body } = {}) {
+async function sharedRequest(path, { method = 'GET', body, headers = {} } = {}) {
   if (!sharedEnabled()) throw disabledError();
   const id = requestId();
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
@@ -58,7 +69,15 @@ async function sharedRequest(path, { method = 'GET', body } = {}) {
       method,
       ...(controller ? { signal: controller.signal } : {}),
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json', 'X-AuditFlow-Request-Id': id },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-AuditFlow-Request-Id': id,
+        ...(activeViewDescriptor?.viewId && !path.startsWith('/demo/views') ? {
+          'X-AuditFlow-View': activeViewDescriptor.viewId,
+          'X-AuditFlow-Context-Version': String(activeViewDescriptor.contextVersion || 1),
+        } : {}),
+        ...headers,
+      },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   } catch (cause) {
@@ -77,7 +96,19 @@ async function sharedRequest(path, { method = 'GET', body } = {}) {
 
 function toResult(promise) {
   return promise.then(
-    (data) => ({ ok: true, ...data }),
+    (data) => {
+      // Keep the active tab descriptor's server-confirmed revision current so
+      // the next command can carry a complete generation/version envelope.
+      const view = data?.view || data?.workspace?.view;
+      if (view?.viewId) setActiveDemoView(view);
+      const revision = Number(data?.revision ?? data?.engagement?.revision ?? data?.progress?.revision ?? data?.workspace?.revision);
+      const generationId = data?.generationId || data?.engagement?.generationId || data?.progress?.generationId || data?.workspace?.generationId;
+      if (activeViewDescriptor && (data?.engagementId || data?.engagement?.engagementId || data?.progress?.engagementId || data?.workspace?.engagementId) === activeViewDescriptor.engagementId) {
+        if (Number.isSafeInteger(revision) && revision >= 1) activeViewDescriptor = { ...activeViewDescriptor, revision };
+        if (generationId) activeViewDescriptor = { ...activeViewDescriptor, generationId: String(generationId) };
+      }
+      return ({ ok: true, ...data });
+    },
     (error) => ({
       ok: false,
       error: {
@@ -91,11 +122,46 @@ function toResult(promise) {
 }
 
 export function createDemoSession(personaId) {
-  return toResult(sharedRequest('/demo/session', { method: 'POST', body: { personaId } }));
+  return toResult(sharedRequest('/demo/session', { method: 'POST', body: { personaId } })).then((result) => {
+    if (result.ok && result.view) setActiveDemoView(result.view)
+    return result
+  });
 }
 
 export function getDemoMe() {
   return toResult(sharedRequest('/demo/me'));
+}
+
+// Phase A — server-authorized engagement contexts for the Demo Navigator.
+// Returns only engagements the current Worker demo session may view.
+export function getDemoContexts() {
+  return toResult(sharedRequest('/demo/contexts'));
+}
+
+export function getDemoViews() {
+  return toResult(sharedRequest('/demo/views'));
+}
+
+export function createDemoView(payload = {}) {
+  return toResult(sharedRequest('/demo/views', { method: 'POST', body: payload })).then((result) => {
+    if (result.ok && result.view) setActiveDemoView(result.view)
+    return result
+  });
+}
+
+export function getDemoView(viewId) {
+  return toResult(sharedRequest(`/demo/views/${encodeURIComponent(viewId)}`));
+}
+
+export function switchDemoView(viewId, payload = {}) {
+  return toResult(sharedRequest(`/demo/views/${encodeURIComponent(viewId)}`, { method: 'PUT', body: payload })).then((result) => {
+    if (result.ok && result.view) setActiveDemoView(result.view)
+    return result
+  });
+}
+
+export function closeDemoView(viewId) {
+  return toResult(sharedRequest(`/demo/views/${encodeURIComponent(viewId)}`, { method: 'DELETE' }));
 }
 
 export function getSharedEngagement(engagementId = SHARED_ENGAGEMENT_ID) {
@@ -135,14 +201,116 @@ export function getSharedDecisions(engagementId = SHARED_ENGAGEMENT_ID) {
   return toResult(sharedRequest(`/decisions?engagementId=${encodeURIComponent(engagementId)}`));
 }
 
+// Phase B — server-derived workflow progress and process validity. The Worker
+// derives the stage from actual D1 records; current_stage is only a cached
+// projection and is reported as such.
+export function getEngagementProgress(engagementId = SHARED_ENGAGEMENT_ID) {
+  return toResult(sharedRequest(`/engagements/${encodeURIComponent(engagementId)}/progress`));
+}
+
+export function getSharedWorkspace(engagementId = SHARED_ENGAGEMENT_ID, { viewId = '', contextVersion = null } = {}) {
+  const headers = viewId ? {
+    'X-AuditFlow-View': viewId,
+    ...(contextVersion == null ? {} : { 'X-AuditFlow-Context-Version': String(contextVersion) }),
+  } : {};
+  return toResult(sharedRequest(`/engagements/${encodeURIComponent(engagementId)}/workspace`, { headers }));
+}
+
+export function getApprovalCenter(engagementId = SHARED_ENGAGEMENT_ID, tab = 'my-decisions', { viewId = '', contextVersion = null } = {}) {
+  const params = new URLSearchParams({ engagementId, tab });
+  const headers = viewId ? {
+    'X-AuditFlow-View': viewId,
+    ...(contextVersion == null ? {} : { 'X-AuditFlow-Context-Version': String(contextVersion) }),
+  } : {};
+  return toResult(sharedRequest(`/approval-center?${params.toString()}`, { headers }));
+}
+
+// Phase D — operational views are generated by the Worker from the canonical
+// D1 snapshot. Components must not derive a competing "next action" locally.
+export function getSharedPortfolio() {
+  return toResult(sharedRequest('/portfolio'));
+}
+
+export function getProcessHealth(engagementId = SHARED_ENGAGEMENT_ID) {
+  return toResult(sharedRequest(`/process-health?engagementId=${encodeURIComponent(engagementId)}`));
+}
+
+export function getScenarioPresets(engagementId = SHARED_ENGAGEMENT_ID) {
+  return toResult(sharedRequest(`/scenario-presets?engagementId=${encodeURIComponent(engagementId)}`));
+}
+
+export function applyScenarioPreset(engagementId, presetKey, payload = {}) {
+  return runSharedAction(engagementId, 'APPLY_SCENARIO_PRESET', { ...payload, presetKey });
+}
+
+// Phase C — shared client evaluation on the canonical question bank, the
+// accounting status tracker, and the completion-review chain.
+export function getAssessmentSummary(engagementId = SHARED_ENGAGEMENT_ID) {
+  return toResult(sharedRequest(`/assessments?engagementId=${encodeURIComponent(engagementId)}`));
+}
+
+export function recordAssessmentResponse(engagementId, payload = {}) {
+  return runSharedAction(engagementId, 'RECORD_ASSESSMENT_RESPONSE', payload);
+}
+
+export function getAccountingStatus(engagementId = SHARED_ENGAGEMENT_ID) {
+  return toResult(sharedRequest(`/accounting-status?engagementId=${encodeURIComponent(engagementId)}`));
+}
+
+export function updateAccountingStatus(engagementId, payload = {}) {
+  return runSharedAction(engagementId, 'UPDATE_ACCOUNTING_STATUS', payload);
+}
+
+export function approveAccountingFs(engagementId, payload = {}) {
+  return runSharedAction(engagementId, 'APPROVE_ACCOUNTING_FS', payload);
+}
+
+export function evaluateAccountingInput(engagementId, payload = {}) {
+  return runSharedAction(engagementId, 'EVALUATE_ACCOUNTING_INPUT', payload);
+}
+
+export function recordManagerCompletion(engagementId, payload = {}) {
+  return runSharedAction(engagementId, 'RECORD_MANAGER_COMPLETION', payload);
+}
+
+export function recordPartnerReview(engagementId, payload = {}) {
+  return runSharedAction(engagementId, 'RECORD_PARTNER_REVIEW', payload);
+}
+
+export function recordFinalDiscussion(engagementId, payload = {}) {
+  return runSharedAction(engagementId, 'RECORD_FINAL_DISCUSSION', payload);
+}
+
 /**
  * Run one versioned workflow action. Resolves { ok:true, ... } on commit or
  * { ok:false, error } on denial/conflict/offline. Never synthesizes success.
  */
 export function runSharedAction(engagementId, action, payload = {}) {
+  const cleanAction = String(action || '').trim().toUpperCase();
+  const active = activeViewDescriptor && activeViewDescriptor.engagementId === engagementId
+    && activeViewDescriptor.viewId && activeViewDescriptor.generationId
+    && Number.isSafeInteger(Number(activeViewDescriptor.revision)) && Number(activeViewDescriptor.revision) >= 1;
+  if (!active) {
+    return toResult(sharedRequest(`/engagements/${encodeURIComponent(engagementId)}/actions`, {
+      method: 'POST',
+      body: { ...payload, action: cleanAction },
+    }));
+  }
+  const { targetId: suppliedTarget, expectedGenerationId, expectedRevision, expectedContextVersion, action: _ignored, ...businessPayload } = payload || {};
+  const idempotency = String(payload?.idempotencyKey || idempotencyKey(cleanAction.toLowerCase()));
+  const envelope = {
+    action: cleanAction,
+    targetId: String(suppliedTarget || payload?.candidateId || payload?.workpaperId || payload?.requestId || engagementId),
+    expectedGenerationId: String(expectedGenerationId || activeViewDescriptor.generationId),
+    expectedRevision: Number(expectedRevision || activeViewDescriptor.revision),
+    expectedContextVersion: Number(expectedContextVersion || activeViewDescriptor.contextVersion || 1),
+    idempotencyKey: idempotency,
+    payload: businessPayload,
+  };
   return toResult(sharedRequest(`/engagements/${encodeURIComponent(engagementId)}/actions`, {
     method: 'POST',
-    body: { ...payload, action },
+    headers: { 'X-AuditFlow-Command': 'v1' },
+    body: envelope,
   }));
 }
 

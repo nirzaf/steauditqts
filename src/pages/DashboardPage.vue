@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
+import NextBestActionCard from '../components/NextBestActionCard.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
@@ -43,6 +44,7 @@ function navigate(route) {
       @action="navigate('clients')"
     />
     <WorkflowGuide :guide="workflowGuides.dashboard" />
+    <NextBestActionCard title="Next best action from the shared workflow" @navigate="navigate" />
 
     <div class="page-context-row">
       <div class="context-chip"><span class="context-dot"></span><strong>Demo workspace</strong><span>{{ dashboardClient?.name || 'No selected engagement' }}</span></div>
@@ -72,7 +74,7 @@ function navigate(route) {
 
     <section class="dashboard-grid">
       <article class="panel panel-wide">
-        <div class="panel-heading"><div><span class="eyebrow">Portfolio snapshot</span><h2>Engagements that need a decision</h2></div><button type="button" class="text-button" @click="navigate('engagements')">View all <Icon name="arrow-right" :size="15" /></button></div>
+        <div class="panel-heading"><div><span class="eyebrow">Portfolio snapshot</span><h2>Engagements that need a decision</h2></div><button type="button" class="text-button" @click="navigate('portfolio')">Open live portfolio <Icon name="arrow-right" :size="15" /></button></div>
         <div class="table-wrap responsive-table">
           <table>
             <thead><tr><th>Client</th><th>Service route</th><th>Owner</th><th>Risk</th><th>Next action</th><th>Status</th></tr></thead>

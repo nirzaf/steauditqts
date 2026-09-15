@@ -9,8 +9,17 @@ const props = defineProps({
   title: { type: String, default: 'Shared task queue' },
 });
 
+const emit = defineEmits(['navigate']);
+
 const { tasks, loading, error, lastSync, refresh } = useSharedEngagement(() => props.engagementId, { assignee: () => props.assignee });
 const toneFor = (state) => (state === 'COMPLETE' ? 'good' : state === 'BLOCKED' ? 'danger' : state === 'OPEN' ? 'warn' : 'neutral');
+const taskMeta = (task) => [
+  task.priority && task.priority !== 'NORMAL' ? `${task.priority} priority` : '',
+  task.blockerCode ? `blocker ${task.blockerCode}` : '',
+  task.stage ? task.stage : '',
+  task.slaDueAt ? `SLA ${task.slaDueAt}` : '',
+  task.escalationState && task.escalationState !== 'NONE' ? task.escalationState : '',
+].filter(Boolean).join(' · ');
 </script>
 
 <template>
@@ -23,8 +32,9 @@ const toneFor = (state) => (state === 'COMPLETE' ? 'good' : state === 'BLOCKED' 
     <p v-else-if="!loading && !tasks.length" class="guide-empty-state">No shared tasks for this filter yet. Actions from other roles appear here within seconds.</p>
     <ul v-else class="shared-task-list">
       <li v-for="task in tasks" :key="task.taskId" class="shared-task-row">
-        <span class="shared-task-main"><strong>{{ task.title }}</strong><small>{{ task.assigneePersona || task.assigneeRole || 'Unassigned' }}{{ task.dueDate ? ` · due ${task.dueDate}` : '' }}</small></span>
+        <span class="shared-task-main"><strong>{{ task.title }}</strong><small>{{ task.assigneePersona || task.assigneeRole || 'Unassigned' }}{{ task.dueDate ? ` · due ${task.dueDate}` : '' }}</small><small v-if="taskMeta(task)">{{ taskMeta(task) }}</small></span>
         <StatusPill :label="task.state" :tone="toneFor(task.state)" />
+        <button type="button" class="text-button" @click="emit('navigate', { routeKey: task.route || 'role-workspace', engagementId: task.engagementId || props.engagementId, recordId: task.target || task.linkedObjectId || task.taskId })">Open <Icon name="arrow-right" :size="14" /></button>
       </li>
     </ul>
     <p class="panel-footnote"><Icon name="info" :size="16" /><span>Synced {{ lastSync ? new Date(lastSync).toLocaleTimeString('en-QA') : 'never' }} · another browser's completed action appears here.</span></p>

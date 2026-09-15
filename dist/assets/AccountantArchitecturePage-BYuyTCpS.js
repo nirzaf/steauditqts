@@ -1,1 +1,0 @@
-import{_ as t}from"./RoleArchitecturePage-CSkDg9lJ.js";import{o,y as r}from"./index-3vcoetfA.js";import"./PageHeader-DzUV5Ysw.js";import"./StatusPill-D8mxjiFH.js";import"./WorkflowGuide-BIotLGmE.js";const i={__name:"AccountantArchitecturePage",setup(a){return(c,e)=>(o(),r(t,{persona:"accountant"}))}};export{i as default};

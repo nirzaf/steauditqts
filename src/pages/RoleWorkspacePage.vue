@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import Icon from '../components/Icon.vue'
+import NextBestActionCard from '../components/NextBestActionCard.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import SharedTasks from '../components/SharedTasks.vue'
@@ -9,6 +10,7 @@ import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { formatMoney, workflowGuides } from '../data'
 import { roleWorkspaceFor } from '../roleWorkspaces.js'
 import { activeActor, commercialRecordFor, completeSyntheticCredentialSetup, gateSummary, issueSyntheticCredential, recordRoleTaskAction, recordTerms, recordTermsDecision, scenario, selectedClient, selectedEngagement, termsFor, verifyAdvancePayment } from '../domain/scenario.js'
+import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 
 const emit = defineEmits(['navigate'])
 const sharedEnabled = sharedDemoEnabled
@@ -65,6 +67,10 @@ function navigate(route) {
 }
 
 function acknowledge(task) {
+  if (sharedEnabled) {
+    show('Local role tasks are read-only in shared mode; use the shared queue below.')
+    return
+  }
   if (busyTask.value) return
   busyTask.value = task.id
   const result = recordRoleTaskAction({ taskId: task.id, action: task.command || 'TASK_ACKNOWLEDGED', actorPersonaId: actor.value?.personaId, expectedSessionEpoch: actor.value?.sessionEpoch, idempotencyKey: `role-task-${task.id}-${actor.value?.sessionEpoch || 1}` , detail: task.title })
@@ -73,6 +79,10 @@ function acknowledge(task) {
 }
 
 function verifyAdvance(task) {
+  if (sharedEnabled) {
+    show('Local role tasks are read-only in shared mode; use the shared queue below.')
+    return
+  }
   if (busyTask.value) return
   busyTask.value = task.id
   const result = verifyAdvancePayment({ engagementId: engagement.value?.id, actorPersonaId: actor.value?.personaId, expectedSessionEpoch: actor.value?.sessionEpoch, idempotencyKey: `advance-${engagement.value?.id}-${actor.value?.sessionEpoch || 1}`, reference: 'PAY-SIM-0018' })
@@ -83,6 +93,10 @@ function verifyAdvance(task) {
 }
 
 function issueCredential() {
+  if (sharedEnabled) {
+    show('Local credential controls are read-only in shared mode; use the shared queue below.')
+    return
+  }
   if (!actor.value || busyTask.value) return
   busyTask.value = 'credential'
   const result = issueSyntheticCredential({ engagementId: engagement.value?.id, actorPersonaId: actor.value.personaId, expectedSessionEpoch: actor.value.sessionEpoch, idempotencyKey: `credential-${engagement.value?.id}-${actor.value.sessionEpoch}` })
@@ -94,6 +108,10 @@ function issueCredential() {
 }
 
 function completeSetup() {
+  if (sharedEnabled) {
+    show('Local credential controls are read-only in shared mode; use the shared queue below.')
+    return
+  }
   if (!activeCredential.value || busyTask.value) return
   busyTask.value = 'credential-setup'
   const result = completeSyntheticCredentialSetup({ credentialId: activeCredential.value.id, actorPersonaId: actor.value?.personaId, expectedSessionEpoch: actor.value?.sessionEpoch, idempotencyKey: `credential-setup-${activeCredential.value.id}-${actor.value?.sessionEpoch || 1}` })
@@ -102,6 +120,10 @@ function completeSetup() {
 }
 
 function decideTerms() {
+  if (sharedEnabled) {
+    show('Local terms controls are read-only in shared mode; use the shared queue below.')
+    return
+  }
   if (!actor.value || !engagement.value || !terms.value || busyTask.value) return
   busyTask.value = 'terms-decision'
   const result = recordTermsDecision({ engagementId: engagement.value.id, actorPersonaId: actor.value.personaId, expectedRevision: engagement.value.revision, expectedSessionEpoch: actor.value.sessionEpoch, idempotencyKey: `terms-decision-${engagement.value.id}-${engagement.value.revision}-${termsDecision.value}`, version: terms.value.version, decision: termsDecision.value, rationale: termsRationale.value })
@@ -111,6 +133,10 @@ function decideTerms() {
 }
 
 function reissueTerms() {
+  if (sharedEnabled) {
+    show('Local terms controls are read-only in shared mode; use the shared queue below.')
+    return
+  }
   if (!actor.value || !engagement.value || !terms.value || busyTask.value) return
   busyTask.value = 'terms-reissue'
   const result = recordTerms({ engagementId: engagement.value.id, actorPersonaId: actor.value.personaId, expectedRevision: engagement.value.revision, idempotencyKey: `terms-reissue-${engagement.value.id}-${engagement.value.revision}`, version: nextTermsVersion.value })
@@ -123,7 +149,12 @@ function reissueTerms() {
   <div class="page role-workspace-page">
     <PageHeader :eyebrow="workspace.eyebrow" :title="workspace.title" :description="workspace.summary" />
     <WorkflowGuide :guide="workflowGuides['role-workspace']" />
+    <NextBestActionCard v-if="sharedEnabled" title="Your next shared handoff" compact @navigate="navigate" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+
+    <LocalFixtureNotice v-if="sharedEnabled"
+      title="Local role workspace is read-only"
+      description="The shared queue below is authoritative for this persona. Metrics, credentials, engagement terms and task controls in this page are browser-local reference fixtures." />
 
     <section class="role-scope-banner panel">
       <div class="role-scope-icon" :class="`tone-${workspace.tone}`"><Icon :name="workspace.icon" :size="22" /></div>
@@ -158,7 +189,7 @@ function reissueTerms() {
       </aside>
     </section>
 
-    <SharedTasks v-if="sharedEnabled" :engagement-id="engagement?.id || ''" title="Shared queue for this persona" :assignee="sharedAssignee" />
+    <SharedTasks v-if="sharedEnabled" :engagement-id="engagement?.id || ''" title="Shared queue for this persona" :assignee="sharedAssignee" @navigate="navigate" />
 
     <section v-if="canIssueCredential || canCompleteCredential || activeCredential" class="panel credential-panel">
       <div class="panel-heading"><div><span class="eyebrow">G4 · controlled onboarding</span><h2>Synthetic temporary credential</h2></div><StatusPill :label="activeCredential ? activeCredential.credentialState : 'Not issued'" :tone="activeCredential?.credentialState === 'ACTIVE' ? 'good' : 'warn'" /></div>

@@ -23,6 +23,8 @@ function makeFakeDb() {
     reviews: new Map(),
     artifacts: [],
     decisions: [],
+    pbcRequests: new Map(),
+    pbcReceipts: new Map(),
     tasks: new Map(),
     events: [],
   };
@@ -33,21 +35,35 @@ function makeFakeDb() {
     else if (sql.includes('INSERT INTO auditflow_review_points')) state.reviews.set(p[0], { review_id: p[0], engagement_id: p[1], workpaper_id: p[2], severity: p[3], owner: p[4], author: p[5], state: 'OPEN' });
     else if (sql.includes("UPDATE auditflow_review_points SET response")) { const r = state.reviews.get(p[0]); if (r) { r.response = p[1]; r.state = 'CLEARED'; } }
     else if (sql.includes('INSERT INTO auditflow_artifacts')) state.artifacts.push({ document_id: p[0], engagement_id: p[1], document_type: 'DRAFT_FS', version: p[3], state: 'PUBLISHED', created_at: `2026-09-14 0${state.artifacts.length}:00:00` });
-    else if (sql.includes('INSERT INTO auditflow_decisions')) state.decisions.push({ type: p[2], decision: p[3] });
+    else if (sql.includes('INSERT INTO auditflow_decisions') && sql.includes('?8, ?9)')) state.decisions.push({ type: p[2], version: p[3], object_version: p[3], decision: p[4], decided_by: p[5], decided_at: '2026-09-14 00:00:00', input_generation: p[8], decision_id: p[0] });
+    else if (sql.includes('INSERT INTO auditflow_decisions')) {
+      const kind = (sql.match(/ACCEPTANCE|ENGAGEMENT_LETTER|DRAFT_FS|EQR|AUDIT_OPINION|RELEASE/) || [])[0] || 'UNKNOWN';
+      state.decisions.push({ type: kind, version: p[2], object_version: p[2], decision: p[3], decided_by: p[4], decided_at: '2026-09-14 00:00:00', input_generation: 1, decision_id: p[0] });
+    }
+    else if (sql.includes('INSERT INTO auditflow_pbc_requests')) state.pbcRequests.set(p[0], { request_id: p[0], engagement_id: p[1], title: p[2], state: 'OPEN', due_date: p[6] });
+    else if (sql.includes('INSERT INTO auditflow_pbc_receipts')) state.pbcReceipts.set(p[0], { receipt_id: p[0], request_id: p[1], engagement_id: p[2], state: 'RECEIVED' });
+    else if (sql.includes('UPDATE auditflow_pbc_requests SET state')) { const req = state.pbcRequests.get(p[0]); if (req) req.state = p[1] || 'RECEIVED'; }
+    else if (sql.includes('UPDATE auditflow_pbc_receipts SET state')) { const rec = state.pbcReceipts.get(p[0]); if (rec) rec.state = p[1]; }
     else if (sql.includes('INSERT INTO auditflow_tasks')) state.tasks.set(p[0], { task_id: p[0], state: p[5] });
     else if (sql.includes("UPDATE auditflow_tasks SET state = 'COMPLETE'")) { const t = state.tasks.get(p[0]); if (t) t.state = 'COMPLETE'; }
     else if (sql.includes('UPDATE auditflow_engagement_state')) { const r = state.engagements.get(p[0]); if (r) { r.revision += 1; if (sql.includes('current_stage')) r.current_stage = p[1]; } }
     else if (sql.includes('INSERT INTO auditflow_events')) state.events.push({ action: p[3] });
   }
   function one(sql, p) {
-    if (sql.includes('FROM auditflow_demo_sessions')) return state.sessions.get(p[0]) || null;
-    if (sql.includes('FROM auditflow_engagement_state')) return state.engagements.get(p[0]) || null;
-    if (sql.includes('FROM auditflow_workpapers')) return state.workpapers.get(p[0]) || null;
-    if (sql.includes('FROM auditflow_review_points')) return state.reviews.get(p[0]) || null;
     if (sql.includes('COUNT(*)')) {
       if (sql.includes("document_type = 'DRAFT_FS'")) return { n: state.artifacts.length };
+      if (sql.includes('FROM auditflow_workpapers')) return { n: [...state.workpapers.values()].filter((w) => w.engagement_id === p[0] && w.state === 'SUBMITTED').length };
+      if (sql.includes('FROM auditflow_review_points')) return { n: [...state.reviews.values()].filter((r) => r.engagement_id === p[0] && r.state === 'OPEN' && (p.length < 3 || r.severity === p[2])).length };
+      if (sql.includes('FROM auditflow_pbc_receipts')) return { n: [...state.pbcReceipts.values()].filter((r) => r.request_id === p[0]).length };
       return { n: 0 };
     }
+    if (sql.includes('FROM auditflow_demo_sessions')) return state.sessions.get(p[0]) || null;
+    if (sql.includes('FROM auditflow_engagement_state')) return state.engagements.get(p[0]) || null;
+    if (sql.includes('FROM auditflow_decisions')) return [...state.decisions].reverse().find((d) => d.type === p[1]) || null;
+    if (sql.includes('FROM auditflow_pbc_requests WHERE request_id')) return state.pbcRequests.get(p[0]) || null;
+    if (sql.includes('FROM auditflow_pbc_receipts WHERE receipt_id')) return state.pbcReceipts.get(p[0]) || null;
+    if (sql.includes('FROM auditflow_workpapers')) return state.workpapers.get(p[0]) || null;
+    if (sql.includes('FROM auditflow_review_points')) return state.reviews.get(p[0]) || null;
     if (sql.includes('FROM auditflow_events WHERE engagement_id')) return state.events.find((e) => e.engagement_id === p[0] && e.idempotency_key === p[1]) || null;
     return null;
   }
@@ -58,6 +74,7 @@ function makeFakeDb() {
         async first() { return one(sql, params); },
         async all() {
           if (sql.includes("document_type = 'DRAFT_FS'")) return { results: state.artifacts.filter((a) => a.engagement_id === params[0] && a.state === 'PUBLISHED') };
+          if (sql.includes('FROM auditflow_pbc_requests')) return { results: [...state.pbcRequests.values()].filter((r) => r.engagement_id === params[0]) };
           return { results: [] };
         },
       });
@@ -149,6 +166,30 @@ test('EQR and opinion: role-gated, opinion bound to exact draft candidate', asyn
   const wrongCandidate = await worker.fetch(act(ENG, partner, { action: 'RECORD_AUDIT_OPINION', opinionType: 'UNMODIFIED', candidateVersion: 'v99', rationale: 'All clear.' }), envFor(fake));
   assert.equal(wrongCandidate.status, 409);
   assert.equal((await wrongCandidate.json()).error.code, 'VERSION_MISMATCH');
+  const noDraftResponse = await worker.fetch(act(ENG, partner, { action: 'RECORD_AUDIT_OPINION', opinionType: 'UNMODIFIED', candidateVersion: 'v01', rationale: 'All clear.' }), envFor(fake));
+  assert.equal(noDraftResponse.status, 409);
+  assert.equal((await noDraftResponse.json()).error.code, 'DRAFT_NOT_ACCEPTED');
+  const mgmt = sidFor(fake, 'client-management-demo', 'sess-mgmt-op-00000000001');
+  const prep = sidFor(fake, 'preparer-demo', 'sess-prep-op-00000000001');
+  const client = sidFor(fake, 'client-demo', 'sess-client-op-0000000001');
+  const draftAccept = await worker.fetch(act(ENG, mgmt, { action: 'RESPOND_DRAFT_FS', decision: 'ACCEPT', version: 'v01', explanation: 'Agreed.' }), envFor(fake));
+  assert.equal(draftAccept.status, 201);
+  const noManager = await worker.fetch(act(ENG, partner, { action: 'RECORD_AUDIT_OPINION', opinionType: 'UNMODIFIED', candidateVersion: 'v01', rationale: 'All clear.' }), envFor(fake));
+  assert.equal(noManager.status, 409);
+  assert.equal((await noManager.json()).error.code, 'MANAGER_COMPLETION_REQUIRED');
+  await worker.fetch(act(ENG, prep, { action: 'SUBMIT_WORKPAPER', procedureTitle: 'Revenue cut-off', evidenceReference: 'INV-1042', conclusion: 'No exception.' }), envFor(fake));
+  const pbcCreate = await worker.fetch(act(ENG, senior, { action: 'CREATE_PBC_REQUEST', title: 'Bank confirmations', period: 'FY2026', dueDate: '2026-10-10', clientOwner: 'Nadia Faris', reviewer: 'Audit Senior', acceptanceCriteria: 'Complete pack.' }), envFor(fake));
+  const requestId = (await pbcCreate.json()).requestId;
+  const receipt = await worker.fetch(act(ENG, client, { action: 'SUBMIT_PBC_RECEIPT', requestId, fileName: 'bank-pack.xlsx', fileSize: 24800, comment: 'Uploaded.' }), envFor(fake));
+  const receiptId = (await receipt.json()).receiptId;
+  await worker.fetch(act(ENG, senior, { action: 'RESPOND_PBC_RECEIPT', receiptId, decision: 'ACCEPT', note: 'Meets criteria.' }), envFor(fake));
+  const managerOk = await worker.fetch(act(ENG, mgr, { action: 'RECORD_MANAGER_COMPLETION', decision: 'RECOMMEND_COMPLETE', rationale: 'Workpapers submitted, points clear, draft accepted.' }), envFor(fake));
+  assert.equal(managerOk.status, 201);
+  const noPartner = await worker.fetch(act(ENG, partner, { action: 'RECORD_AUDIT_OPINION', opinionType: 'UNMODIFIED', candidateVersion: 'v01', rationale: 'All clear.' }), envFor(fake));
+  assert.equal(noPartner.status, 409);
+  assert.equal((await noPartner.json()).error.code, 'PARTNER_REVIEW_REQUIRED');
+  const partnerOk = await worker.fetch(act(ENG, partner, { action: 'RECORD_PARTNER_REVIEW', decision: 'APPROVE_FOR_OPINION', rationale: 'Completion reviewed against current input.' }), envFor(fake));
+  assert.equal(partnerOk.status, 201);
   const opinion = await worker.fetch(act(ENG, partner, { action: 'RECORD_AUDIT_OPINION', opinionType: 'UNMODIFIED', candidateVersion: 'v01', rationale: 'Completion evidence reviewed; EQR approved.' }), envFor(fake));
   assert.equal(opinion.status, 201);
   assert.equal((await opinion.json()).engagement.currentStage, 'STAGE-07');
