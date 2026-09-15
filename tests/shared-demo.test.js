@@ -136,7 +136,7 @@ test('portal presenter view preserves staff identity when an invitation tab shar
             async first() {
               if (sql.includes('FROM auditflow_demo_sessions')) return { session_id: 'sess-shared-cookie-0001', persona_id: 'client-demo', actor_id: 'ACT-NADIA', expires_at: '2099-01-01 00:00:00', last_activity: '2099-01-01 00:00:00' };
               if (sql.includes('FROM auditflow_demo_session_scopes')) return { session_id: 'sess-shared-cookie-0001', run_id: runId, invitation_id: 'inv-shared-0001', client_mode: 1 };
-              if (sql.includes('FROM auditflow_demo_views')) return { view_id: viewId, parent_session_id: 'sess-shared-cookie-0001', run_id: 'run-presenter0001', persona_id: 'admin-demo', actor_id: 'ACT-MAYA', engagement_id: engagementId, generation_id: 'gen-presenter1', context_version: 1, state: 'ACTIVE', expires_at: '2099-01-01 00:00:00' };
+              if (sql.includes('FROM auditflow_demo_views')) return { view_id: viewId, parent_session_id: 'sess-shared-cookie-0001', run_id: 'run-presenter0001', persona_id: 'admin-demo', actor_id: 'ACT-MAYA', engagement_id: 'run-presenter0001-0018-AUD-26', generation_id: 'gen-presenter1', context_version: 1, state: 'ACTIVE', expires_at: '2099-01-01 00:00:00' };
               if (sql.includes('FROM auditflow_demo_run_contexts')) return { run_id: runId, logical_engagement_id: 'ENG-0018-AUD-2026', engagement_id: engagementId };
               return null;
             },
@@ -152,7 +152,7 @@ test('portal presenter view preserves staff identity when an invitation tab shar
   const response = await worker.fetch(new Request(`https://ste.quadrate.lk/api/portal/messages?engagementId=${engagementId}&runId=${runId}`, {
     headers: { ...trustedHeaders, Cookie: 'auditflow_demo_session=sess-shared-cookie-0001', 'X-AuditFlow-View': viewId, 'X-AuditFlow-Context-Version': '1' },
   }), enabledEnv({ db }));
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   const body = await response.json();
   assert.equal(body.counts.total, 2);
   assert.deepEqual(body.messages.map((message) => message.senderRole), ['client_contributor', 'system_admin']);

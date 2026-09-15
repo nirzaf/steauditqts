@@ -4269,10 +4269,16 @@ async function requirePortalEngagementScope(request, env, engagementId, requeste
   if (viewId) {
     const view = await readDemoView(env, checked.session, viewId);
     if (!view) return { response: error(request, 'The workspace view is not active for this session.', 409, 'VIEW_CONTEXT_INVALID') };
-    if (view.engagement_id !== id) return { response: error(request, 'The workspace view is scoped to another engagement.', 409, 'VIEW_SCOPE_CONFLICT') };
     const expectedVersion = request.headers.get('X-AuditFlow-Context-Version');
     if (expectedVersion && Number(expectedVersion) !== Number(view.context_version)) return { response: error(request, 'The workspace context changed; reload before acting.', 409, 'CONTEXT_VERSION_CONFLICT') };
-    effective = effectiveSessionForView(view, checked.session);
+    const viewEffective = effectiveSessionForView(view, checked.session);
+    // A presenter inbox can explicitly address an invitation run while the
+    // presenter tab is still displaying its normal engagement view. Client
+    // views remain bound to the engagement in their view descriptor.
+    if (view.engagement_id !== id && (isClientOnlySession(viewEffective) || !runId)) {
+      return { response: error(request, 'The workspace view is scoped to another engagement.', 409, 'VIEW_SCOPE_CONFLICT') };
+    }
+    effective = viewEffective;
     // A presenter view may intentionally address a run selected in the
     // invitation inbox. Keep that explicit run id while preserving the
     // view's presenter actor/roles; client views remain fixed to their run.
