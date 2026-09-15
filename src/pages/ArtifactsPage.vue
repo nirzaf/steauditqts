@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Icon from '../components/Icon.vue'
 import OutputCompletenessPanel from '../components/OutputCompletenessPanel.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -9,11 +9,13 @@ import { workflowGuides } from '../data'
 import { v5Documents } from '../v5Data.js'
 import { activeActor, accountingPackageFor, actorById, recordRoleTaskAction, scenario, selectedEngagement, termsFor } from '../domain/scenario.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
+import { useRecordSelection } from '../composables/useRecordSelection.js'
 
 const emit = defineEmits(['navigate'])
 const search = ref('')
 const filter = ref('All outputs')
-const selectedId = ref('DOC-08')
+const artifactSelection = useRecordSelection({ getIds: () => visibleDocuments.value.map((d) => d.id), initial: 'DOC-08' })
+const selectedId = artifactSelection.selectedId
 const toast = ref('')
 const clientFacingDocumentIds = new Set(['DOC-07', 'DOC-08', 'DOC-10', 'DOC-11', 'DOC-13', 'DOC-14', 'DOC-17', 'DOC-18', 'DOC-19', 'DOC-22', 'DOC-23', 'DOC-24'])
 const staleDocumentIds = new Set(['DOC-17', 'DOC-19', 'DOC-20', 'DOC-21', 'DOC-22', 'DOC-23'])
@@ -40,6 +42,10 @@ const visibleDocuments = computed(() => v5Documents.filter((item) => {
     || (filter.value === 'Stale' && staleDocumentIds.has(item.id))
   return matchesSearch && matchesFilter
 }))
+watch(() => artifactSelection.targetedId.value, (id) => {
+  if (!id) return
+  if (v5Documents.some((d) => d.id === id)) { search.value = ''; filter.value = 'All outputs' }
+})
 const selected = computed(() => visibleDocuments.value.find((item) => item.id === selectedId.value) || visibleDocuments.value[0] || v5Documents[0])
 const linkedRecord = computed(() => {
   const item = selected.value
@@ -82,7 +88,7 @@ const artifactPreview = computed(() => {
 })
 
 function inspect(item) {
-  selectedId.value = item.id
+  artifactSelection.select(item.id)
 }
 
 function navigate(route) {
@@ -111,7 +117,7 @@ function acknowledge() {
     <OutputCompletenessPanel :active-filter="filter" @select-filter="filter = $event" />
 
     <section class="artifact-layout">
-      <article class="panel artifact-list-panel"><div class="artifact-toolbar"><label class="search-field"><Icon name="search" :size="17" /><span class="sr-only">Search outputs</span><input v-model="search" type="search" placeholder="Search output, owner, or trigger" /></label><div class="filter-row" aria-label="Output filters"><button v-for="item in ['All outputs', 'Ready', 'Needs approval', 'Client-facing', 'Internal', 'Missing', 'Current', 'Stale']" :key="item" type="button" :class="{ active: filter === item }" @click="filter = item">{{ item }}</button></div></div><div class="artifact-list" role="listbox" aria-label="Workflow artifacts"><button v-for="item in visibleDocuments" :key="item.id" type="button" class="artifact-row" :class="{ selected: selected?.id === item.id }" role="option" :aria-selected="selected?.id === item.id" @click="inspect(item)"><span class="artifact-id">{{ item.id }}</span><span class="artifact-row-copy"><strong>{{ item.title }}</strong><small>{{ item.trigger }} · {{ item.owner }}</small></span><StatusPill :label="item.status" :tone="item.tone" /></button><div v-if="!visibleDocuments.length" class="empty-state"><strong>No outputs match this filter.</strong><span>Try another search or clear the filter.</span></div></div><div class="panel-footnote"><Icon name="info" :size="16" /><span>Each output remains linked to its owner, workflow step and exact version.</span></div></article>
+      <article class="panel artifact-list-panel"><div class="artifact-toolbar"><label class="search-field"><Icon name="search" :size="17" /><span class="sr-only">Search outputs</span><input v-model="search" type="search" placeholder="Search output, owner, or trigger" /></label><div class="filter-row" aria-label="Output filters"><button v-for="item in ['All outputs', 'Ready', 'Needs approval', 'Client-facing', 'Internal', 'Missing', 'Current', 'Stale']" :key="item" type="button" :class="{ active: filter === item }" @click="filter = item">{{ item }}</button></div></div><div class="artifact-list" role="listbox" aria-label="Workflow artifacts"><button v-for="item in visibleDocuments" :key="item.id" type="button" class="artifact-row" :class="{ selected: selected?.id === item.id, 'record-target': artifactSelection.isTarget(item.id) }" :data-record-id="item.id" role="option" :aria-selected="selected?.id === item.id" @click="inspect(item)"><span class="artifact-id">{{ item.id }}</span><span class="artifact-row-copy"><strong>{{ item.title }}</strong><small>{{ item.trigger }} · {{ item.owner }}</small></span><StatusPill :label="item.status" :tone="item.tone" /></button><div v-if="!visibleDocuments.length" class="empty-state"><strong>No outputs match this filter.</strong><span>Try another search or clear the filter.</span></div></div><div class="panel-footnote"><Icon name="info" :size="16" /><span>Each output remains linked to its owner, workflow step and exact version.</span></div></article>
       <aside class="panel artifact-detail-panel"><div class="panel-heading"><div><span class="eyebrow">Selected artifact</span><h2>{{ selected?.id }} · {{ selected?.title }}</h2></div><StatusPill :label="selected?.status || 'Not applicable'" :tone="selected?.tone || 'neutral'" /></div><dl class="artifact-detail-list"><div><dt>Trigger</dt><dd>{{ selected?.trigger }}</dd></div><div><dt>Owner</dt><dd>{{ selected?.owner }}</dd></div><div><dt>Record reference</dt><dd>{{ linkedRecord.id }}</dd></div><div><dt>Exact version</dt><dd>{{ linkedRecord.version }}</dd></div><div><dt>Current state</dt><dd>{{ linkedRecord.state }}</dd></div><div><dt>Recorded by</dt><dd>{{ linkedRecord.actor ? actorById(linkedRecord.actor)?.name : 'System projection' }}</dd></div></dl><div class="artifact-preview"><span class="artifact-watermark">WORKFLOW PREVIEW</span><pre>{{ artifactPreview }}</pre></div><div class="artifact-detail-copy"><span class="guide-label"><Icon name="workflow" :size="14" />How to use this record</span><p>Open the destination page to work the owning task. Inspecting an output does not set a gate complete; the underlying command and evidence must still be recorded.</p></div><div class="button-row artifact-detail-actions"><button type="button" class="button secondary" @click="navigate(selected?.route)">Open {{ selected?.route || 'record' }} <Icon name="arrow-right" :size="15" /></button><button type="button" class="button primary" @click="acknowledge">Mark inspected</button></div></aside>
     </section>
     <div class="prototype-note"><Icon name="info" :size="17" /><span><strong>Version control</strong> A filename or catalogue row is not an approval. Decisions remain tied to the exact record and revision shown here.</span></div>

@@ -7,13 +7,21 @@ import { isEscapeEvent } from '../demoContext.js'
 const props = defineProps({
   open: { type: Boolean, default: false },
   notifications: { type: Array, default: () => [] },
+  readIds: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
   error: { type: Object, default: null },
   mode: { type: String, default: 'local' },
   lastSync: { type: String, default: '' },
 })
 
-const emit = defineEmits(['close', 'navigate'])
+const emit = defineEmits(['close', 'navigate', 'mark-read', 'mark-all-read'])
+function isRead(item) {
+  try { return (props.readIds || []).map(String).includes(String(item?.id)) } catch { return false }
+}
+function openItem(item) {
+  emit('mark-read', item?.id)
+  emit('navigate', { routeKey: item.route || 'role-workspace', engagementId: item.engagementId || undefined, recordId: item.recordId || undefined })
+}
 const closeButtonRef = ref(null)
 let restoreFocusTo = null
 
@@ -60,16 +68,20 @@ function toneFor(item) {
       <p v-if="loading" class="guide-status-message" role="status">Syncing shared queue…</p>
       <p v-else-if="error" class="guide-status-message" role="status">Notifications unavailable ({{ error.code }}). Showing the last synced queue.</p>
       <p v-else-if="!notifications.length" class="guide-empty-state">Nothing assigned to this persona right now. Actions from other browsers appear here within seconds.</p>
-      <ul v-else class="drawer-list">
-        <li v-for="item in notifications" :key="item.id" class="drawer-row">
+      <template v-else>
+      <div class="drawer-actions"><span class="muted-label">{{ notifications.filter((n) => !isRead(n)).length }} unread</span><button type="button" class="text-button" @click="emit('mark-all-read')">Mark all read</button></div>
+      <ul class="drawer-list">
+        <li v-for="item in notifications" :key="item.id" class="drawer-row" :class="{ unread: !isRead(item) }">
+          <span class="unread-dot" aria-hidden="true"></span>
           <span class="drawer-main">
             <strong>{{ item.title }}</strong>
             <small>{{ item.detail }}</small>
           </span>
           <StatusPill :label="item.kind" :tone="toneFor(item)" />
-          <button type="button" class="text-button" @click="emit('navigate', { routeKey: item.route || 'role-workspace', engagementId: item.engagementId || undefined, recordId: item.recordId || undefined })">Open <Icon name="arrow-right" :size="14" /></button>
+          <button type="button" class="text-button" @click="openItem(item)">Open <Icon name="arrow-right" :size="14" /></button>
         </li>
       </ul>
+      </template>
       <p class="panel-footnote"><Icon name="info" :size="15" /><span>{{ mode === 'shared' ? `Updates reflect tasks, timelines and handoffs${lastSync ? ` · refreshed ${new Date(lastSync).toLocaleTimeString('en-QA')}` : ''}.` : 'Updates reflect the current workspace queue.' }}</span></p>
     </section>
   </div>

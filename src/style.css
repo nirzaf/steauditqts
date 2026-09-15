@@ -2570,6 +2570,30 @@ tfoot th { color: var(--primary); background: #f7faff; }
 .invitation-result small { color: #4d7b66; font-size: .63rem; }
 .invitation-result input { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid #bdd9c8; border-radius: 7px; background: #fff; color: #285f48; font: .63rem 'Fira Code', monospace; }
 .build-version { font: .6rem 'Fira Code', monospace; color: var(--subtle); white-space: nowrap; }
+/* P2 — unread notification state is presentation-only. */
+.drawer-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.drawer-row.unread { border-color: #93c5fd; background: #f8fbff; }
+.drawer-row { position: relative; }
+.unread-dot { display: none; width: 8px; height: 8px; border-radius: 50%; background: #2563eb; flex: 0 0 auto; }
+.drawer-row.unread .unread-dot { display: block; }
+/* P1.3 — preflight sits behind Demo status dot; never clutters the shell. */
+.preflight-strip { position: relative; }
+.preflight-wrap { position: relative; margin-left: auto; }
+.preflight-dot i { font-style: normal; }
+.preflight-dot i.ok { color: var(--good, #137333); }
+.preflight-dot i.bad { color: var(--danger, #b42318); }
+/* P1.2 — presentation mode journey strip + toggle. Filter only; routes unchanged. */
+.presentation-toggle.active { background: #1e3a5f; color: #fff; border-color: #1e3a5f; }
+.presentation-journey { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 16px; border-bottom: 1px solid var(--border, #e5e7eb); background: #f8fafc; font-size: 12px; }
+.presentation-journey ol { display: flex; gap: 10px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+.presentation-journey li { color: var(--muted, #64748b); }
+.presentation-journey li.done { color: var(--good, #137333); }
+.presentation-journey li.current { color: var(--ink, #0f172a); font-weight: 700; }
+/* P0.1 — exact-record deep-link highlight. Applied via [data-record-id] + .record-target. */
+.record-target { outline: 3px solid #2563eb !important; outline-offset: 2px; border-radius: 10px; background: #eff6ff !important; box-shadow: 0 0 0 4px rgba(37, 99, 235, .18); }
+.record-target-flash { animation: record-target-pulse 2.2s ease 1; }
+@keyframes record-target-pulse { 0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, .55); } 60% { box-shadow: 0 0 0 10px rgba(37, 99, 235, 0); } 100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); } }
+@media (prefers-reduced-motion: reduce) { .record-target-flash { animation: none; } }
 @media (max-width: 680px) {
   .portal-message { max-width: 100%; }
   .portal-panel-footer, .portal-form-footer { align-items: stretch; flex-direction: column; }

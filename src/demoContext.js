@@ -173,6 +173,145 @@ export function deriveLocalProgress(engagementId) {
   };
 }
 
+// P0.4 — LOCAL_ONLY selectors (not another store). Project the existing
+// domain scenario into the same task / event / outbox shapes the shared
+// workspace already returns, so NotificationDrawer, CommandPalette and the
+// timeline render identically in both modes. A local workpaper submit,
+// PBC receipt or review clear immediately appears as a notification +
+// activity entry because these read scenario directly on every refresh.
+const LOCAL_ACTOR_ROLE = Object.freeze({
+  'ACT-OMAR': 'audit_manager',
+  'ACT-OMAR-SENIOR': 'audit_senior',
+  'ACT-MAYA': 'engagement_partner',
+  'ACT-PARTNER': 'engagement_partner',
+  'ACT-NADIA': 'client_contributor',
+  'ACT-NADIA-MGMT': 'management_approver',
+  'ACT-LEILA': 'preparer',
+  'ACT-ACCOUNTING-REVIEWER': 'accounting_reviewer',
+  'ACT-FATIMA': 'audit_manager',
+  'ACT-JUNIOR': 'preparer',
+  'ACT-AISHA': 'finance_team',
+  'ACT-YUSUF': 'eqr_reviewer',
+  'ACT-SARA': 'records_custodian',
+  'ACT-SAMIR': 'system_admin',
+})
+
+function localRoleForActor(actorId) {
+  return LOCAL_ACTOR_ROLE[String(actorId || '')] || 'audit_manager'
+}
+
+export function localTaskProjection(engagementId, state = scenario) {
+  const tasks = []
+  const list = (key) => (Array.isArray(state?.[key]) ? state[key] : []).filter((r) => !engagementId || r.engagementId === engagementId)
+  for (const req of list('pbcRequests')) {
+    if (String(req.state || '').toUpperCase() === 'ACCEPTED') continue
+    const needsReceipt = !(Array.isArray(req.receipts) && req.receipts.length)
+    tasks.push({
+      taskId: `pbc-client-${req.id}`,
+      title: needsReceipt ? `Respond to ${req.id}: ${req.title}` : `Review ${req.id} receipt`,
+      assigneeRole: needsReceipt ? 'client_contributor' : 'audit_senior',
+      assigneePersona: '',
+      state: 'OPEN',
+      engagementId: req.engagementId,
+      target: req.id,
+      linkedObjectType: 'pbc_request',
+      linkedObjectId: req.id,
+      createdAt: req.due ? `${req.due}T09:00:00.000Z` : '',
+    })
+  }
+  for (const point of list('reviews')) {
+    if (String(point.status || '').toUpperCase() === 'CLEARED') continue
+    tasks.push({
+      taskId: point.id,
+      title: `Resolve ${point.title} (${point.id})`,
+      assigneeRole: localRoleForActor(point.assigneeActorId),
+      assigneePersona: '',
+      state: 'OPEN',
+      engagementId: point.engagementId,
+      target: point.id,
+      linkedObjectType: 'review_point',
+      linkedObjectId: point.id,
+      createdAt: '',
+    })
+  }
+  for (const wp of list('workpapers')) {
+    if (String(wp.reviewState || '').toUpperCase() === 'CLEARED') continue
+    const submitted = String(wp.state || '').toUpperCase() === 'SUBMITTED'
+    tasks.push({
+      taskId: `wp-review-${wp.id}`,
+      title: submitted ? `Review workpaper ${wp.id}` : `Submit workpaper ${wp.id}`,
+      assigneeRole: submitted ? 'audit_manager' : 'preparer',
+      assigneePersona: '',
+      state: 'OPEN',
+      engagementId: wp.engagementId,
+      target: wp.id,
+      linkedObjectType: 'workpaper',
+      linkedObjectId: wp.id,
+      createdAt: '',
+    })
+  }
+  for (const req of list('informationRequests')) {
+    if (String(req.state || '').toUpperCase() !== 'OPEN') continue
+    tasks.push({
+      taskId: `mir-${req.id}`,
+      title: `Respond to ${req.id}: ${req.title}`,
+      assigneeRole: 'management_approver',
+      assigneePersona: '',
+      state: 'OPEN',
+      engagementId: req.engagementId,
+      target: req.id,
+      linkedObjectType: 'information_request',
+      linkedObjectId: req.id,
+      createdAt: req.due ? `${req.due}T09:00:00.000Z` : '',
+    })
+  }
+  return tasks
+}
+
+export function localActivityProjection(engagementId, state = scenario) {
+  const events = []
+  for (const ev of (Array.isArray(state?.events) ? state.events : []).filter((e) => !engagementId || !e.engagementId || e.engagementId === engagementId).slice(-20).reverse()) {
+    events.push({
+      eventId: ev.id || `EV-${ev.type}`,
+      action: ev.type || 'UPDATE',
+      actor: ev.actorId || 'system',
+      engagementId: ev.engagementId || engagementId || '',
+      objectId: ev.pointId || ev.workpaperId || ev.requestId || ev.sampleId || ev.findingId || ev.engagementId || '',
+      createdAt: ev.createdAt || '',
+    })
+  }
+  // Baseline fixtures so the timeline is never empty before the first local
+  // command: receipts, open reviews and outbox deliveries are real domain state.
+  const list = (key) => (Array.isArray(state?.[key]) ? state[key] : []).filter((r) => !engagementId || r.engagementId === engagementId)
+  for (const req of list('pbcRequests')) {
+    for (const receipt of (req.receipts || []).slice(-1)) {
+      events.push({ eventId: `base-${req.id}-${receipt}`, action: 'PBC_RECEIPT_LOGGED', actor: req.ownerActorId || 'client', engagementId: req.engagementId, objectId: req.id, createdAt: '' })
+    }
+  }
+  for (const point of list('reviews').slice(0, 5)) {
+    events.push({ eventId: `base-${point.id}`, action: 'REVIEW_POINT_OPEN', actor: point.assigneeActorId || 'system', engagementId: point.engagementId, objectId: point.id, createdAt: '' })
+  }
+  return events.slice(0, 20)
+}
+
+export function localOutboxProjection(engagementId, state = scenario) {
+  return (Array.isArray(state?.outbox) ? state.outbox : [])
+    .filter((m) => !engagementId || m.engagementId === engagementId)
+    .slice(-10).reverse()
+    .map((m) => ({
+      message_id: m.id,
+      subject: m.preview || m.reference || 'Portal message',
+      channel: m.channel || 'PORTAL_NOTIFICATION',
+      state: m.state || '',
+      engagement_id: m.engagementId || '',
+      engagementId: m.engagementId || '',
+      related_id: m.reference || m.id || '',
+      relatedId: m.reference || m.id || '',
+      created_at: m.createdAt || '',
+      createdAt: m.createdAt || '',
+    }))
+}
+
 export function parseStageNumber(currentStage) {
   const match = String(currentStage || '').match(/STAGE-(\d{2})/);
   if (!match) return 0;
@@ -482,9 +621,17 @@ async function runRefreshShared() {
     engagement.value = localEngagement && localContext
       ? { ...localContext, currentStage: localContext.currentStage }
       : null;
-    tasks.value = [];
-    events.value = [];
-    outbox.value = [];
+    // P0.4 — project tasks / activity / outbox from the domain scenario so
+    // the shell notification system has live content in LOCAL_ONLY mode.
+    try {
+      tasks.value = localTaskProjection(activeEngagementId.value);
+      events.value = localActivityProjection(activeEngagementId.value);
+      outbox.value = localOutboxProjection(activeEngagementId.value);
+    } catch {
+      tasks.value = [];
+      events.value = [];
+      outbox.value = [];
+    }
     progress.value = localContext ? deriveLocalProgress(localContext.engagementId) : null;
     progressError.value = null;
     accountingStatus.value = null;

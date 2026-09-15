@@ -10,6 +10,7 @@ import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { useDemoContext } from '../demoContext.js'
 import { idempotencyKey, recordFinalDiscussion, runSharedAction } from '../sharedDemo.js'
 import { activeActor, advanceRelease as advanceReleaseCommand, assembleArchive, createAmendmentCase, createReleaseCheckpoint, recordLegalHold, releaseCandidateBlockers, releaseLegalHold, releaseSteps as scenarioReleaseSteps, scenario, selectEngagement, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
+import { useRecordSelection } from '../composables/useRecordSelection.js'
 
 // Phase C — shared completion chain (D1 authority): final discussion,
 // visible release checklist, release, invoice and commercial close.
@@ -74,6 +75,8 @@ async function submitSharedClose() {
 }
 
 const releaseSteps = scenarioReleaseSteps
+// P0.1 — ?record= may be a blocker code, candidate id or gate id.
+const releaseSelection = useRecordSelection({ getIds: () => [...blockers.value.map((b) => b.code), candidate.value?.id].filter(Boolean), initial: null })
 const inspectedIndex = ref(0)
 const toast = ref('')
 const selectedEngagement = computed(() => scenarioEngagement())
@@ -226,7 +229,7 @@ function openAmendment() {
       <article v-for="check in safetyChecks" :key="check.label" class="release-safety-card panel"><div class="release-safety-card-top"><span class="release-safety-icon" :class="`tone-${check.tone}`"><Icon :name="check.icon" :size="16" /></span><StatusPill :label="check.state" :tone="check.tone" /></div><span class="release-safety-label">{{ check.label }}</span><strong>{{ check.value }}</strong><small>{{ check.detail }}</small></article>
     </section>
     <div class="release-guard-note"><Icon name="lock" :size="16" /><span><strong>Why this candidate is {{ blockers.length ? 'blocked' : 'eligible for the next guard' }}:</strong> the command compares current input generation, policy generation, exact manifest, applicable approvals, protection attestation, and checkpoint at action time. Rail clicks inspect only; they never set a release state.</span></div>
-    <div v-if="blockers.length" class="release-blocker-list" role="status" aria-live="polite"><strong>Current blockers</strong><ul><li v-for="blocker in blockers" :key="`${blocker.code}-${blocker.message}`"><code>{{ blocker.code }}</code> {{ blocker.message }}</li></ul></div>
+    <div v-if="blockers.length" class="release-blocker-list" role="status" aria-live="polite"><strong>Current blockers</strong><ul><li v-for="blocker in blockers" :key="`${blocker.code}-${blocker.message}`" :data-record-id="blocker.code" :class="{ 'record-target': releaseSelection.isTarget(blocker.code) }"><code>{{ blocker.code }}</code> {{ blocker.message }}</li></ul></div>
 
     <section class="release-layout"><article class="panel release-flow-panel"><div class="panel-heading"><div><span class="eyebrow">State machine</span><h2>Release control path</h2></div><span class="muted-label">Select a step to inspect; use the guarded command to advance</span></div><div class="release-flow"><button v-for="(step, index) in releaseSteps" :key="step[0]" type="button" class="release-step" :class="{ complete: index < releaseIndex, active: index === releaseIndex, pending: index > releaseIndex, inspected: inspectedIndex === index }" @click="inspectReleaseStep(index)"><span class="release-step-node"><Icon :name="index < releaseIndex ? 'check' : 'clock'" :size="14" />{{ index >= releaseIndex ? index + 1 : '' }}</span><span><strong>{{ step[0] }}</strong><small>{{ step[1] }}</small></span></button></div><div class="next-control"><div><span class="eyebrow">Next guarded control</span><strong>{{ nextStep[0] }}</strong><p>{{ nextStep[1] }}</p></div><button type="button" class="button primary" :disabled="candidate.id === 'NO-CANDIDATE' || releaseIndex === releaseSteps.length - 1" @click="advanceRelease">{{ candidate.id === 'NO-CANDIDATE' ? 'No candidate in scope' : releaseIndex === 7 && !candidate.checkpointId ? 'Verify checkpoint' : releaseIndex >= 8 ? 'Record archive event' : 'Run guarded control' }} <Icon name="arrow-right" :size="16" /></button></div></article><aside class="panel completion-panel"><div class="panel-heading"><div><span class="eyebrow">Completion checklist</span><h2>Current readiness</h2></div><StatusPill :label="`${blockers.length} blockers`" :tone="blockers.length ? 'danger' : 'good'" /></div><ul class="check-list"><li v-for="blocker in blockers" :key="`${blocker.code}-check`"><span class="list-icon danger"><Icon name="lock" :size="14" /></span><span><strong>{{ blocker.code }}</strong><small>{{ blocker.message }}</small></span></li><li v-if="!blockers.length"><span class="list-icon good"><Icon name="check" :size="14" /></span><span><strong>All current guards satisfied</strong><small>The next action is still scoped to the named authority.</small></span></li></ul></aside></section>
 
