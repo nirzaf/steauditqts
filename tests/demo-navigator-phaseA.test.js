@@ -4,9 +4,11 @@ import worker from '../worker/index.js';
 import {
   buildBreadcrumbs,
   buildNotifications,
+  deriveLocalProgress,
   deriveStageSummary,
   filterPalette,
   isEscapeEvent,
+  localContextsForPersona,
   isStaleRefresh,
   loadActiveEngagementId,
   mergeSliceResult,
@@ -15,6 +17,7 @@ import {
   resolvePersonaSwitch,
   stageLabel,
 } from '../src/demoContext.js';
+import { ROUTE_REGISTRY, routeMenuForRole } from '../src/navigation/registry.js';
 
 const trustedHeaders = {
   'Cf-Access-Jwt-Assertion': 'synthetic-jwt',
@@ -127,6 +130,56 @@ test('navigator stage summary is derived from D1 revision plus open queue', () =
   assert.equal(summary.nextAction.owner, 'audit_manager');
   assert.equal(summary.nextAction.route, 'reviews');
   assert.equal(deriveStageSummary(null, []).nextAction, null);
+});
+
+test('navigator uses the authoritative workspace progress projection when available', () => {
+  const summary = deriveStageSummary(
+    { engagementId: 'ENG-0018-AUD-2026', currentStage: 'STAGE-05', revision: 4 },
+    [{ taskId: 'T-1', title: 'Older local queue item', state: 'OPEN', assigneeRole: 'audit_senior' }],
+    {
+      currentStage: 'STAGE-07',
+      completionPercent: 82,
+      openCount: 3,
+      blockedCount: 1,
+      nextAction: {
+        title: 'Clear the EQR decision',
+        ownerLabel: 'EQR reviewer',
+        route: 'reviews',
+        targetId: 'EQR-001',
+      },
+    },
+  );
+  assert.equal(summary.label, 'Stage 7 / 8');
+  assert.equal(summary.stageTitle, 'Review & opinion');
+  assert.equal(summary.completionPercent, 82);
+  assert.equal(summary.openCount, 3);
+  assert.equal(summary.blockedCount, 1);
+  assert.equal(summary.nextAction.title, 'Clear the EQR decision');
+  assert.equal(summary.nextAction.owner, 'EQR reviewer');
+  assert.equal(summary.nextAction.route, 'reviews');
+  assert.equal(summary.nextAction.targetId, 'EQR-001');
+});
+
+test('local shell context and progress stay derived from assigned scenario state', () => {
+  const seniorContexts = localContextsForPersona('audit-senior-demo');
+  assert.deepEqual(seniorContexts.map((context) => context.engagementId), ['ENG-0018-AUD-2026']);
+  const clientContexts = localContextsForPersona('client-demo');
+  assert.deepEqual(clientContexts.map((context) => context.engagementId), ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026']);
+
+  const progress = deriveLocalProgress('ENG-0018-AUD-2026');
+  assert.ok(progress);
+  assert.match(progress.currentStage, /^STAGE-0[1-8]$/);
+  assert.ok(progress.openCount >= progress.blockedCount);
+  assert.ok(progress.completionPercent >= 0 && progress.completionPercent <= 100);
+  assert.ok(progress.nextAction?.route);
+});
+
+test('route registry remains the single policy source for visible navigation metadata', () => {
+  assert.equal(Object.isFrozen(ROUTE_REGISTRY), true);
+  const managerRoutes = routeMenuForRole('audit-manager');
+  const reviews = managerRoutes.find((route) => route.key === 'reviews');
+  assert.deepEqual(reviews, { key: 'reviews', ...ROUTE_REGISTRY.reviews });
+  assert.ok(!managerRoutes.some((route) => route.key === 'dashboard'));
 });
 
 test('breadcrumbs keep every middle segment clickable', () => {

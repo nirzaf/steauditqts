@@ -5,12 +5,25 @@ import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { computed, ref } from 'vue'
 import { demoUsers } from '../auth'
-import { navItems, workflowGuides } from '../data'
+import { workflowGuides } from '../data'
 import { activeActor, actorSession, scenario, setActorStatus } from '../domain/scenario.js'
-import { resetDemoData } from '../demoReset.js'
-import { createDemoInvitation, getPortalMessages, isSharedDemoEnabled, replyPortalMessage, resetSharedDemo, sendPortalMessage } from '../sharedDemo.js'
+import { routeMenuForRole } from '../navigation/registry.js'
+import { createDemoInvitation, getPortalMessages, replyPortalMessage, sendPortalMessage } from '../sharedDemo.js'
 
-const emit = defineEmits(['navigate'])
+const emit = defineEmits(['navigate', 'request-restart'])
+const ADMIN_SHORTCUT_ICONS = Object.freeze({
+  dashboard: 'grid', portfolio: 'briefcase', clients: 'users', engagements: 'briefcase',
+  pbc: 'inbox', accounting: 'calculator', audit: 'clipboard', reviews: 'check-circle',
+  release: 'lock', integration: 'pulse', architecture: 'workflow', blueprint: 'layers',
+  cycle: 'workflow', pipeline: 'workflow', 'shared-demo': 'workflow', artifacts: 'file',
+  readiness: 'list-check', 'client-home': 'grid', 'client-details': 'users',
+  'client-communications': 'message', 'client-architecture': 'workflow',
+  'accountant-home': 'grid', 'accountant-client': 'users',
+  'accountant-architecture': 'workflow',
+})
+const adminShortcuts = Object.freeze(routeMenuForRole('admin')
+  .filter((route) => !['role-workspace', 'admin-console'].includes(route.key))
+  .map((route) => ({ ...route, icon: ADMIN_SHORTCUT_ICONS[route.key] || 'workflow' })))
 const accessRows = [
   { label: 'Client portal', scope: 'Submit details, evidence questions, and portal messages', tone: 'blue', pages: '3 pages' },
   { label: 'Accountant portal', scope: 'View client facts and continue preparation work', tone: 'green', pages: '5 pages' },
@@ -90,21 +103,6 @@ async function copyInvitation() {
 
 function navigate(route) { emit('navigate', route) }
 
-async function handleDemoReset() {
-  if (isSharedDemoEnabled) {
-    toast.value = 'Resetting the shared demo for every browser…';
-    const result = await resetSharedDemo();
-    toast.value = result.ok
-      ? `Shared demo reset (generation ${result.generationId}). Reloading every open browser view…`
-      : `Shared reset failed (${result.error.code}): ${result.error.message}`;
-    if (result.ok) window.setTimeout(() => { window.location.reload() }, 900);
-    else window.setTimeout(() => { toast.value = '' }, 5000);
-    return;
-  }
-  toast.value = resetDemoData()
-  window.setTimeout(() => { window.location.reload() }, 600)
-}
-
 function toggleActor(actor) {
   const current = activeActor()
   if (!current) {
@@ -134,7 +132,7 @@ function toggleActor(actor) {
     <section class="admin-banner panel"><span class="admin-banner-icon"><Icon name="shield" :size="20" /></span><div><span class="eyebrow">Full workspace access</span><h2>Every workflow boundary is visible</h2><p>Use this view to explain access, accountability, and operational health to stakeholders.</p></div><StatusPill label="Admin access" tone="good" /></section>
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="shield" :size="17" />{{ toast }}</div>
 
-    <section class="panel demo-controls-panel"><div class="panel-heading"><div><span class="eyebrow">Workspace controls</span><h2>Restart the walkthrough</h2></div></div><p class="muted-copy">Clear the current walkthrough state, comments, preferences, and profiles. You stay signed in so the walkthrough can start again immediately.</p><div class="button-row"><button type="button" class="button secondary" @click="handleDemoReset">Restart walkthrough</button><button type="button" class="text-button" @click="navigate('readiness')">Review readiness <Icon name="arrow-right" :size="15" /></button></div></section>
+    <section class="panel demo-controls-panel"><div class="panel-heading"><div><span class="eyebrow">Workspace controls</span><h2>Restart the walkthrough</h2></div></div><p class="muted-copy">Restore the starting context, tasks, progress, and next action. You stay signed in so the walkthrough can continue immediately.</p><div class="button-row"><button type="button" class="button secondary" @click="emit('request-restart')">Restart walkthrough</button><button type="button" class="text-button" @click="navigate('readiness')">Review readiness <Icon name="arrow-right" :size="15" /></button></div></section>
 
     <section class="panel invitation-panel"><div class="panel-heading"><div><span class="eyebrow">Client access</span><h2>Create a private client invitation</h2></div><StatusPill label="7-day link · 5 browser sessions" tone="neutral" /></div><p class="panel-copy">Create a fresh engagement for a client review. The link opens the client portal only; role switching and presenter controls are not shown to the recipient.</p><div class="invitation-form"><label>Client role<select v-model="invitationPersona"><option value="client-demo">Client portal · Nadia Faris</option><option value="client-management-demo">Client management approver · Nadia Faris</option></select></label><button type="button" class="button primary" :disabled="invitationBusy" @click="createInvitation">{{ invitationBusy ? 'Creating…' : 'Create invitation' }}<Icon name="arrow-right" :size="16" /></button></div><div v-if="invitationResult?.inviteUrl" class="invitation-result"><div><strong>Invitation ready</strong><small>Run {{ invitationResult.runId }} · expires {{ invitationResult.expiresAt }}</small><input :value="invitationResult.inviteUrl" readonly aria-label="Client invitation URL" /></div><div class="button-row"><button type="button" class="button secondary" @click="copyInvitation">Copy link</button><a class="button secondary" :href="invitationResult.inviteUrl" target="_blank" rel="noopener">Open preview</a></div></div><p v-if="invitationResult?.error" class="portal-status danger" role="alert">{{ invitationResult.error }}</p></section>
 
@@ -149,6 +147,6 @@ function toggleActor(actor) {
 
     <section class="panel admin-activity-panel"><div class="panel-heading"><div><span class="eyebrow">Operations</span><h2>Recent activity</h2></div><button type="button" class="text-button" @click="navigate('integration')">Open integration health <Icon name="arrow-right" :size="15" /></button></div><div class="admin-activity-list"><div v-for="item in activity" :key="item.time + item.title" class="admin-activity-row"><span class="activity-dot" :class="`tone-${item.tone}`"></span><span class="activity-time">{{ item.time }}</span><span><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></span></div></div></section>
 
-    <section class="panel admin-shortcuts-panel"><div class="panel-heading"><div><span class="eyebrow">All workflow pages</span><h2>Jump to a control</h2></div></div><div class="admin-shortcut-grid"><button v-for="item in navItems" :key="item.key" type="button" class="admin-shortcut" @click="navigate(item.key)"><Icon :name="item.icon" :size="16" /><span>{{ item.label }}</span><Icon name="arrow-right" :size="15" /></button></div></section>
+    <section class="panel admin-shortcuts-panel"><div class="panel-heading"><div><span class="eyebrow">All workflow pages</span><h2>Jump to a control</h2></div></div><div class="admin-shortcut-grid"><button v-for="item in adminShortcuts" :key="item.key" type="button" class="admin-shortcut" @click="navigate(item.key)"><Icon :name="item.icon" :size="16" /><span>{{ item.label }}</span><Icon name="arrow-right" :size="15" /></button></div></section>
   </div>
 </template>

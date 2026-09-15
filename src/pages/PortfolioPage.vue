@@ -6,17 +6,14 @@ import ProcessHealthPanel from '../components/ProcessHealthPanel.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import { workflowGuides } from '../data'
-import { applyScenarioPreset, getScenarioPresets, getSharedPortfolio, isSharedDemoEnabled } from '../sharedDemo.js'
+import { getSharedPortfolio, isSharedDemoEnabled } from '../sharedDemo.js'
 import { useDemoContext } from '../demoContext.js'
 
 const emit = defineEmits(['navigate'])
-const { activeContext, activeEngagementId, refresh: refreshContext, switchEngagement } = useDemoContext()
+const { activeEngagementId, switchEngagement } = useDemoContext()
 const rows = ref([])
 const loading = ref(false)
 const error = ref(null)
-const scenario = ref(null)
-const presets = ref([])
-const scenarioBusy = ref(false)
 const notice = ref('')
 
 const selectedRow = computed(() => rows.value.find((row) => row.engagementId === activeEngagementId.value) || null)
@@ -31,28 +28,12 @@ function showNotice(message) {
 async function refresh() {
   if (!isSharedDemoEnabled) return
   loading.value = true
-  const [portfolioResult, scenarioResult] = await Promise.all([
-    getSharedPortfolio(),
-    getScenarioPresets(activeEngagementId.value),
-  ])
+  const portfolioResult = await getSharedPortfolio()
   loading.value = false
   if (portfolioResult.ok) {
     rows.value = portfolioResult.portfolio || []
     error.value = null
   } else error.value = portfolioResult.error || { message: 'The operational portfolio could not be loaded.' }
-  if (scenarioResult.ok) {
-    scenario.value = scenarioResult.scenario || null
-    presets.value = scenarioResult.presets || []
-  }
-}
-
-async function refreshScenario() {
-  if (!isSharedDemoEnabled) return
-  const result = await getScenarioPresets(activeEngagementId.value)
-  if (result.ok) {
-    scenario.value = result.scenario || null
-    presets.value = result.presets || []
-  }
 }
 
 watch(activeEngagementId, () => { void refresh() }, { immediate: true })
@@ -68,21 +49,6 @@ function openRow(row) {
   emit('navigate', row.nextRoute || 'role-workspace')
 }
 
-async function applyPreset(preset) {
-  if (!preset?.key || scenarioBusy.value || !activeEngagementId.value) return
-  scenarioBusy.value = true
-  const result = await applyScenarioPreset(activeEngagementId.value, preset.key, {
-    expectedRevision: activeContext.value?.revision,
-    idempotencyKey: `scenario-${activeEngagementId.value}-${preset.key}-${Date.now()}`,
-  })
-  scenarioBusy.value = false
-  if (result.ok) {
-    scenario.value = result.scenario || null
-    showNotice(result.note || `${preset.label} is now the controlled walkthrough marker.`)
-    await refreshContext()
-    await refresh()
-  } else showNotice(`${result.error?.code || 'NOT_COMMITTED'}: ${result.error?.message || 'Scenario was not applied.'}`)
-}
 </script>
 
 <template>
@@ -96,7 +62,7 @@ async function applyPreset(preset) {
       <button type="button" class="button secondary" :disabled="loading || !isSharedDemoEnabled" @click="refresh">{{ loading ? 'Refreshing…' : 'Refresh portfolio' }} <Icon name="refresh" :size="16" /></button>
     </section>
 
-    <section v-if="!isSharedDemoEnabled" class="panel portfolio-empty"><Icon name="info" :size="19" /><div><strong>Shared D1 mode is not connected</strong><span>Open this page in the deployed shared demo to inspect the live portfolio and controlled scenarios.</span></div></section>
+    <section v-if="!isSharedDemoEnabled" class="panel portfolio-empty"><Icon name="info" :size="19" /><div><strong>Shared workspace is unavailable</strong><span>Reconnect to inspect the current multi-engagement portfolio.</span></div></section>
     <section v-else class="panel portfolio-table-panel" aria-labelledby="portfolio-table-title">
       <div class="panel-heading"><div><span class="eyebrow">Assigned engagements</span><h2 id="portfolio-table-title">Portfolio queue</h2></div><StatusPill :label="loading ? 'Refreshing' : `${rows.length} engagement${rows.length === 1 ? '' : 's'}`" :tone="loading ? 'warn' : 'neutral'" /></div>
       <p v-if="error" class="portfolio-error" role="status"><Icon name="warning" :size="16" />{{ error.message }}</p>
@@ -120,22 +86,14 @@ async function applyPreset(preset) {
       <p class="portfolio-footnote"><Icon name="shield" :size="15" />Health, blockers, progress, and owner come from the Worker’s D1 snapshot. The browser only renders this projection.</p>
     </section>
 
-    <div class="portfolio-detail-grid">
-      <ProcessHealthPanel :engagement-id="activeEngagementId" @navigate="emit('navigate', $event)" />
-      <section class="panel scenario-panel" aria-labelledby="scenario-title">
-        <div class="panel-heading"><div><span class="eyebrow">Presenter control · isolated demo only</span><h2 id="scenario-title">Controlled walkthrough presets</h2></div><StatusPill :label="scenario?.label || 'No preset selected'" :tone="scenario ? 'good' : 'neutral'" /></div>
-        <p>Choose a named preset to focus the walkthrough at a known lifecycle point. Presets are whitelisted by the Worker; they never accept a free-form stage or create professional evidence.</p>
-        <div class="scenario-list"><button v-for="preset in presets" :key="preset.key" type="button" class="scenario-option" :class="{ active: scenario?.key === preset.key }" :disabled="scenarioBusy" @click="applyPreset(preset)"><span><strong>{{ preset.label }}</strong><small>{{ preset.description }}</small></span><span>{{ preset.stage }}</span></button></div>
-        <p class="scenario-note"><Icon name="info" :size="15" />{{ scenario ? `${scenario.label} was applied by ${scenario.appliedBy || 'the current presenter'}; canonical gates remain D1-derived.` : 'No marker has been applied to this engagement yet.' }}</p>
-      </section>
-    </div>
+    <div class="portfolio-detail-grid"><ProcessHealthPanel :engagement-id="activeEngagementId" @navigate="emit('navigate', $event)" /></div>
   </div>
 </template>
 
 <style scoped>
 .portfolio-intro { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-left: 4px solid #174a87; }
 .portfolio-intro h2 { margin: 4px 0; font-size: 1.1rem; color: #18263e; }
-.portfolio-intro p, .scenario-panel p { margin: 0; color: #69778c; line-height: 1.5; }
+.portfolio-intro p { margin: 0; color: #69778c; line-height: 1.5; }
 .portfolio-table-panel { padding-bottom: 14px; }
 .portfolio-table-wrap { overflow-x: auto; border: 1px solid #e4eaf3; border-radius: 12px; }
 .portfolio-table { width: 100%; min-width: 930px; border-collapse: collapse; }
@@ -155,23 +113,13 @@ async function applyPreset(preset) {
 .portfolio-progress b { display: block; height: 100%; background: #2b67bd; border-radius: inherit; }
 .portfolio-blocker { display: block; max-width: 230px; color: #9a3412; font-size: .82rem; line-height: 1.35; }
 .portfolio-blocker.clear { color: #0f766e; }
-.portfolio-error, .portfolio-footnote, .scenario-note { display: flex; align-items: center; gap: 8px; color: #69778c; font-size: .84rem; }
+.portfolio-error, .portfolio-footnote { display: flex; align-items: center; gap: 8px; color: #69778c; font-size: .84rem; }
 .portfolio-error { color: #9a3412; }
 .portfolio-footnote { margin: 13px 0 0; }
 .portfolio-empty { display: flex; align-items: center; gap: 11px; color: #69778c; }
 .portfolio-empty strong, .portfolio-empty span { display: block; }
 .portfolio-empty span { margin-top: 3px; font-size: .88rem; }
-.portfolio-detail-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(330px, .75fr); gap: 18px; align-items: start; margin-top: 18px; }
-.scenario-list { display: grid; gap: 8px; margin-top: 14px; }
-.scenario-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px 12px; text-align: left; border: 1px solid #dbe4ef; border-radius: 10px; background: #fff; color: #384861; cursor: pointer; }
-.scenario-option:hover, .scenario-option:focus-visible { border-color: #3b82f6; background: #f4f8ff; outline: none; }
-.scenario-option.active { border-color: #1f5aa7; background: #eaf2ff; box-shadow: inset 3px 0 #1f5aa7; }
-.scenario-option:disabled { cursor: wait; opacity: .65; }
-.scenario-option strong, .scenario-option small { display: block; }
-.scenario-option small { margin-top: 3px; color: #738198; line-height: 1.35; }
-.scenario-option > span:last-child { flex: none; color: #53647c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; }
-.scenario-note { margin: 13px 0 0; }
-@media (max-width: 960px) { .portfolio-detail-grid { grid-template-columns: 1fr; } }
+.portfolio-detail-grid { margin-top: 18px; }
 @media (max-width: 640px) { .portfolio-intro { align-items: stretch; flex-direction: column; } .portfolio-intro .button { justify-content: center; } }
 @media (prefers-reduced-motion: reduce) { .portfolio-table tbody tr { transition: none; } }
 </style>

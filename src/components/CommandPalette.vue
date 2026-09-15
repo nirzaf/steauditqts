@@ -12,7 +12,7 @@ const props = defineProps({
   initialQuery: { type: String, default: '' },
 })
 
-const emit = defineEmits(['close', 'navigate', 'switch-persona', 'switch-context', 'command'])
+const emit = defineEmits(['close', 'navigate', 'switch-persona', 'switch-context'])
 const query = ref(props.initialQuery || '')
 const activeIndex = ref(0)
 const inputRef = ref(null)
@@ -49,7 +49,6 @@ function choose(result) {
   })
   else if (result.action?.type === 'switch-persona') emit('switch-persona', result.action.personaId)
   else if (result.action?.type === 'switch-context') emit('switch-context', result.action.engagementId)
-  else if (result.action?.type === 'command') emit('command', result.action.command)
   emit('close')
 }
 function onKeydown(event) {

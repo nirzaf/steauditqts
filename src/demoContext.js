@@ -2,7 +2,7 @@
 // Pure helpers are unit-tested in tests/demo-navigator-phaseA.test.js.
 // The composable keeps ONE shared polling loop (5s, visible-tab only) for
 // contexts + engagement + tasks + timeline + outbox. No new framework.
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, getCurrentInstance, onMounted, onUnmounted, ref } from 'vue';
 import {
   SHARED_POLL_MS,
   getDemoContexts,
@@ -15,6 +15,7 @@ import {
   getSharedTimeline,
   isSharedDemoEnabled,
 } from './sharedDemo.js';
+import { engagementById, gateSummary, scenario, selectEngagement } from './domain/scenario.js';
 
 export const SHARED_DEMO_POLL_MS = SHARED_POLL_MS;
 export const DEMO_CONTEXT_STORAGE_KEY = 'auditflow-demo-context-v1';
@@ -87,6 +88,91 @@ const TASK_ROUTE_MAP = [
   [/release|archive/i, 'release'],
 ];
 
+// LOCAL_ONLY deliberately has no second task store.  This small projection
+// reads the existing scenario gates so the shell can still explain the
+// selected engagement without treating browser preferences as workflow truth.
+const LOCAL_GATE_ACTIONS = Object.freeze({
+  G0: { route: 'admin-console', owner: 'System administrator' },
+  G1: { route: 'clients', owner: 'Audit partner' },
+  G2: { route: 'engagements', owner: 'Finance team' },
+  G3: { route: 'engagements', owner: 'Client management approver' },
+  G4: { route: 'engagements', owner: 'Audit partner' },
+  G5: { route: 'pbc', owner: 'Audit senior' },
+  G6: { route: 'reviews', owner: 'Audit manager' },
+  G7: { route: 'reviews', owner: 'Audit manager' },
+  G8: { route: 'release', owner: 'Audit partner' },
+  G9: { route: 'release', owner: 'Finance team' },
+  G10: { route: 'release', owner: 'Records custodian' },
+});
+
+function localPresentationStage(engagement = {}) {
+  const evidence = engagement?.evidence || {};
+  if (evidence.archiveVerified && evidence.commercialClosed) return 'STAGE-08';
+  if (evidence.partnerApproved || evidence.eqrComplete || engagement.releaseEventId) return 'STAGE-07';
+  if (evidence.conclusionsComplete || evidence.managementApproved) return 'STAGE-06';
+  if (evidence.sourceValidated || evidence.mappingReviewed || evidence.statementApproved) return 'STAGE-05';
+  if (evidence.auditPlanReady) return 'STAGE-04';
+  if (evidence.portalEligible || evidence.advanceVerified) return 'STAGE-03';
+  if (evidence.commercialReady || evidence.termsSigned) return 'STAGE-02';
+  return 'STAGE-01';
+}
+
+export function localContextsForPersona(personaId = scenario.activePersonaId, state = scenario) {
+  const actor = (state?.actors || []).find((candidate) => candidate?.personaId === personaId && candidate?.active);
+  if (!actor) return [];
+  const assigned = new Set(actor.assignments || []);
+  return (state?.engagements || [])
+    .filter((engagement) => assigned.has(engagement.id))
+    .map((engagement) => {
+      const client = (state.clients || []).find((candidate) => candidate.id === engagement.clientId) || {};
+      return {
+        engagementId: engagement.id,
+        clientId: engagement.clientId,
+        clientName: client.name || engagement.clientId,
+        clientShortName: String(client.name || engagement.clientId).replace(/\s+W\.L\.L\.$/i, ''),
+        service: String(engagement.service || '').toUpperCase(),
+        serviceLabel: engagement.serviceLabel || engagement.service || '',
+        period: engagement.period || '',
+        currentStage: localPresentationStage(engagement),
+        revision: Number(engagement.revision || 0),
+        generationId: `local-${Number(engagement.inputGeneration || 1)}`,
+        updatedAt: '',
+      };
+    });
+}
+
+export function deriveLocalProgress(engagementId) {
+  const engagement = engagementById(engagementId);
+  if (!engagement) return null;
+  const summary = gateSummary(engagement.id);
+  const currentGates = summary.gates.filter((gate) => gate.applicable && gate.period === 'current');
+  const incomplete = currentGates.filter((gate) => !['good', 'neutral'].includes(gate.status));
+  const blocked = incomplete.filter((gate) => gate.status === 'danger' || (gate.blockers || []).length);
+  const first = incomplete[0] || null;
+  const guidance = LOCAL_GATE_ACTIONS[first?.id] || { route: 'role-workspace', owner: 'Engagement team' };
+  return {
+    derivedFrom: 'local-gates',
+    currentStage: localPresentationStage(engagement),
+    completionPercent: summary.currentDenominator
+      ? Math.round((summary.currentReady / summary.currentDenominator) * 100)
+      : 0,
+    openCount: incomplete.length,
+    blockedCount: blocked.length,
+    blockers: blocked.flatMap((gate) => gate.blockers?.length
+      ? gate.blockers
+      : [{ code: gate.id, message: gate.title }]),
+    nextAction: first
+      ? {
+        title: `Resolve ${first.title}`,
+        ownerLabel: guidance.owner,
+        ownerRole: guidance.owner,
+        route: guidance.route,
+        targetId: first.id,
+      }
+      : null,
+  };
+}
+
 export function parseStageNumber(currentStage) {
   const match = String(currentStage || '').match(/STAGE-(\d{2})/);
   if (!match) return 0;
@@ -114,11 +200,15 @@ export function isTaskOpen(task = {}) {
 // D1-derived lightweight summary for the navigator (Phase A). The full
 // prerequisite validator is Phase B; this never invents gates, it only
 // projects the shared revision + open queue that D1 already returned.
-export function deriveStageSummary(engagement, tasks = []) {
+export function deriveStageSummary(engagement, tasks = [], progressSnapshot = null) {
   const list = Array.isArray(tasks) ? tasks : [];
   const open = list.filter(isTaskOpen);
-  const stageNumber = parseStageNumber(engagement?.currentStage);
-  const completionPercent = stageNumber > 0 ? Math.round((stageNumber / DEMO_STAGE_TOTAL) * 100) : 0;
+  const stage = progressSnapshot?.currentStage || engagement?.currentStage;
+  const stageNumber = parseStageNumber(stage);
+  const reportedCompletion = Number(progressSnapshot?.completionPercent);
+  const completionPercent = Number.isFinite(reportedCompletion)
+    ? Math.max(0, Math.min(100, Math.round(reportedCompletion)))
+    : (stageNumber > 0 ? Math.round((stageNumber / DEMO_STAGE_TOTAL) * 100) : 0);
   const blockers = open.slice(0, 5).map((task) => ({
     id: task.taskId,
     title: task.title || task.taskId,
@@ -126,20 +216,33 @@ export function deriveStageSummary(engagement, tasks = []) {
     route: mapTaskToRoute(task),
   }));
   const first = open[0] || null;
-  const nextAction = first
+  const taskAction = first
     ? { title: first.title || first.taskId, owner: first.assigneeRole || first.assigneePersona || 'Unassigned', route: mapTaskToRoute(first), taskId: first.taskId }
     : null;
+  const projectedAction = progressSnapshot?.nextAction
+    ? {
+      title: progressSnapshot.nextAction.title || progressSnapshot.nextAction.action || 'Open the next workflow action',
+      owner: progressSnapshot.nextAction.ownerLabel || progressSnapshot.nextAction.ownerRole || 'Assigned owner',
+      route: progressSnapshot.nextAction.route || 'role-workspace',
+      taskId: progressSnapshot.nextAction.taskId || '',
+      targetId: progressSnapshot.nextAction.targetId || progressSnapshot.nextAction.recordId || '',
+    }
+    : null;
+  const reportedOpen = Number(progressSnapshot?.openCount);
+  const reportedBlocked = Number(progressSnapshot?.blockedCount);
   return {
     stageNumber,
     stageTotal: DEMO_STAGE_TOTAL,
-    label: stageLabel(engagement?.currentStage),
-    stageTitle: DEMO_STAGE_TITLES[String(engagement?.currentStage || '').toUpperCase()] || '',
+    label: stageLabel(stage),
+    stageTitle: DEMO_STAGE_TITLES[String(stage || '').toUpperCase()] || '',
     revision: engagement?.revision ?? null,
-    openCount: open.length,
-    blockedCount: list.filter((t) => String(t.state || '').toUpperCase() === 'BLOCKED').length,
+    openCount: Number.isFinite(reportedOpen) ? Math.max(0, reportedOpen) : open.length,
+    blockedCount: Number.isFinite(reportedBlocked)
+      ? Math.max(0, reportedBlocked)
+      : list.filter((t) => String(t.state || '').toUpperCase() === 'BLOCKED').length,
     completionPercent,
     blockers,
-    nextAction,
+    nextAction: projectedAction || taskAction,
   };
 }
 
@@ -207,7 +310,8 @@ function paletteIncludes(haystack, needle) {
 }
 
 // Lightweight Ctrl/Cmd+K palette matching (Phase A): clients, engagement
-// IDs, stages, personas, routes + a few presenter commands. No dependency.
+// IDs, stages, personas and routes. Presenter actions stay in the visible
+// shell so search does not become a second command surface.
 export function filterPalette(query, { contexts = [], personas = [], routes = [], tasks = [], stages = [] } = {}) {
   const needle = String(query || '').trim().toLowerCase();
   const results = [];
@@ -260,9 +364,6 @@ export function filterPalette(query, { contexts = [], personas = [], routes = []
       push('stage', `${stage.id} · ${stage.title}`, 'Pipeline stage', { type: 'navigate', route: 'pipeline' });
     }
   }
-  if (paletteIncludes('restart walkthrough', needle)) push('command', 'Restart walkthrough', 'Admin / Partner only · return to the starting point', { type: 'command', command: 'reset-demo' });
-  if (paletteIncludes('open pipeline', needle)) push('command', 'Open pipeline', 'Shared stage projection', { type: 'navigate', route: 'pipeline' });
-  if (paletteIncludes('open approvals', needle)) push('command', 'Open approvals', 'Reviews & approvals queue', { type: 'navigate', route: 'reviews' });
   return results;
 }
 
@@ -367,15 +468,24 @@ let refreshSeq = 0;
 
 async function runRefreshShared() {
   if (!isSharedDemoEnabled) {
-    contexts.value = [...LOCAL_FALLBACK_CONTEXTS];
-    if (!contexts.value.some((c) => c.engagementId === activeEngagementId.value)) {
-      activeEngagementId.value = DEFAULT_DEMO_ENGAGEMENT_ID;
+    // LOCAL_ONLY keeps the domain scenario authoritative.  The shell receives
+    // a read-only projection of the signed-in actor's assignments and gates;
+    // it never mirrors that workflow into localState or a second store.
+    contexts.value = localContextsForPersona();
+    const correction = resolveContextCorrection(activeEngagementId.value, contexts.value);
+    if (correction.corrected) {
+      activeEngagementId.value = correction.activeEngagementId;
+      saveActiveEngagementId(correction.activeEngagementId);
     }
-    engagement.value = null;
+    const localEngagement = engagementById(activeEngagementId.value);
+    const localContext = contexts.value.find((context) => context.engagementId === activeEngagementId.value) || null;
+    engagement.value = localEngagement && localContext
+      ? { ...localContext, currentStage: localContext.currentStage }
+      : null;
     tasks.value = [];
     events.value = [];
     outbox.value = [];
-    progress.value = null;
+    progress.value = localContext ? deriveLocalProgress(localContext.engagementId) : null;
     progressError.value = null;
     accountingStatus.value = null;
     accountingSteps.value = [];
@@ -587,23 +697,25 @@ export function switchSharedEngagement(engagementId) {
   // The in-flight response still describes the previous engagement; drop it
   // so the coalesced refresh below fetches the new selection immediately.
   refreshInFlight = null;
-  // Keep the browser-local scenario scope aligned best-effort so local pages
-  // do not describe a different engagement than the navigator. A denial
-  // keeps the shared selection; local pages remain labelled LOCAL.
-  try {
-    void import('./domain/scenario.js').then((module) => {
-      try { module.selectEngagement?.(next, {}); } catch { /* local scope is advisory */ }
-    }).catch(() => {});
-  } catch { /* dynamic import is best-effort */ }
+  // Keep the browser-local scenario scope aligned only as a local projection.
+  // Shared D1 state remains authoritative whenever shared mode is enabled.
+  if (!isSharedDemoEnabled) {
+    try { selectEngagement(next, {}); } catch { /* the local refresh corrects an unavailable scope */ }
+  }
   void refreshShared();
 }
 
 export function useDemoContext() {
-  onMounted(startPolling);
-  onUnmounted(stopPolling);
+  // A pure Node test may read this shared projection without mounting a Vue
+  // component. Lifecycle hooks are only registered from setup; explicit
+  // refresh remains available to non-component callers.
+  if (getCurrentInstance()) {
+    onMounted(startPolling);
+    onUnmounted(stopPolling);
+  }
   const mode = computed(() => (isSharedDemoEnabled ? 'shared' : 'local'));
   const activeContext = computed(() => contexts.value.find((c) => c.engagementId === activeEngagementId.value) || null);
-  const stageSummary = computed(() => deriveStageSummary(engagement.value, tasks.value));
+  const stageSummary = computed(() => deriveStageSummary(engagement.value, tasks.value, progress.value));
   return {
     mode,
     sharedEnabled: isSharedDemoEnabled,

@@ -13,25 +13,6 @@ export const statusLabels = {
   neutral: 'Planned',
 }
 
-export const navItems = [
-  { key: 'dashboard', label: 'Overview', icon: 'grid', section: 'Workspace' },
-  { key: 'clients', label: 'Clients & acceptance', icon: 'users', section: 'Workspace' },
-  { key: 'engagements', label: 'Engagements', icon: 'briefcase', section: 'Workspace', badge: '12' },
-  { key: 'pbc', label: 'PBC portal', icon: 'inbox', section: 'Delivery', badge: '4' },
-  { key: 'accounting', label: 'Accounting & TB', icon: 'calculator', section: 'Delivery' },
-  { key: 'audit', label: 'Audit & fieldwork', icon: 'clipboard', section: 'Delivery' },
-  { key: 'reviews', label: 'Reviews & approvals', icon: 'check-circle', section: 'Control', badge: '3' },
-  { key: 'release', label: 'Release & archive', icon: 'lock', section: 'Control' },
-  { key: 'integration', label: 'Integration health', icon: 'pulse', section: 'Operations' },
-  { key: 'architecture', label: 'Architecture map', icon: 'workflow', section: 'Operations' },
-  { key: 'blueprint', label: 'V5 operating model', icon: 'layers', section: 'Operations', badge: '26' },
-  { key: 'cycle', label: 'Complete cycle', icon: 'workflow', section: 'Operations' },
-  { key: 'pipeline', label: 'Pipeline visualizer', icon: 'workflow', section: 'Operations' },
-  { key: 'shared-demo', label: 'Workflow control room', icon: 'workflow', section: 'Operations', badge: 'LIVE' },
-  { key: 'artifacts', label: 'Document center', icon: 'file', section: 'Operations', badge: '26' },
-  { key: 'readiness', label: 'Phase 0 readiness', icon: 'list-check', section: 'Operations', badge: '12' },
-]
-
 // The guide copy is intentionally part of the demo data so every page can
 // explain its purpose, decision boundary, and handoff in the same language.
 export const workflowGuides = {
