@@ -1,5 +1,5 @@
 <script setup>
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import LoginPage from './pages/LoginPage.vue'
 import Icon from './components/Icon.vue'
 import AsyncPageError from './components/AsyncPageError.vue'
@@ -13,10 +13,13 @@ import { setActivePersona } from './domain/scenario.js'
 import DemoNavigator from './components/DemoNavigator.vue'
 import NotificationDrawer from './components/NotificationDrawer.vue'
 import CommandPalette from './components/CommandPalette.vue'
+import DemoPreflight from './components/DemoPreflight.vue'
 import { buildBreadcrumbs, buildNotifications, localContextsForPersona, resolvePersonaSwitch, useDemoContext } from './demoContext.js'
 import { decodeLocation, encodeLocation } from './navigation/location.js'
 import { ROUTE_REGISTRY, routeIsAllowed } from './navigation/registry.js'
 import { provideDemoWorkspace } from './composables/useDemoWorkspace.js'
+import { applyLocalPreset, LOCAL_SCENARIO_PRESETS } from './domain/localPresets.js'
+import { clearNotificationState, markNotificationRead, readNotificationState, writeNotificationState, NOTIFICATION_STATE_KEY } from './notificationState.js'
 
 function asyncPage(loader, label) {
   return defineAsyncComponent({
@@ -109,6 +112,7 @@ if (currentUser.value) setActivePersona(currentUser.value.id)
 // switching personas.
 const isClientInvitation = computed(() => Boolean(activeDemoSession.value?.clientMode && activeDemoSession.value?.invitationId))
 const currentRoute = ref(getRouteFromHash())
+const routeLocation = ref(typeof window !== 'undefined' ? decodeLocation(window.location.hash) : { routeKey: currentRoute.value, engagementId: null, recordId: null, tab: null })
 const mobileNavOpen = ref(false)
 const search = ref('')
 const helpOpen = ref(false)
@@ -131,6 +135,8 @@ const personaBusy = ref(false)
 const scenarioBusy = ref(false)
 const scenarioPresets = ref([])
 const activeScenario = ref(null)
+const presentationMode = ref(false)
+const preflightOpen = ref(false)
 const restartConfirmOpen = ref(false)
 const restartBusy = ref(false)
 const restartError = ref('')
@@ -146,6 +152,7 @@ const {
   syncError: demoSyncError,
   lastSync: demoLastSync,
   stageSummary: demoStageSummary,
+  notifications: demoLocalNotifications,
   refresh: refreshDemoContext,
   switchEngagement: switchDemoEngagement,
 } = useDemoContext()
@@ -169,13 +176,29 @@ const demoAssignee = computed(() => ({
   compliance: 'compliance_reviewer',
   admin: '',
 }[currentUser.value?.role] || ''))
-const demoNotifications = computed(() => buildNotifications({
-  tasks: demoTasks.value,
-  events: demoEvents.value,
-  outbox: demoOutbox.value,
-  assignee: currentUser.value?.role === 'admin' ? '' : demoAssignee.value,
-}))
-const demoNotificationCount = computed(() => demoNotifications.value.length)
+const notificationReadIds = ref(new Set())
+function notificationScope() { return { personaId: currentUser.value?.id || '', engagementId: activeEngagementId.value || '' } }
+function loadNotificationReads() { notificationReadIds.value = readNotificationState(notificationScope()) }
+function handleNotificationRead(id) {
+  notificationReadIds.value = markNotificationRead(notificationScope(), id)
+}
+function handleMarkAllRead() {
+  const next = new Set([...notificationReadIds.value, ...rawDemoNotifications.value.map((item) => item.id)])
+  notificationReadIds.value = next
+  writeNotificationState(notificationScope(), next)
+}
+function clearNotificationReads() {
+  notificationReadIds.value = new Set()
+  // A scenario restart is a new walkthrough for this persona. Remove every
+  // engagement-scoped read marker so old badges cannot leak into the reset.
+  clearNotificationState(notificationScope())
+  try { if (typeof window !== 'undefined') window.localStorage.removeItem(NOTIFICATION_STATE_KEY) } catch { /* best effort */ }
+}
+const rawDemoNotifications = computed(() => demoMode.value === 'local'
+  ? (demoLocalNotifications.value || [])
+  : buildNotifications({ tasks: demoTasks.value, events: demoEvents.value, outbox: demoOutbox.value, assignee: currentUser.value?.role === 'admin' ? '' : demoAssignee.value }))
+const demoNotifications = computed(() => rawDemoNotifications.value.map((item) => ({ ...item, isRead: notificationReadIds.value.has(item.id) })))
+const demoNotificationCount = computed(() => demoNotifications.value.filter((item) => !item.isRead).length)
 const demoCrumbs = computed(() => buildBreadcrumbs({
   personaLabel: currentUser.value?.roleLabel || '',
   context: demoActiveContext.value,
@@ -207,7 +230,8 @@ const systemLabel = computed(() => isClient.value ? 'Client portal · engagement
 const healthLabel = computed(() => 'Guided workspace')
 const healthDetail = computed(() => 'Follow each step to see the handoff and owner.')
 const canSwitchPersona = computed(() => !isClientInvitation.value && ['admin', 'partner'].includes(currentUser.value?.role))
-const canManageScenario = computed(() => !isClientInvitation.value && isSharedDemoEnabled && ['admin', 'audit-manager', 'partner'].includes(currentUser.value?.role))
+const canUsePresentationMode = computed(() => canSwitchPersona.value)
+const canManageScenario = computed(() => !isClientInvitation.value && ['admin', 'audit-manager', 'partner'].includes(currentUser.value?.role))
 const canRestartWalkthrough = computed(() => !isClientInvitation.value && ['admin', 'partner'].includes(currentUser.value?.role))
 const helpCopy = computed(() => isClient.value
   ? 'Use Client details to submit facts, Requests to see what is due, Communications for every question, and Pipeline visualizer to understand the end-to-end handoff.'
@@ -231,13 +255,19 @@ function navigationItemsFor(keys) {
       }
     })
 }
-const visibleNavItems = computed(() => {
+const allNavItems = computed(() => {
   if (!currentUser.value) return []
   if (currentUser.value.role === 'client') return navigationItemsFor(CLIENT_NAVIGATION_KEYS)
   if (currentUser.value.role === 'admin') return navigationItemsFor(ADMIN_NAVIGATION_KEYS)
   const keys = roleRouteSets[currentUser.value.role] || ['role-workspace', 'pipeline']
   return navigationItemsFor(keys)
 })
+const visibleNavItems = computed(() => presentationMode.value && canUsePresentationMode.value
+  ? allNavItems.value.filter((item) => ROUTE_REGISTRY[item.key]?.presentation)
+  : allNavItems.value)
+const moreNavItems = computed(() => presentationMode.value && canUsePresentationMode.value
+  ? allNavItems.value.filter((item) => !ROUTE_REGISTRY[item.key]?.presentation)
+  : [])
 const navGroups = computed(() => {
   const groups = []
   for (const item of visibleNavItems.value) {
@@ -254,6 +284,25 @@ const navGroups = computed(() => {
 function readHashKey() {
   if (typeof window === 'undefined') return ''
   return decodeLocation(window.location.hash).routeKey
+}
+
+function loadPresentationPreference() {
+  try { presentationMode.value = window.localStorage.getItem('auditflow-presentation-mode-v1') === 'on' } catch { presentationMode.value = false }
+}
+
+function togglePresentationMode() {
+  if (!canUsePresentationMode.value) return
+  presentationMode.value = !presentationMode.value
+  try { window.localStorage.setItem('auditflow-presentation-mode-v1', presentationMode.value ? 'on' : 'off') } catch { /* best effort */ }
+}
+
+function openMoreWorkspace() {
+  if (typeof document === 'undefined') return
+  const disclosure = document.querySelector('.more-workspace-nav')
+  if (disclosure) {
+    disclosure.open = true
+    disclosure.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+  }
 }
 
 function getRouteFromHash() {
@@ -279,6 +328,7 @@ function navigate(key, locationOptions = {}) {
   }
   const next = key
   currentRoute.value = next
+  routeLocation.value = { routeKey: next, engagementId: locationOptions.engagementId || activeEngagementId.value || null, recordId: locationOptions.recordId || null, tab: locationOptions.tab || null }
   mobileNavOpen.value = false
   accountMenuOpen.value = false
   permissionNotice.value = ''
@@ -316,6 +366,7 @@ function syncRoute() {
   }
   const allowed = canAccessRoute(requested, currentUser.value.role)
   currentRoute.value = allowed ? requested : currentUser.value.landing
+  routeLocation.value = { ...location, routeKey: currentRoute.value }
   if (!allowed && requested && requested !== currentUser.value.landing) {
     permissionNotice.value = `${ROUTE_REGISTRY[requested]?.label || 'That page'} is not available for the ${currentUser.value.roleLabel.toLowerCase()} account.`
     if (typeof window !== 'undefined') window.location.hash = encodeLocation({ routeKey: currentUser.value.landing, engagementId: activeEngagementId.value })
@@ -337,6 +388,11 @@ async function refreshWalkthroughPresets() {
     activeScenario.value = null
     return
   }
+  if (demoMode.value === 'local') {
+    scenarioPresets.value = LOCAL_SCENARIO_PRESETS
+    activeScenario.value = LOCAL_SCENARIO_PRESETS.find((preset) => preset.engagementId === activeEngagementId.value) || null
+    return
+  }
   const result = await getScenarioPresets(activeEngagementId.value)
   if (result.ok) {
     scenarioPresets.value = result.presets || []
@@ -347,21 +403,33 @@ async function refreshWalkthroughPresets() {
   }
 }
 
+const scenarioIntentKeys = new Map()
+function stableScenarioIntentKey(engagementId, presetKey) {
+  const key = `${engagementId}:${presetKey}`
+  if (!scenarioIntentKeys.has(key)) scenarioIntentKeys.set(key, `scenario-${engagementId}-${presetKey}-v1`)
+  return scenarioIntentKeys.get(key)
+}
+
 async function handleScenarioSelect(presetKey) {
   if (!canManageScenario.value || scenarioBusy.value || !presetKey || !activeEngagementId.value) return
   const preset = scenarioPresets.value.find((item) => item.key === presetKey)
-  if (!preset || activeScenario.value?.key === preset.key) return
+  // Local presets are deliberately repeatable: selecting the same focus
+  // again restores its deterministic clean baseline. Shared presets remain
+  // idempotent no-op selections once the server reports the same key.
+  if (!preset || (demoMode.value !== 'local' && activeScenario.value?.key === preset.key)) return
   scenarioBusy.value = true
-  const result = await applyScenarioPreset(activeEngagementId.value, preset.key, {
-    expectedRevision: demoActiveContext.value?.revision,
-    idempotencyKey: `scenario-${activeEngagementId.value}-${preset.key}-${Date.now()}`,
-  })
+  const result = demoMode.value === 'local'
+    ? applyLocalPreset(preset.key, { personaId: currentUser.value?.id })
+    : await applyScenarioPreset(activeEngagementId.value, preset.key, {
+      expectedRevision: demoActiveContext.value?.revision,
+      idempotencyKey: stableScenarioIntentKey(activeEngagementId.value, preset.key),
+    })
   scenarioBusy.value = false
   if (!result.ok) {
     permissionNotice.value = `Walkthrough focus was not changed (${result.error?.code || 'NOT_COMMITTED'}). ${result.error?.message || 'Please try again.'}`
     return
   }
-  activeScenario.value = result.scenario || null
+  activeScenario.value = result.scenario || result.data || preset
   permissionNotice.value = `${preset.label} is selected as the walkthrough focus. Workflow progress and permissions remain based on the engagement record.`
   await refreshDemoContext()
   await refreshWalkthroughPresets()
@@ -399,9 +467,14 @@ async function confirmRestart() {
   } else {
     resetDemoData()
   }
+  // resetScenario() restores fixture defaults, including its active persona;
+  // immediately re-bind the local projection to the person still signed in.
+  if (currentUser.value?.id) setActivePersona(currentUser.value.id)
   await refreshDemoContext()
+  clearNotificationReads()
   const restoredEngagement = demoContexts.value[0]?.engagementId || activeEngagementId.value
   if (restoredEngagement) switchDemoEngagement(restoredEngagement)
+  await refreshWalkthroughPresets()
   restartBusy.value = false
   closeRestartConfirm()
   permissionNotice.value = 'Walkthrough restarted. The starting engagement, queue, and next action have been restored.'
@@ -413,15 +486,18 @@ function handleLogin(user) {
   setActivePersona(user.id)
   saveDemoSession(user)
   const target = pendingDeepLink.value || readHashKey()
+  const requestedLocation = typeof window !== 'undefined' ? decodeLocation(window.location.hash) : { routeKey: target }
   pendingDeepLink.value = ''
   if (target && canAccessRoute(target, user.role)) {
     currentRoute.value = target
+    routeLocation.value = { ...requestedLocation, routeKey: target }
     permissionNotice.value = ''
-      if (typeof window !== 'undefined') window.location.hash = encodeLocation({ routeKey: target, engagementId: activeEngagementId.value })
+      if (typeof window !== 'undefined') window.location.hash = encodeLocation({ routeKey: target, engagementId: activeEngagementId.value, recordId: requestedLocation.recordId, tab: requestedLocation.tab })
   } else {
     if (target && target !== user.landing) permissionNotice.value = `${ROUTE_REGISTRY[target]?.label || 'That page'} is not available for the ${user.roleLabel.toLowerCase()} account.`
     else permissionNotice.value = ''
     currentRoute.value = user.landing
+    routeLocation.value = { routeKey: user.landing, engagementId: activeEngagementId.value || null, recordId: null, tab: null }
     if (typeof window !== 'undefined') window.location.hash = encodeLocation({ routeKey: user.landing, engagementId: activeEngagementId.value })
   }
   if (isSharedDemoEnabled) {
@@ -434,7 +510,7 @@ function handleLogin(user) {
         void refreshDemoContext().then(refreshWalkthroughPresets)
       }
     });
-  } else void refreshDemoContext()
+  } else void refreshDemoContext().then(refreshWalkthroughPresets)
   setDocumentTitle()
 }
 
@@ -562,10 +638,14 @@ function onShellEscape() {
   else if (helpOpen.value) closeHelp()
 }
 
+watch([currentUser, activeEngagementId], () => loadNotificationReads())
+
 onMounted(() => {
   window.addEventListener('hashchange', syncRoute)
   window.addEventListener('keydown', onGlobalKeydown)
   syncRoute()
+  loadPresentationPreference()
+  loadNotificationReads()
   setDocumentTitle()
   if (currentUser.value && isSharedDemoEnabled) {
     createDemoSession(currentUser.value.id).then((res) => {
@@ -577,6 +657,8 @@ onMounted(() => {
         void refreshDemoContext().then(refreshWalkthroughPresets)
       }
     })
+  } else if (currentUser.value) {
+    void refreshDemoContext().then(refreshWalkthroughPresets)
   }
 })
 
@@ -599,6 +681,7 @@ onBeforeUnmount(() => {
 
       <nav class="sidebar-nav">
         <div v-for="group in navGroups" :key="group.name" class="nav-group"><span class="nav-group-label">{{ group.name }}</span><button v-for="item in group.items" :key="item.key" type="button" class="nav-item" :class="{ active: currentRoute === item.key }" :aria-current="currentRoute === item.key ? 'page' : undefined" @click="navigate(item.key)"><Icon :name="item.icon" :size="18" /><span>{{ item.label }}</span><em v-if="item.badge">{{ item.badge }}</em></button></div>
+        <details v-if="moreNavItems.length" class="more-workspace-nav"><summary>More workspace</summary><button v-for="item in moreNavItems" :key="item.key" type="button" class="nav-item" :class="{ active: currentRoute === item.key }" @click="navigate(item.key)"><Icon :name="item.icon" :size="18" /><span>{{ item.label }}</span></button></details>
       </nav>
 
       <div class="sidebar-bottom"><div class="sidebar-health"><span class="health-pulse"></span><span><strong>{{ healthLabel }}</strong><small>{{ healthDetail }}</small></span></div><div class="sidebar-foot"><span>{{ currentUser.roleLabel }}</span><button ref="helpButton" type="button" aria-label="Open help" title="Open help and orientation" @click="openHelp"><Icon name="info" :size="18" /></button></div></div>
@@ -643,9 +726,15 @@ onBeforeUnmount(() => {
         @open-palette="commandPaletteOpen = true"
         @open-notifications="demoNotificationsOpen = true"
       />
+      <div v-if="canUsePresentationMode || canRestartWalkthrough" class="workspace-tools" role="toolbar" aria-label="Walkthrough controls">
+        <button v-if="canUsePresentationMode" type="button" class="text-button" :aria-pressed="presentationMode" @click="togglePresentationMode"><Icon name="workflow" :size="15" />{{ presentationMode ? 'Exit presentation mode' : 'Presentation mode' }}</button>
+        <span v-if="presentationMode" class="workspace-tools-note">Core journey shown · technical pages are under More workspace.</span>
+        <button type="button" class="text-button" @click="preflightOpen = true"><Icon name="check-circle" :size="15" />Demo status</button>
+        <button v-if="presentationMode && moreNavItems.length" type="button" class="text-button" @click="openMoreWorkspace">More workspace</button>
+      </div>
       <div class="system-strip"><span><i></i> {{ systemLabel }}</span><span>{{ demoActiveContext ? `${demoActiveContext.clientName} · ${demoActiveContext.serviceLabel} ${demoActiveContext.period}` : (isClient ? currentUser.organization : `${client.name} · ${client.period}`) }}</span><span class="build-version">Build {{ buildCommit }}</span></div>
       <div v-if="permissionNotice" class="permission-notice" role="status" aria-live="polite"><Icon name="warning" :size="17" />{{ permissionNotice }}</div>
-      <main id="main-content" class="main-content" tabindex="-1"><component :is="current.component" @navigate="navigate" @request-restart="requestRestart" /></main>
+      <main id="main-content" class="main-content" tabindex="-1"><component :is="current.component" :navigation-target="routeLocation" @navigate="navigate" @request-restart="requestRestart" /></main>
     </div>
 
     <NotificationDrawer
@@ -657,6 +746,8 @@ onBeforeUnmount(() => {
       :last-sync="demoLastSync"
       @close="demoNotificationsOpen = false"
       @navigate="(route) => { demoNotificationsOpen = false; navigate(route) }"
+      @mark-read="handleNotificationRead"
+      @mark-all-read="handleMarkAllRead"
     />
     <CommandPalette
       :open="commandPaletteOpen"
@@ -670,6 +761,7 @@ onBeforeUnmount(() => {
       @switch-persona="handlePersonaSwitch"
       @switch-context="handleContextSwitch"
     />
+    <DemoPreflight :open="preflightOpen" :mode="demoMode" :current-user="currentUser" :context="demoActiveContext" :sync-error="demoSyncError" :last-sync="demoLastSync" :build-commit="buildCommit" :can-restart="canRestartWalkthrough" @close="preflightOpen = false" @restart="preflightOpen = false; requestRestart()" />
     <div v-if="helpOpen" class="help-backdrop" role="presentation" @click.self="closeHelp">
       <section class="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
         <div class="help-dialog-header"><div><span class="eyebrow">Getting started</span><h2 id="help-title">How to read AuditFlow</h2></div><button ref="helpCloseButton" type="button" class="icon-button" aria-label="Close help" title="Close help" @click="closeHelp"><Icon name="x" :size="17" /></button></div>

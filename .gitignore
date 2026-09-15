@@ -6,3 +6,5 @@ auditflow-site.tar.gz
 consolidated_accounting_audit_workflow_v2.md
 .wrangler/
 worker-configuration.d.ts
+test-results/
+playwright-report/

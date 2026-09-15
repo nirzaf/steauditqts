@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import NextBestActionCard from '../components/NextBestActionCard.vue'
 import StatusPill from '../components/StatusPill.vue'
@@ -9,12 +9,16 @@ import SharedTimeline from '../components/SharedTimeline.vue'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { client, timeline, workflowGuides } from '../data'
 import { activateEngagement, activationBlockers, activationFor, activeActor, createContinuanceShell, gateSummary, renewalCaseFor, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, selectEngagement, termsFor } from '../domain/scenario.js'
+import { recordTargetFor } from '../navigation/recordTargets.js'
+import { useDemoContext } from '../demoContext.js'
 
 const emit = defineEmits(['navigate'])
+const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
 const sharedEnabled = sharedDemoEnabled
 const activeTab = ref('Summary')
 const tabs = ['Summary', 'Timeline', 'Team & scope']
 const selectedGate = ref(4)
+const targetNotice = ref('')
 const actionWorking = ref(false)
 const toast = ref('')
 const statusLabels = { good: 'Satisfied', warn: 'In review', danger: 'Blocked', neutral: 'Planned' }
@@ -31,6 +35,23 @@ const activation = computed(() => activationFor(selectedEngagement.value?.id))
 const blockers = computed(() => activationBlockers(selectedEngagement.value?.id))
 const renewal = computed(() => renewalCaseFor(selectedEngagement.value?.id))
 const canActivate = computed(() => Boolean(activeActor()?.roles?.includes('engagement_partner')))
+const { mode: demoMode, events: projectedEvents } = useDemoContext()
+const engagementTimeline = computed(() => {
+  const projected = (projectedEvents.value || []).map((event) => ({
+    title: String(event.action || event.type || 'Workflow update').replaceAll('_', ' '),
+    detail: event.objectId ? `${event.actor || 'Workspace'} · ${event.objectId}` : (event.actor || 'Workspace update'),
+    date: event.createdAt ? new Date(event.createdAt).toLocaleDateString('en-QA', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Current',
+    tone: 'blue',
+  }))
+  return demoMode.value === 'local' && projected.length ? projected : timeline
+})
+watch(() => props.navigationTarget?.recordId, (recordId) => {
+  const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
+  if (!recordId || (target.targetType !== 'engagements' && !(target.targetType === 'unknown' && props.navigationTarget?.routeKey === 'engagements'))) return
+  const index = gates.value.findIndex((gate) => gate.id === recordId)
+  if (index >= 0) { selectedGate.value = index; targetNotice.value = '' }
+  else targetNotice.value = `${recordId} is not in the selected engagement scope.`
+}, { immediate: true })
 function navigate(route) { emit('navigate', route) }
 
 function changeEngagement(event) {
@@ -80,6 +101,7 @@ function createShell() {
     <WorkflowGuide :guide="workflowGuides.engagements" />
     <NextBestActionCard v-if="sharedEnabled" title="Next best action for the shared engagement" @navigate="navigate" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+    <div v-if="targetNotice" class="guide-status-message" role="status"><Icon name="info" :size="16" />{{ targetNotice }}</div>
 
     <section class="panel engagement-selector"><div><span class="eyebrow">Selected service-period scope</span><strong>Every command is revision-bound to one engagement</strong><small>{{ sharedEnabled ? 'Use the global shared context selector to change the authoritative engagement.' : 'Use the selector to demonstrate how accounting-only and audit routes keep separate gates and authorities.' }}</small></div><label>Engagement<select :value="selectedEngagement.id" :disabled="sharedEnabled" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
 
@@ -100,7 +122,7 @@ function createShell() {
         <article class="panel gate-map-panel">
           <div class="panel-heading"><div><span class="eyebrow">Operational gates</span><h2>Where the engagement stands</h2></div><span class="muted-label">Click a gate for its owner and next action</span></div>
           <div class="gate-map">
-            <button v-for="(gate, index) in gates" :key="gate.id" type="button" class="gate-map-item" :class="[`gate-${gate.status}`, { selected: selectedGate === index }, { 'gate-next-period': gate.period === 'next' }, { 'gate-not-applicable': !gate.applicable }]" @click="selectedGate = index"><span class="gate-node"><Icon :name="!gate.applicable ? 'minus' : gate.status === 'good' ? 'check' : gate.status === 'warn' ? 'warning' : gate.status === 'danger' ? 'lock' : 'clock'" :size="14" /></span><span><strong>{{ gate.id }} · {{ gate.title }}</strong><small>{{ gate.applicable ? gate.detail : 'Not applicable for this service route' }}{{ gate.period === 'next' ? ' · next period' : '' }}</small></span></button>
+            <button v-for="(gate, index) in gates" :key="gate.id" :data-record-id="gate.id" type="button" class="gate-map-item" :class="[`gate-${gate.status}`, { selected: selectedGate === index }, { 'gate-next-period': gate.period === 'next' }, { 'gate-not-applicable': !gate.applicable }]" @click="selectedGate = index"><span class="gate-node"><Icon :name="!gate.applicable ? 'minus' : gate.status === 'good' ? 'check' : gate.status === 'warn' ? 'warning' : gate.status === 'danger' ? 'lock' : 'clock'" :size="14" /></span><span><strong>{{ gate.id }} · {{ gate.title }}</strong><small>{{ gate.applicable ? gate.detail : 'Not applicable for this service route' }}{{ gate.period === 'next' ? ' · next period' : '' }}</small></span></button>
           </div>
           <div class="selected-gate"><div><span class="eyebrow">Selected gate</span><h3>{{ selectedGateInfo.id }} · {{ selectedGateInfo.title }}</h3><p>{{ selectedGateInfo.applicable ? selectedGateInfo.detail : 'This gate is not applicable to the selected service route.' }}{{ selectedGateInfo.nextPeriodNote ? ` ${selectedGateInfo.nextPeriodNote}` : '' }}</p></div><StatusPill :label="selectedGateInfo.applicable ? statusLabels[selectedGateInfo.status] : 'Not applicable'" :tone="selectedGateInfo.applicable ? selectedGateInfo.status : 'neutral'" /></div>
         </article>
@@ -115,7 +137,7 @@ function createShell() {
 
     <template v-else-if="activeTab === 'Timeline'">
       <SharedTimeline v-if="sharedEnabled" :engagement-id="selectedEngagement?.id || ''" title="Shared activity (all browsers)" />
-      <section class="panel timeline-full"><div class="panel-heading"><div><span class="eyebrow">Immutable activity ledger</span><h2>Engagement timeline</h2></div><StatusPill label="Version history preserved" tone="good" /></div><div class="timeline-list detailed"> <div v-for="event in timeline" :key="event.title" class="timeline-item"><span class="timeline-dot" :class="`tone-${event.tone}`"></span><div><div class="timeline-title"><strong>{{ event.title }}</strong><span>{{ event.date }} 2026</span></div><p>{{ event.detail }}</p><small>Actor recorded · Northstar Trading · revision-bound event</small></div></div></div></section>
+      <section class="panel timeline-full"><div class="panel-heading"><div><span class="eyebrow">Immutable activity ledger</span><h2>Engagement timeline</h2></div><StatusPill label="Version history preserved" tone="good" /></div><div class="timeline-list detailed"> <div v-for="(event, index) in engagementTimeline" :key="`${event.title}-${event.date}-${index}`" class="timeline-item"><span class="timeline-dot" :class="`tone-${event.tone}`"></span><div><div class="timeline-title"><strong>{{ event.title }}</strong><span>{{ event.date }}</span></div><p>{{ event.detail }}</p><small>Actor recorded · Northstar Trading · revision-bound event</small></div></div></div></section>
     </template>
 
     <template v-else>

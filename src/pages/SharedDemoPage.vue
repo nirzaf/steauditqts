@@ -23,6 +23,7 @@ import {
 import { useSharedEngagement } from '../composables/useSharedEngagement.js'
 import { useDraftForms } from '../composables/useDraftForms.js'
 import { useDemoContext } from '../demoContext.js'
+import ActionOutcome from '../components/ActionOutcome.vue'
 
 const emit = defineEmits(['navigate'])
 
@@ -335,8 +336,7 @@ watch(() => [selectedAction.value, engagement.value?.generationId, engagement.va
           <p v-if="draftStatus?.error" class="shared-action-result failure" role="status"><Icon name="warning" :size="15" />Local draft storage failed: {{ draftStatus.error }}</p>
           <div v-if="draftPrompt" class="permission-notice" role="status"><Icon name="refresh" :size="17" /><span>Draft saved against revision {{ draftPrompt.baseRevision }}; the current revision is {{ draftPrompt.currentRevision }}.</span><button type="button" class="button secondary" @click="keepStaleDraft">Keep draft</button><button type="button" class="button secondary" @click="discardStaleDraft">Discard</button></div>
         </form>
-        <p v-if="actionMessage" class="shared-action-result" :class="actionMessage.ok ? 'success' : 'failure'" role="status"><Icon :name="actionMessage.ok ? 'check-circle' : 'warning'" :size="17" />{{ actionMessage.text }}</p>
-        <button v-if="actionMessage?.tone === 'uncertain' && pendingIntent" type="button" class="button secondary" :disabled="busy" @click="submitAction">Retry same request<Icon name="refresh" :size="16" /></button>
+        <ActionOutcome v-if="actionMessage" :result="actionMessage" :title="activeAction?.label || 'Workflow action'" :pending="busy" @retry="submitAction" />
         <details v-if="lastActionResponse" class="shared-action-response"><summary>Show Worker response details</summary><pre>{{ JSON.stringify(lastActionResponse, null, 2) }}</pre></details>
       </article>
 

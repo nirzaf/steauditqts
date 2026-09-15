@@ -32,6 +32,9 @@ jobs:
         env:
           VITE_BUILD_COMMIT: ${{ github.sha }}
       - run: git diff --check
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
 
   deploy:
     name: Deploy Worker, D1 schema and Pages

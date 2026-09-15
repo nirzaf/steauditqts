@@ -1,15 +1,20 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
+import ActionOutcome from '../components/ActionOutcome.vue'
 import { archiveItems, formatMoney, workflowGuides } from '../data'
 import { loadDemoSession } from '../auth.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { useDemoContext } from '../demoContext.js'
 import { idempotencyKey, recordFinalDiscussion, runSharedAction } from '../sharedDemo.js'
 import { activeActor, advanceRelease as advanceReleaseCommand, assembleArchive, createAmendmentCase, createReleaseCheckpoint, recordLegalHold, releaseCandidateBlockers, releaseLegalHold, releaseSteps as scenarioReleaseSteps, scenario, selectEngagement, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
+import { recordTargetFor } from '../navigation/recordTargets.js'
+
+const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
+const targetNotice = ref('')
 
 // Phase C — shared completion chain (D1 authority): final discussion,
 // visible release checklist, release, invoice and commercial close.
@@ -22,6 +27,8 @@ const {
 } = useDemoContext()
 const sharedNotice = ref('')
 const sharedBusy = ref('')
+const sharedActionResult = ref(null)
+const sharedActionRetry = ref(null)
 const discussionForm = ref({ date: '2026-09-20', attendees: '', topics: '', outcome: '' })
 const invoiceForm = ref({ actualHours: '148', actualCost: '29500.00' })
 
@@ -36,6 +43,8 @@ const releaseChecklist = computed(() => {
 const releaseGate = computed(() => (sharedProgress.value?.gateDetails || []).find((gate) => gate.id === 'release') || null)
 
 function sharedNotify(message, result) {
+  const outcome = String(result?.outcome || '').toUpperCase()
+  sharedActionResult.value = { ...result, outcome: result?.ok ? 'COMMITTED' : (outcome || 'REJECTED'), message: result?.ok ? message : ('Not committed (' + (result?.error?.code || 'ERROR') + '): ' + (result?.error?.message || '')) }
   sharedNotice.value = result.ok ? message : ('Not committed (' + (result.error?.code || 'ERROR') + '): ' + (result.error?.message || ''))
   if (result.ok) refreshSharedContext()
   window.setTimeout(() => { sharedNotice.value = '' }, 6000)
@@ -43,6 +52,7 @@ function sharedNotify(message, result) {
 
 async function submitFinalDiscussion() {
   if (sharedBusy.value) return
+  sharedActionRetry.value = submitFinalDiscussion
   sharedBusy.value = 'discussion'
   const result = await recordFinalDiscussion(sharedEngagementId.value, { ...discussionForm.value, idempotencyKey: idempotencyKey('final-discussion') })
   sharedBusy.value = ''
@@ -51,6 +61,7 @@ async function submitFinalDiscussion() {
 
 async function submitSharedRelease() {
   if (sharedBusy.value) return
+  sharedActionRetry.value = submitSharedRelease
   sharedBusy.value = 'release'
   const result = await runSharedAction(sharedEngagementId.value, 'RELEASE_FINAL_REPORT', { rationale: 'Presenter release after visible checklist.', idempotencyKey: idempotencyKey('release') })
   sharedBusy.value = ''
@@ -59,6 +70,7 @@ async function submitSharedRelease() {
 
 async function submitSharedInvoice() {
   if (sharedBusy.value) return
+  sharedActionRetry.value = submitSharedInvoice
   sharedBusy.value = 'invoice'
   const result = await runSharedAction(sharedEngagementId.value, 'CREATE_INVOICE', { ...invoiceForm.value, idempotencyKey: idempotencyKey('invoice') })
   sharedBusy.value = ''
@@ -67,10 +79,15 @@ async function submitSharedInvoice() {
 
 async function submitSharedClose() {
   if (sharedBusy.value) return
+  sharedActionRetry.value = submitSharedClose
   sharedBusy.value = 'close'
   const result = await runSharedAction(sharedEngagementId.value, 'CLOSE_ENGAGEMENT', { idempotencyKey: idempotencyKey('close') })
   sharedBusy.value = ''
   sharedNotify('Commercial record closed. Archive remains a separate records action.', result)
+}
+
+function retrySharedAction() {
+  if (sharedActionRetry.value) void sharedActionRetry.value()
 }
 
 const releaseSteps = scenarioReleaseSteps
@@ -93,6 +110,15 @@ const legalHolds = computed(() => (scenario.legalHolds || [])
 const amendments = computed(() => (scenario.amendments || []).filter((item) => item.engagementId === selectedEngagement.value?.id))
 const canRecords = computed(() => Boolean(activeActor()?.roles?.includes('records_custodian')))
 const canPartner = computed(() => Boolean(activeActor()?.roles?.includes('engagement_partner')))
+watch(() => props.navigationTarget?.recordId, (recordId) => {
+  const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
+  if (!recordId || (target.targetType !== 'release' && !(target.targetType === 'unknown' && props.navigationTarget?.routeKey === 'release'))) return
+  if (scenario.releaseCandidates.some((item) => item.id === recordId)
+    || scenario.legalHolds?.some((item) => item.id === recordId)
+    || scenario.checkpoints?.some((item) => item.id === recordId)
+    || scenario.archivePackages?.some((item) => item.id === recordId)) targetNotice.value = ''
+  else targetNotice.value = `${recordId} is not in the selected release scope.`
+}, { immediate: true })
 const safetyChecks = computed(() => [
   { label: 'Client input generation', value: selectedEngagement.value ? `g${selectedEngagement.value.inputGeneration}` : '—', detail: selectedEngagement.value ? `Candidate evaluated at g${candidate.value.evaluatedInputGeneration}` : 'No assigned engagement', icon: 'refresh', state: selectedEngagement.value && candidate.value.inputGeneration === candidate.value.evaluatedInputGeneration ? 'Current' : 'Unavailable', tone: selectedEngagement.value && candidate.value.inputGeneration === candidate.value.evaluatedInputGeneration ? 'good' : 'warn' },
   { label: 'Policy generation', value: selectedEngagement.value ? `p${selectedEngagement.value.policyGeneration}` : '—', detail: `Pinned to ${candidate.value.id}`, icon: 'settings', state: selectedEngagement.value ? 'Current' : 'Unavailable', tone: selectedEngagement.value ? 'good' : 'warn' },
@@ -183,10 +209,12 @@ function openAmendment() {
     <PageHeader eyebrow="Controlled finalization" title="Release & archive" description="A signed package is a durable, version-bound business event. Release, delivery, records protection and amendments are shown as separate controls." action-label="Inspect release candidate" @action="createReleaseCandidate" />
     <WorkflowGuide :guide="workflowGuides.release" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+    <div v-if="targetNotice" class="guide-status-message" role="status"><Icon name="warning" :size="16" />{{ targetNotice }}</div>
 
     <section v-if="sharedDemoEnabled" class="panel shared-release-panel" aria-labelledby="shared-release-title">
       <div class="panel-heading"><div><span class="eyebrow">Shared D1 completion chain · {{ sharedEngagementId }}</span><h2 id="shared-release-title">Discussion, release, invoice, close</h2></div><StatusPill :label="releaseGate?.state || 'WAITING'" :tone="releaseGate?.state === 'APPROVED' ? 'good' : releaseGate?.state === 'READY' ? 'warn' : 'neutral'" /></div>
       <p v-if="sharedNotice" class="guide-status-message" role="status">{{ sharedNotice }}</p>
+      <ActionOutcome :result="sharedActionResult" :title="sharedBusy ? `${sharedBusy} release action` : 'Release action'" :pending="Boolean(sharedBusy)" stage-summary="Release remains version-bound to the current candidate and checkpoint." next-action="Complete the next checklist gate or hand the package to Finance / Records." @retry="retrySharedAction" />
       <div v-if="releaseChecklist.length" class="release-checklist" role="status" aria-label="Shared release checklist">
         <div v-for="gate in releaseChecklist" :key="gate.id" class="release-check-row">
           <span aria-hidden="true">{{ gate.state === 'APPROVED' ? '✓' : gate.state === 'READY' ? '!' : gate.state === 'WAITING' ? '·' : '✕' }}</span>

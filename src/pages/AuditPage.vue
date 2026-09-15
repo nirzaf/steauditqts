@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
@@ -10,9 +10,12 @@ import { loadDemoSession } from '../auth.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { useDemoContext } from '../demoContext.js'
 import { evaluateAccountingInput, idempotencyKey } from '../sharedDemo.js'
+import { recordTargetFor } from '../navigation/recordTargets.js'
 
+const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
 const activeTab = ref('Planning')
 const selectedRiskId = ref('RISK-AR-019')
+const targetNotice = ref('')
 const tabs = ['Planning', 'Fieldwork', 'Populations & samples']
 const showEvidence = ref(false)
 const toast = ref('')
@@ -86,6 +89,30 @@ const linkedRiskCount = computed(() => risks.value.filter((risk) => risk.procedu
 const riskCoverage = computed(() => risks.value.length ? Math.round((linkedRiskCount.value / risks.value.length) * 100) : 0)
 const testedSampleCount = computed(() => selectedPlanSamples.value.filter((item) => item.status === 'COMPLETE' || item.status === 'ALTERNATIVE_WORK_RECORDED').length)
 const canPerformIndependentWork = computed(() => Boolean(activeActor()?.roles?.some((role) => ['independent_reviewer', 'engagement_partner'].includes(role))))
+
+watch([
+  () => props.navigationTarget?.recordId,
+  () => risks.value.map((risk) => risk.id).join('|'),
+  () => liveWorkpapers.value.map((item) => item.id).join('|'),
+], async ([recordId]) => {
+  const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
+  if (!recordId || (target.targetType !== 'audit' && !(target.targetType === 'unknown' && props.navigationTarget?.routeKey === 'audit'))) return
+  const risk = risks.value.find((item) => item.id === recordId)
+  const workpaper = liveWorkpapers.value.find((item) => item.id === recordId)
+  const population = (scenario.audit?.populations || []).find((item) => item.id === recordId)
+  const sample = (scenario.audit?.samples || []).find((item) => item.id === recordId || item.samplePlanId === recordId || item.planId === recordId)
+  const finding = (scenario.audit?.findings || []).find((item) => item.id === recordId)
+  const linkedRiskId = workpaper?.riskId || population?.riskId || sample?.riskId || finding?.riskId
+    || risks.value.find((item) => item.workpaperId === workpaper?.id || item.populationId === population?.id || item.samplePlanId === (sample?.samplePlanId || sample?.planId))?.id
+  if (risk || workpaper || population || sample || finding || linkedRiskId) {
+    selectedRiskId.value = risk?.id || linkedRiskId || selectedRiskId.value
+    if (workpaper) activeTab.value = 'Fieldwork'
+    if (population || sample) activeTab.value = 'Populations & samples'
+    targetNotice.value = ''
+    await nextTick()
+    if (typeof document !== 'undefined') document.querySelector(`[data-record-id="${recordId}"]`)?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+  } else targetNotice.value = `${recordId} is not in the selected audit scope.`
+}, { immediate: true })
 
 function addWorkpaper() {
   if (sharedDemoEnabled) {
@@ -170,6 +197,7 @@ function recordMateriality() {
       <button type="button" class="button secondary" :disabled="!canEvaluateInput || sharedBusy" @click="submitEvaluateInput">{{ sharedBusy ? 'Evaluating…' : 'Evaluate input g' + auditGenerations.input }}</button>
     </div>
     <p v-if="sharedNotice" class="guide-status-message" role="status">{{ sharedNotice }}</p>
+    <p v-if="targetNotice" class="guide-status-message" role="status"><Icon name="warning" :size="16" />{{ targetNotice }}</p>
 
 
     <section v-if="workpaperDraftOpen" class="panel workpaper-draft-panel" aria-labelledby="workpaper-draft-title"><div class="panel-heading"><div><span class="eyebrow">Scoped workpaper workspace</span><h2 id="workpaper-draft-title">Open a working-paper draft</h2></div><button type="button" class="icon-button" aria-label="Close workpaper draft" title="Close workpaper draft" @click="workpaperDraftOpen = false"><Icon name="x" :size="17" /></button></div><p class="panel-copy">Create the draft record first, then submit an exact evidence snapshot from Fieldwork. A draft does not clear a review point or imply a conclusion.</p><form class="portal-form" @submit.prevent="saveWorkpaperDraft"><div class="form-grid"><label>Workpaper title<input v-model="workpaperDraft.title" required maxlength="140" placeholder="e.g. Payroll completeness testing" /></label><label>Procedure ID<input v-model="workpaperDraft.procedureId" maxlength="60" placeholder="PROC-PAY-01" /></label><label>Reviewer<select v-model="workpaperDraft.reviewerActorId"><option value="ACT-OMAR">Omar Aziz · manager</option><option value="ACT-FATIMA">Fatima Saleh · independent reviewer</option></select></label><label class="form-span-2">Evidence plan<textarea v-model="workpaperDraft.detail" rows="3" maxlength="500" placeholder="Describe the evidence and expected conclusion support"></textarea></label></div><div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />Draft is scoped to {{ selectedEngagement?.id || 'the selected engagement' }}.</span><button type="submit" class="button primary" :disabled="workpaperDraftWorking || !workpaperDraft.title.trim()">{{ workpaperDraftWorking ? 'Saving…' : 'Create draft record' }}<Icon name="arrow-right" :size="17" /></button></div></form></section>
@@ -181,7 +209,7 @@ function recordMateriality() {
     <nav class="sub-tabs" aria-label="Audit views"><button v-for="tab in tabs" :key="tab" type="button" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button></nav>
 
     <template v-if="activeTab === 'Planning'">
-      <section class="audit-layout"><article class="panel risk-panel"><div class="panel-heading"><div><span class="eyebrow">Risk and assertion register</span><h2>What the plan responds to</h2></div><button type="button" class="text-button" @click="toast = `${risks.length} synthetic risks are linked to procedures, populations, samples and findings.`">Coverage query <Icon name="arrow-right" :size="15" /></button></div><div class="risk-table"><button v-for="risk in risks" :key="risk.id" type="button" class="risk-row" :class="{ active: selectedRisk.id === risk.id }" @click="selectedRiskId = risk.id"><span class="risk-code">{{ risk.id }}</span><span><strong>{{ risk.area }}</strong><small>{{ risk.assertion }} · {{ risk.driver }}</small></span><span class="risk-rating" :class="`tone-${risk.tone}`">{{ risk.rating }}</span><span class="risk-status">{{ risk.status }}</span><Icon class="risk-arrow" name="arrow-right" :size="16" /></button></div></article><aside class="panel selected-risk-panel"><div class="panel-heading"><div><span class="eyebrow">Selected risk</span><h2>{{ selectedRisk.area }}</h2></div><StatusPill :label="selectedRisk.rating + ' risk'" :tone="selectedRisk.tone" /></div><dl class="detail-list"><div><dt>Assertion</dt><dd>{{ selectedRisk.assertion }}</dd></div><div><dt>Risk driver</dt><dd>{{ selectedRisk.driver }}</dd></div><div><dt>Approved response</dt><dd>{{ selectedRisk.response }}</dd></div><div><dt>Owner</dt><dd>{{ selectedRisk.owner }}</dd></div><div><dt>Procedure / workpaper</dt><dd>{{ selectedRisk.procedureId || '—' }} · {{ selectedRisk.workpaperId || '—' }}</dd></div><div><dt>Population / sample</dt><dd>{{ selectedRisk.populationId || '—' }} · {{ selectedRisk.samplePlanId || '—' }}</dd></div></dl><button type="button" class="button secondary full-width" @click="showEvidence = !showEvidence">{{ showEvidence ? 'Hide linked work' : 'Show linked work' }} <Icon name="arrow-right" :size="16" /></button><div v-if="showEvidence" class="linked-work"><span class="eyebrow">Linked procedures</span><p>{{ selectedRisk.procedureId }} · {{ selectedRisk.workpaperId }} · {{ selectedRisk.populationId }} · {{ selectedRisk.samplePlanId }}</p><StatusPill :label="selectedRisk.status" :tone="selectedRisk.tone" /></div></aside></section>
+      <section class="audit-layout"><article class="panel risk-panel"><div class="panel-heading"><div><span class="eyebrow">Risk and assertion register</span><h2>What the plan responds to</h2></div><button type="button" class="text-button" @click="toast = `${risks.length} synthetic risks are linked to procedures, populations, samples and findings.`">Coverage query <Icon name="arrow-right" :size="15" /></button></div><div class="risk-table"><button v-for="risk in risks" :key="risk.id" :data-record-id="risk.id" type="button" class="risk-row" :class="{ active: selectedRisk.id === risk.id }" @click="selectedRiskId = risk.id"><span class="risk-code">{{ risk.id }}</span><span><strong>{{ risk.area }}</strong><small>{{ risk.assertion }} · {{ risk.driver }}</small></span><span class="risk-rating" :class="`tone-${risk.tone}`">{{ risk.rating }}</span><span class="risk-status">{{ risk.status }}</span><Icon class="risk-arrow" name="arrow-right" :size="16" /></button></div></article><aside class="panel selected-risk-panel"><div class="panel-heading"><div><span class="eyebrow">Selected risk</span><h2>{{ selectedRisk.area }}</h2></div><StatusPill :label="selectedRisk.rating + ' risk'" :tone="selectedRisk.tone" /></div><dl class="detail-list"><div><dt>Assertion</dt><dd>{{ selectedRisk.assertion }}</dd></div><div><dt>Risk driver</dt><dd>{{ selectedRisk.driver }}</dd></div><div><dt>Approved response</dt><dd>{{ selectedRisk.response }}</dd></div><div><dt>Owner</dt><dd>{{ selectedRisk.owner }}</dd></div><div><dt>Procedure / workpaper</dt><dd>{{ selectedRisk.procedureId || '—' }} · {{ selectedRisk.workpaperId || '—' }}</dd></div><div><dt>Population / sample</dt><dd>{{ selectedRisk.populationId || '—' }} · {{ selectedRisk.samplePlanId || '—' }}</dd></div></dl><button type="button" class="button secondary full-width" @click="showEvidence = !showEvidence">{{ showEvidence ? 'Hide linked work' : 'Show linked work' }} <Icon name="arrow-right" :size="16" /></button><div v-if="showEvidence" class="linked-work"><span class="eyebrow">Linked procedures</span><p>{{ selectedRisk.procedureId }} · {{ selectedRisk.workpaperId }} · {{ selectedRisk.populationId }} · {{ selectedRisk.samplePlanId }}</p><StatusPill :label="selectedRisk.status" :tone="selectedRisk.tone" /></div></aside></section>
       <section class="split-grid"><article class="panel"><div class="panel-heading"><div><span class="eyebrow">Materiality rationale</span><h2>Professional selection, automated maths</h2></div><StatusPill :label="chain.materialityRecord?.reviewedBy ? 'Reviewed' : 'Needs review'" :tone="chain.materialityRecord?.reviewedBy ? 'good' : 'warn'" /></div><div class="rationale"><div class="rationale-number">{{ formatMoney(chain.materiality.overall) }}</div><p>{{ presentationText(chain.materialityRecord?.rationale || 'The benchmark, selected rate, normalization and qualitative considerations are preserved with the assessment revision.') }} The application calculates dependent thresholds but does not choose the methodology for the partner.</p></div><div class="threshold-row"><div><span>Benchmark</span><strong>{{ chain.materialityRecord?.benchmark || '—' }}</strong></div><div><span>Selected rate</span><strong>{{ Number(chain.materiality.selectedRate) * 100 }}%</strong></div><div><span>Performance / trivial</span><strong>{{ formatMoney(chain.materiality.performance) }} · {{ formatMoney(chain.materiality.trivial) }}</strong></div></div><div class="card-footer"><span>Source {{ chain.materialityRecord?.sourceId || '—' }} · revision {{ chain.materialityRecord?.revision || '—' }}</span><button v-if="selectedEngagement?.service === 'audit' && activeActor()?.roles?.includes('engagement_partner')" type="button" class="row-button" @click="recordMateriality">Record selection</button></div></article><article class="panel"><div class="panel-heading"><div><span class="eyebrow">Program governance</span><h2>Procedures are tailored copies</h2></div><button type="button" class="text-button" @click="toast = 'Audit program links are controlled records; each procedure points to a named workpaper and population.'">Open program <Icon name="arrow-right" :size="15" /></button></div><ul class="check-list"><li><span class="list-icon good"><Icon name="check" :size="14" /></span><span><strong>Audit program FS-AUD-2026 v2</strong><small>Approved methodology owner: Technical committee</small></span></li><li><span class="list-icon good"><Icon name="check" :size="14" /></span><span><strong>{{ selectedRisk.procedureId || 'Procedure' }} linked</strong><small>{{ selectedRisk.workpaperId || 'Workpaper' }} · {{ selectedRisk.populationId || 'Population' }}</small></span></li><li><span class="list-icon" :class="selectedSample?.evidenceState === 'CONTRADICTORY' && !selectedSample?.alternativeWork ? 'warn' : 'good'"><Icon :name="selectedSample?.alternativeWork || selectedSample?.status === 'COMPLETE' ? 'check' : 'warning'" :size="14" /></span><span><strong>{{ selectedRisk.id }} evidence</strong><small>{{ selectedSample?.alternativeWork ? 'Alternative work recorded; historical item retained' : selectedSample?.evidenceState === 'CONTRADICTORY' ? 'Open exception prevents area conclusion' : 'Selected evidence is supported or in progress' }}</small></span></li></ul></article></section>
     </template>
 

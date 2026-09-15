@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
@@ -7,8 +7,11 @@ import Icon from '../components/Icon.vue'
 import { client, formatMoney, workflowGuides } from '../data'
 import { activeActor, actorById, createPbcRequest, recordHardCopyReadiness, recordPbcUpload, requestPbcClarification, reviewPbcReceipt, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
+import { recordTargetFor } from '../navigation/recordTargets.js'
 
+const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
 const selectedId = ref('PBC-019')
+const targetNotice = ref('')
 const toast = ref('')
 const working = ref(false)
 const requestDraftOpen = ref(false)
@@ -35,6 +38,18 @@ const hardCopyReadyCount = computed(() => requests.value.filter((request) => ['R
 const selectedSnapshot = computed(() => scenario.snapshots.find((snapshot) => snapshot.receiptId === selectedRequest.value.receipts?.at(-1)) || null)
 const canReview = computed(() => activeActor()?.roles?.some((role) => ['independent_reviewer', 'accounting_reviewer', 'engagement_partner'].includes(role)))
 const canCreateRequest = computed(() => activeActor()?.roles?.some((role) => ['audit_senior', 'audit_manager', 'engagement_partner'].includes(role)))
+
+watch([() => props.navigationTarget?.recordId, () => requests.value.map((item) => item.id).join('|')], async ([recordId]) => {
+  const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
+  if (!recordId || (target.targetType !== 'pbc' && !(target.targetType === 'unknown' && props.navigationTarget?.routeKey === 'pbc'))) return
+  const request = requests.value.find((item) => item.id === recordId || item.receipts?.includes(recordId))
+  if (request) {
+    selectedId.value = request.id
+    targetNotice.value = ''
+    await nextTick()
+    if (typeof document !== 'undefined') document.querySelector(`[data-record-id="${request.id}"]`)?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+  } else targetNotice.value = `${recordId} is not in the selected engagement scope.`
+}, { immediate: true })
 
 function selectRequest(id) { selectedId.value = id }
 async function markReceived() {
@@ -126,6 +141,7 @@ function saveRequestDraft() {
     <WorkflowGuide :guide="workflowGuides.pbc" />
 
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+    <div v-if="targetNotice" class="guide-status-message" role="status"><Icon name="warning" :size="16" />{{ targetNotice }}</div>
 
     <section v-if="requestDraftOpen" class="panel request-draft-panel" aria-labelledby="request-draft-title"><div class="panel-heading"><div><span class="eyebrow">Scoped request workspace</span><h2 id="request-draft-title">Create a PBC request draft</h2></div><button type="button" class="icon-button" aria-label="Close request draft" title="Close request draft" @click="requestDraftOpen = false"><Icon name="x" :size="17" /></button></div><p class="panel-copy">The request is prepared for the selected engagement. The next handoff makes the client owner and due date clear.</p><form class="portal-form" @submit.prevent="saveRequestDraft"><div class="form-grid"><label>Request title<input v-model="requestDraft.title" required maxlength="140" placeholder="e.g. Bank reconciliation pack" /></label><label>Classification<select v-model="requestDraft.classification"><option value="AUDIT_EVIDENCE">Audit evidence</option><option value="ACCOUNTING_INPUT">Accounting input</option><option value="CLIENT_INFORMATION">Client information</option></select></label><label>Client owner<select v-model="requestDraft.ownerActorId"><option value="ACT-NADIA">Nadia Faris · client</option></select></label><label>Due date<input v-model="requestDraft.due" type="date" /></label><label class="form-span-2">Acceptance criteria<textarea v-model="requestDraft.acceptanceCriteria" rows="3" maxlength="400" placeholder="Entity, period, completeness, usability and expected totals"></textarea></label></div><div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />A clear request keeps the owner, period and acceptance criteria together.</span><button type="submit" class="button primary" :disabled="working || !requestDraft.title.trim()">{{ working ? 'Saving…' : 'Save request draft' }}<Icon name="arrow-right" :size="17" /></button></div></form></section>
 
@@ -134,7 +150,7 @@ function saveRequestDraft() {
     <section class="stats-strip compact"><div><span>Open requests</span><strong>{{ openCount }}</strong><small>Require client or firm action</small></div><div><span>Electronic receipts</span><strong>{{ receivedCount }}</strong><small>{{ hardCopyReadyCount }} hard-copy item(s) marked ready</small></div><div><span>Clarification needed</span><strong>{{ requests.filter((request) => request.status === 'Clarification required').length }}</strong><small>Period or completeness follow-up</small></div><div><span>Latest upload</span><strong>{{ selectedRequest.receipts?.at(-1) || '—' }}</strong><small>Exact receipt reference in this scope</small></div></section>
 
     <section class="pbc-layout">
-      <article class="panel request-list-panel"><div class="panel-heading"><div><span class="eyebrow">Request inbox</span><h2>Client requests</h2></div><span class="muted-label">{{ requests.length }} requests</span></div><div class="request-list"><button v-for="request in requests" :key="request.id" type="button" class="request-row" :class="{ active: selectedId === request.id }" @click="selectRequest(request.id)"><span class="request-state" :class="`tone-${request.tone}`"></span><span class="request-main"><strong>{{ request.title }}</strong><small>{{ request.id }} · {{ request.area }} · due {{ request.due }}</small><span class="mini-progress"><i :style="{ width: `${request.progress}%` }"></i></span></span><span class="request-meta"><StatusPill :label="request.status" :tone="request.tone" /><small>{{ request.files }} files</small></span></button></div></article>
+      <article class="panel request-list-panel"><div class="panel-heading"><div><span class="eyebrow">Request inbox</span><h2>Client requests</h2></div><span class="muted-label">{{ requests.length }} requests</span></div><div class="request-list"><button v-for="request in requests" :key="request.id" :data-record-id="request.id" type="button" class="request-row" :class="{ active: selectedId === request.id }" @click="selectRequest(request.id)"><span class="request-state" :class="`tone-${request.tone}`"></span><span class="request-main"><strong>{{ request.title }}</strong><small>{{ request.id }} · {{ request.area }} · due {{ request.due }}</small><span class="mini-progress"><i :style="{ width: `${request.progress}%` }"></i></span></span><span class="request-meta"><StatusPill :label="request.status" :tone="request.tone" /><small>{{ request.files }} files</small></span></button></div></article>
 
       <article class="panel request-detail-panel"><div class="panel-heading"><div><span class="eyebrow">Request detail</span><h2>{{ selectedRequest.title }}</h2></div><StatusPill :label="selectedRequest.status" :tone="selectedRequest.tone" /></div><dl class="detail-list"><div><dt>Request ID</dt><dd>{{ selectedRequest.id }}</dd></div><div><dt>Entity and period</dt><dd>{{ selectedClient?.shortName || selectedClient?.name || 'No client' }} · {{ selectedEngagement?.periodLabel || 'No period' }}</dd></div><div><dt>Client owner</dt><dd>{{ selectedRequest.owner }}</dd></div><div><dt>Firm reviewer</dt><dd>Omar Aziz</dd></div><div><dt>Acceptance criteria</dt><dd>Entity, period, completeness, usability and expected totals</dd></div><div><dt>Latest receipt</dt><dd>{{ selectedRequest.receipts?.at(-1) || 'No receipt yet' }} · {{ selectedSnapshot?.snapshotHash || 'Awaiting stable snapshot' }}</dd></div><div><dt>Suitability</dt><dd>{{ selectedRequest.suitability?.decision || 'Not reviewed' }} · receipt is not acceptance until an assigned reviewer records it</dd></div><div><dt>Hard-copy state</dt><dd>{{ selectedRequest.hardCopyState }} · declaration and firm custody are separate records</dd></div></dl><div class="request-note"><span class="eyebrow">Reviewer note</span><p>{{ selectedRequest.note }}</p></div><div class="card-footer"><button type="button" class="button secondary" :disabled="working || selectedRequest.id === '—' || selectedRequest.status === 'Accepted'" @click="markReceived">{{ working ? 'Working…' : 'Log receipt' }}</button><button type="button" class="button secondary" :disabled="working || selectedRequest.id === '—' || selectedRequest.hardCopyState === 'RECEIVED_PHYSICAL'" @click="markHardCopyReady">{{ selectedRequest.hardCopyState === 'READY_FOR_COLLECTION' ? 'Record physical handover' : 'Mark hard copy ready' }}</button><button v-if="canReview" type="button" class="button secondary" :disabled="working || selectedRequest.id === '—' || !selectedRequest.receipts?.length" @click="reviewReceipt('ACCEPT')">Accept receipt</button><button v-if="canReview" type="button" class="button secondary" :disabled="working || selectedRequest.id === '—' || !selectedRequest.receipts?.length" @click="reviewReceipt('CLARIFICATION_REQUIRED')">Request clarification</button><button v-else type="button" class="button primary" :disabled="working || selectedRequest.id === '—'" @click="askClarification">Ask for clarification</button></div></article>
     </section>

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
@@ -9,11 +9,14 @@ import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { client, formatMoney, portfolioClients, workflowGuides } from '../data'
 import { activeActor, actorById, assessmentSummary, createLead, engagementById, importLeadFixtures, recordAssessmentDecision, scenario, saveAssessmentResponse, selectEngagement } from '../domain/scenario.js'
 import { visibleResponses } from '../domain/assessments.js'
+import { recordTargetFor } from '../navigation/recordTargets.js'
 
 const emit = defineEmits(['navigate'])
+const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
 const search = ref('')
 const filter = ref('All clients')
 const selected = ref(null)
+const targetNotice = ref('')
 const toast = ref('')
 const assessmentOpen = ref(false)
 const assessmentType = ref('acceptance')
@@ -75,6 +78,16 @@ const assessmentQuestions = computed(() => {
   const query = assessmentSearch.value.trim().toLowerCase()
   return visibleResponses(currentAssessmentSummary.value.assessment, activeActor()).filter(({ question }) => !query || `${question.id} ${question.question} ${question.category || ''}`.toLowerCase().includes(query))
 })
+
+watch(() => props.navigationTarget?.recordId, (recordId) => {
+  const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
+  if (!recordId || (target.targetType !== 'clients' && !(target.targetType === 'unknown' && props.navigationTarget?.routeKey === 'clients'))) return
+  const clientItem = filteredClients.value.find((item) => item.id === recordId) || portfolioClients.find((item) => item.id === recordId)
+  if (clientItem) { selected.value = clientItem; targetNotice.value = '' }
+  else if (leadRows.value.some((lead) => lead.id === recordId)) { leadSearch.value = recordId; leadView.value = 'list'; targetNotice.value = '' }
+  else if (/^CE-/.test(recordId)) { openAssessment('acceptance'); targetNotice.value = ''; }
+  else targetNotice.value = `${recordId} is not visible in the selected client scope.`
+}, { immediate: true })
 
 function openAssessment(type = 'acceptance') {
   assessmentType.value = type
@@ -219,6 +232,7 @@ function importSampleLeads() {
     <WorkflowGuide :guide="workflowGuides.clients" />
     <SharedAssessmentPanel v-if="sharedDemoEnabled" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+    <div v-if="targetNotice" class="guide-status-message" role="status"><Icon name="info" :size="16" />{{ targetNotice }}</div>
 
     <section class="stats-strip">
       <div><span>Active clients</span><strong>{{ activeClientCount }}</strong><small>Scenario relationships with explicit IDs</small></div>

@@ -5,13 +5,15 @@ import NextBestActionCard from '../components/NextBestActionCard.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
-import { client, formatMoney, portfolioClients, timeline, workflowGuides } from '../data'
+import { client, portfolioClients, timeline, workflowGuides } from '../data'
 import { gateSummary, selectedClient, selectedEngagement, scenario } from '../domain/scenario.js'
+import { useDemoContext } from '../demoContext.js'
 
 const emit = defineEmits(['navigate'])
 const range = ref('This period')
 const ranges = ['This period', 'Next 30 days', 'All clients']
 const openActions = ref(false)
+const { mode: demoMode, tasks: projectedTasks, events: projectedEvents } = useDemoContext()
 
 const dashboardEngagement = computed(() => selectedEngagement())
 const dashboardClient = computed(() => selectedClient())
@@ -28,9 +30,51 @@ const syncRetries = computed(() => (scenario.operations || []).filter((operation
 const integrationHealth = computed(() => scenario.provider?.connected ? (syncRetries.value ? '82%' : '100%') : 'Offline')
 const integrationDetail = computed(() => scenario.provider?.connected ? `${syncRetries.value ? syncRetries.value + ' retry pending' : 'No retry pending'} · Connection status` : 'Provider disconnected · Connection status')
 const dashboardStatus = computed(() => dashboardEngagement.value?.service === 'audit' ? 'Fieldwork in progress' : 'Preparation in progress')
+const staticQueue = [
+  { id: 'RP-042', title: 'Clear AR-019 evidence conflict', detail: 'Northstar · due today', route: 'reviews', tone: 'danger', engagementId: 'ENG-0018-AUD-2026' },
+  { id: 'AJ-002', title: 'Review AJ-002 proposal', detail: 'Northstar · QAR 12,500', route: 'accounting', tone: 'warn', engagementId: 'ENG-0018-ACC-2026' },
+  { id: 'LEAD-0001', title: 'Decide Al Noor acceptance hold', detail: 'Missing UBO evidence · specialist review', route: 'clients', tone: 'blue', engagementId: '' },
+  { id: 'RC-026', title: 'Confirm EQR reviewer availability', detail: 'Northstar · before report date', route: 'release', tone: 'neutral', engagementId: 'ENG-0018-AUD-2026' },
+]
+const dashboardQueue = computed(() => {
+  const projected = (projectedTasks.value || []).slice(0, 4).map((task) => ({
+    id: task.target || task.taskId,
+    title: task.title || task.taskId,
+    detail: `${task.assigneeRole || task.assigneePersona || 'Queue'}${task.dueDate ? ` · due ${task.dueDate}` : ''}`,
+    route: task.route || 'role-workspace',
+    tone: task.priority === 'HIGH' ? 'danger' : 'warn',
+    engagementId: task.engagementId || dashboardEngagement.value?.id,
+  }))
+  return demoMode.value === 'local' && projected.length ? projected : staticQueue
+})
+const dashboardActivity = computed(() => {
+  const projected = (projectedEvents.value || []).slice(0, 4).map((event) => ({
+    title: String(event.action || event.type || 'Workflow update').replaceAll('_', ' '),
+    detail: event.objectId ? `${event.actor || 'Workspace'} · ${event.objectId}` : (event.actor || 'Workspace update'),
+    date: event.createdAt ? new Date(event.createdAt).toLocaleDateString('en-QA', { day: '2-digit', month: 'short' }) : 'Today',
+    tone: 'blue',
+  }))
+  return demoMode.value === 'local' && projected.length ? projected : timeline.slice(-4).reverse()
+})
 
 function navigate(route) {
   emit('navigate', route)
+}
+
+function engagementForPortfolio(item) {
+  return scenario.engagements.find((engagement) => engagement.clientId === item?.id)
+    || scenario.engagements.find((engagement) => item?.name && engagement.clientName === item.name)
+    || null
+}
+
+function openQueue(routeKey, recordId, engagementId = dashboardEngagement.value?.id) {
+  emit('navigate', { routeKey, recordId, engagementId })
+}
+
+function openPortfolioItem(item) {
+  const engagement = engagementForPortfolio(item)
+  if (engagement) openQueue('engagements', engagement.id, engagement.id)
+  else openQueue('clients', item?.id, undefined)
 }
 </script>
 
@@ -79,7 +123,7 @@ function navigate(route) {
           <table>
             <thead><tr><th>Client</th><th>Service route</th><th>Owner</th><th>Risk</th><th>Next action</th><th>Status</th></tr></thead>
             <tbody>
-              <tr v-for="item in portfolioClients.slice(0, 4)" :key="item.id" class="table-row-action" @click="navigate('engagements')">
+              <tr v-for="item in portfolioClients.slice(0, 4)" :key="item.id" class="table-row-action" @click="openPortfolioItem(item)">
                 <td><div class="client-cell"><span class="avatar" :class="`avatar-${item.tone}`">{{ item.name.split(' ').map((part) => part[0]).slice(0, 2).join('') }}</span><span><strong>{{ item.name }}</strong><small>{{ item.id }}</small></span></div></td>
                 <td>{{ item.service }}</td><td>{{ item.owner }}</td><td><span class="risk-label" :class="`risk-${item.tone}`">{{ item.risk }}</span></td><td><strong>{{ item.next }}</strong></td><td><StatusPill :label="item.status" :tone="item.tone === 'red' ? 'danger' : item.tone === 'amber' ? 'warn' : 'good'" /></td>
               </tr>
@@ -91,12 +135,7 @@ function navigate(route) {
       <article class="panel action-panel">
         <div class="panel-heading"><div><span class="eyebrow">Your queue</span><h2>Next actions</h2></div><button type="button" class="icon-button" aria-label="Toggle action detail" title="Toggle action detail" :aria-expanded="openActions" @click="openActions = !openActions"><Icon name="chevron-down" :size="17" :class="{ rotated: openActions }" /></button></div>
         <div class="task-list">
-          <button type="button" class="task-item" @click="navigate('reviews')"><span class="task-indicator danger"></span><span><strong>Clear AR-019 evidence conflict</strong><small>Northstar · due today</small></span><Icon name="arrow-right" :size="16" /></button>
-          <button type="button" class="task-item" @click="navigate('accounting')"><span class="task-indicator warn"></span><span><strong>Review AJ-002 proposal</strong><small>Northstar · QAR {{ formatMoney(12500).replace('QAR', '').trim() }}</small></span><Icon name="arrow-right" :size="16" /></button>
-          <button type="button" class="task-item" @click="navigate('clients')"><span class="task-indicator blue"></span><span><strong>Decide Al Noor acceptance hold</strong><small>Missing UBO evidence · specialist review</small></span><Icon name="arrow-right" :size="16" /></button>
-          <template v-if="openActions">
-            <button type="button" class="task-item" @click="navigate('release')"><span class="task-indicator neutral"></span><span><strong>Confirm EQR reviewer availability</strong><small>Northstar · before report date</small></span><Icon name="arrow-right" :size="16" /></button>
-          </template>
+          <button v-for="task in dashboardQueue.slice(0, openActions ? 4 : 3)" :key="task.id" type="button" class="task-item" @click="openQueue(task.route, task.id, task.engagementId)"><span class="task-indicator" :class="task.tone"></span><span><strong>{{ task.title }}</strong><small>{{ task.detail }}</small></span><Icon name="arrow-right" :size="16" /></button>
         </div>
         <div class="queue-footer"><span>{{ openPbc }} PBC items need client or firm action</span><button type="button" class="text-button" @click="navigate('pbc')">Open portal <Icon name="arrow-right" :size="15" /></button></div>
       </article>
@@ -111,7 +150,7 @@ function navigate(route) {
       <article class="panel timeline-panel">
         <div class="panel-heading"><div><span class="eyebrow">Audit trail</span><h2>Recent activity</h2></div><button type="button" class="text-button" @click="navigate('integration')">System health <Icon name="arrow-right" :size="15" /></button></div>
         <div class="timeline-list">
-          <div v-for="event in timeline.slice(-4).reverse()" :key="event.title" class="timeline-item"><span class="timeline-dot" :class="`tone-${event.tone}`"></span><div><strong>{{ event.title }}</strong><p>{{ event.detail }}</p><small>{{ event.date }} · {{ client.shortName }}</small></div></div>
+          <div v-for="(event, index) in dashboardActivity" :key="`${event.title}-${event.date}-${index}`" class="timeline-item"><span class="timeline-dot" :class="`tone-${event.tone}`"></span><div><strong>{{ event.title }}</strong><p>{{ event.detail }}</p><small>{{ event.date }} · {{ client.shortName }}</small></div></div>
         </div>
       </article>
     </section>

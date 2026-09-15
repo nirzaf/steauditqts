@@ -5,6 +5,7 @@
 import { computed, getCurrentInstance, onMounted, onUnmounted, ref } from 'vue';
 import {
   SHARED_POLL_MS,
+  activeDemoSession,
   getDemoContexts,
   getSharedWorkspace,
   getAccountingStatus,
@@ -16,6 +17,7 @@ import {
   isSharedDemoEnabled,
 } from './sharedDemo.js';
 import { engagementById, gateSummary, scenario, selectEngagement } from './domain/scenario.js';
+import { localActivityProjection, localArtifactProjection, localNotificationProjection, localOutboxProjection, localTaskProjection } from './domain/localProjections.js';
 
 export const SHARED_DEMO_POLL_MS = SHARED_POLL_MS;
 export const DEMO_CONTEXT_STORAGE_KEY = 'auditflow-demo-context-v1';
@@ -186,6 +188,7 @@ export function stageLabel(currentStage) {
 }
 
 export function mapTaskToRoute(task = {}) {
+  if (task.route) return task.route;
   const haystack = `${task.linkedObjectType || ''} ${task.linkedObjectId || ''} ${task.title || ''}`;
   for (const [pattern, route] of TASK_ROUTE_MAP) {
     if (pattern.test(haystack)) return route;
@@ -217,7 +220,13 @@ export function deriveStageSummary(engagement, tasks = [], progressSnapshot = nu
   }));
   const first = open[0] || null;
   const taskAction = first
-    ? { title: first.title || first.taskId, owner: first.assigneeRole || first.assigneePersona || 'Unassigned', route: mapTaskToRoute(first), taskId: first.taskId }
+    ? {
+      title: first.title || first.taskId,
+      owner: first.assigneeRole || first.assigneePersona || 'Unassigned',
+      route: first.route || mapTaskToRoute(first),
+      taskId: first.taskId,
+      targetId: first.target || first.recordId || first.linkedObjectId || first.taskId,
+    }
     : null;
   const projectedAction = progressSnapshot?.nextAction
     ? {
@@ -265,7 +274,10 @@ export function buildNotifications({ tasks = [], events = [], outbox = [], assig
   }
   for (const event of (Array.isArray(events) ? events : []).slice(0, 10)) {
     items.push({
-      id: `event-${event.eventId || event.action}-${event.createdAt || ''}`,
+      // eventId is authoritative when supplied by D1. The fallback is based
+      // only on stable record identity/revision so a refresh cannot create a
+      // new unread item merely because the timestamp formatting changed.
+      id: `event-${event.eventId || event.objectId || event.action || 'update'}-${event.revision || ''}`,
       kind: 'event',
       title: String(event.action || 'Update').replaceAll('_', ' '),
       detail: `${event.actor || 'Shared demo'} · ${event.engagementId || ''}`.trim(),
@@ -361,7 +373,7 @@ export function filterPalette(query, { contexts = [], personas = [], routes = []
   for (const stage of stagePool) {
     const hay = `${stage.id} ${stage.title}`.toLowerCase();
     if (needle && paletteIncludes(hay, needle)) {
-      push('stage', `${stage.id} · ${stage.title}`, 'Pipeline stage', { type: 'navigate', route: 'pipeline' });
+      push('stage', `${stage.id} · ${stage.title}`, 'Pipeline stage', { type: 'navigate', route: 'pipeline', recordId: stage.id });
     }
   }
   return results;
@@ -482,19 +494,41 @@ async function runRefreshShared() {
     engagement.value = localEngagement && localContext
       ? { ...localContext, currentStage: localContext.currentStage }
       : null;
-    tasks.value = [];
-    events.value = [];
-    outbox.value = [];
+    tasks.value = localTaskProjection(scenario, localContext?.engagementId, scenario.activePersonaId);
+    events.value = localActivityProjection(scenario, localContext?.engagementId);
+    outbox.value = localOutboxProjection(scenario, localContext?.engagementId);
     progress.value = localContext ? deriveLocalProgress(localContext.engagementId) : null;
     progressError.value = null;
     accountingStatus.value = null;
     accountingSteps.value = [];
     allowedActions.value = [];
-    artifacts.value = [];
+    artifacts.value = localArtifactProjection(scenario, localContext?.engagementId);
     contextsError.value = null;
     syncError.value = null;
     syncStatus.value = 'READY';
     lastSync.value = new Date().toISOString();
+    return;
+  }
+  // The public sign-in surface has no session yet. Do not poll protected
+  // shared endpoints from that screen; besides avoiding noisy 401s, this
+  // keeps the navigator from presenting an authorization failure as a
+  // workflow error. Login/session creation starts the first real refresh.
+  if (!activeDemoSession.value) {
+    loading.value = false;
+    contexts.value = [];
+    engagement.value = null;
+    tasks.value = [];
+    events.value = [];
+    outbox.value = [];
+    artifacts.value = [];
+    progress.value = null;
+    progressError.value = null;
+    accountingStatus.value = null;
+    accountingSteps.value = [];
+    allowedActions.value = [];
+    contextsError.value = null;
+    syncError.value = null;
+    syncStatus.value = 'IDLE';
     return;
   }
   const id = activeEngagementId.value || DEFAULT_DEMO_ENGAGEMENT_ID;
@@ -716,6 +750,7 @@ export function useDemoContext() {
   const mode = computed(() => (isSharedDemoEnabled ? 'shared' : 'local'));
   const activeContext = computed(() => contexts.value.find((c) => c.engagementId === activeEngagementId.value) || null);
   const stageSummary = computed(() => deriveStageSummary(engagement.value, tasks.value, progress.value));
+  const notifications = computed(() => localNotificationProjection({ state: scenario, engagementId: activeEngagementId.value, personaId: scenario.activePersonaId }));
   return {
     mode,
     sharedEnabled: isSharedDemoEnabled,
@@ -738,6 +773,7 @@ export function useDemoContext() {
     syncStatus,
     lastSync,
     stageSummary,
+    notifications,
     refresh: refreshShared,
     switchEngagement: switchSharedEngagement,
   };

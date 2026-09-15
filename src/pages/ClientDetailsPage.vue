@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
@@ -7,6 +7,7 @@ import { DEMO_ENGAGEMENT_ID, loadClientProfile, saveClientProfile } from '../api
 import { client, workflowGuides } from '../data'
 import { activeDemoSession, getActiveDemoView } from '../sharedDemo.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
+import { recordTargetFor } from '../navigation/recordTargets.js'
 
 const form = reactive({
   engagementId: DEMO_ENGAGEMENT_ID,
@@ -20,6 +21,7 @@ const form = reactive({
   context: 'No changes to ownership or finance systems since the last submission.',
   submittedBy: 'Nadia Faris',
 })
+const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
 const loading = ref(true)
 const saving = ref(false)
 const source = ref('d1')
@@ -29,6 +31,18 @@ const scopedView = ref(getActiveDemoView())
 const activeEngagementId = computed(() => scopedView.value?.engagementId || DEMO_ENGAGEMENT_ID)
 const invitationSession = computed(() => Boolean(activeDemoSession.value?.invitationId))
 const canSubmit = computed(() => !sharedDemoEnabled || invitationSession.value)
+const targetNotice = ref('')
+
+watch(() => props.navigationTarget?.recordId, (recordId) => {
+  const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
+  if (!recordId || !['clients', 'engagements', 'unknown'].includes(target.targetType)) return
+  if (/^(?:CLI-|CLIENT-)/i.test(recordId)) {
+    form.engagementId = activeEngagementId.value
+    targetNotice.value = `${recordId} opened in the client details workspace.`
+  } else if (/^TERMS-/i.test(recordId)) {
+    targetNotice.value = `Engagement terms ${recordId} are shown in this client details scope.`
+  } else targetNotice.value = `${recordId} is not in this client details scope.`
+}, { immediate: true })
 
 function applyProfile(profile) {
   if (!profile) return
@@ -78,6 +92,7 @@ onMounted(loadProfile)
   <div class="page client-details-page">
     <PageHeader eyebrow="Client portal · details" title="Client details" description="Submit the facts the engagement team needs to scope requests. You can return here when something changes." />
     <WorkflowGuide :guide="workflowGuides['client-details']" />
+    <p v-if="targetNotice" class="guide-status-message" role="status"><Icon name="info" :size="16" />{{ targetNotice }}</p>
 
     <div class="portal-form-layout">
       <section class="panel portal-form-panel">

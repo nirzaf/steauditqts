@@ -4,6 +4,7 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
+import ActionOutcome from '../components/ActionOutcome.vue'
 import { client, formatMoney, practiceJournals, reconciliationAreas, workflowGuides } from '../data'
 import { baselineFixture, fixtureRows, mappingSummary, parseCsv, replacementFixture, sourceReflection, summarizeRows } from '../domain/accounting.js'
 import { subtractMoney } from '../domain/money.js'
@@ -12,8 +13,11 @@ import { loadDemoSession } from '../auth.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { useDemoContext } from '../demoContext.js'
 import { approveAccountingFs, idempotencyKey, runSharedAction } from '../sharedDemo.js'
+import { recordTargetFor } from '../navigation/recordTargets.js'
 
+const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
 const activeTab = ref('Data intake')
+const targetNotice = ref('')
 const tabs = ['Data intake', 'Mappings & reconciliations', 'Financial statements']
 const showAllRows = ref(false)
 const journalStatus = ref(practiceJournals.map((journal) => journal.status))
@@ -53,10 +57,21 @@ const {
 } = useDemoContext()
 const sharedNotice = ref('')
 const sharedBusy = ref('')
+const sharedActionResult = ref(null)
+const sharedActionRetry = ref(null)
 const tbForm = ref({ sourceId: 'TB-BASELINE-001', sourceVersion: 'v03', period: 'FY2026', currency: 'QAR', rowCount: 14, debitTotal: '1250000.00', creditTotal: '1250000.00', validationState: 'VALIDATED', mappingComplete: true })
 const trackerForm = ref({ mapping_state: 'COMPLETE', mapping_coverage: '14/14 reviewed', recon_state: 'IN_PROGRESS', open_recon_count: 1, journal_state: 'PENDING', pending_journal_count: 1, fs_version: '', fs_state: 'DRAFT' })
 const packageDecision = ref('ACCEPT')
 const packageExplanation = ref('')
+
+watch(() => [props.navigationTarget?.recordId, props.navigationTarget?.tab], ([recordId, tab]) => {
+  if (tab && tabs.includes(tab)) activeTab.value = tab
+  const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
+  if (!recordId || (target.targetType !== 'accounting' && !(target.targetType === 'unknown' && props.navigationTarget?.routeKey === 'accounting'))) return
+  activeTab.value = /FS-|PKG-/.test(recordId) ? 'Financial statements' : 'Data intake'
+  targetNotice.value = `${recordId} opened in the accounting workspace.`
+  if (typeof document !== 'undefined') window.requestAnimationFrame(() => document.querySelector(`[data-record-id="${recordId}"]`)?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }))
+}, { immediate: true })
 
 const sharedDemoRole = computed(() => loadDemoSession()?.role || '')
 const canSharedAccountant = computed(() => ['accountant', 'accounting-reviewer', 'preparer', 'client', 'admin', 'system-admin'].includes(sharedDemoRole.value))
@@ -68,6 +83,8 @@ const acctGenerations = computed(() => {
 })
 
 function sharedAcctNotify(message, result) {
+  const outcome = String(result?.outcome || '').toUpperCase()
+  sharedActionResult.value = { ...result, outcome: result?.ok ? 'COMMITTED' : (outcome || 'REJECTED'), message: result?.ok ? message : ('Not committed (' + (result.error?.code || 'ERROR') + '): ' + (result.error?.message || '')) }
   sharedNotice.value = result.ok ? message : ('Not committed (' + (result.error?.code || 'ERROR') + '): ' + (result.error?.message || ''))
   if (result.ok) refreshSharedContext()
   window.setTimeout(() => { sharedNotice.value = '' }, 6000)
@@ -75,6 +92,7 @@ function sharedAcctNotify(message, result) {
 
 async function submitSharedTb() {
   if (sharedBusy.value) return
+  sharedActionRetry.value = submitSharedTb
   sharedBusy.value = 'tb'
   const rows = sourceRows.value.length ? sourceRows.value : baselineRows.value
   const result = await runSharedAction(sharedEngagementId.value, 'RECORD_TB_SOURCE', { ...tbForm.value, rows, rowCount: rows.length, idempotencyKey: idempotencyKey('tb-source') })
@@ -84,6 +102,7 @@ async function submitSharedTb() {
 
 async function submitSharedTracker() {
   if (sharedBusy.value) return
+  sharedActionRetry.value = submitSharedTracker
   sharedBusy.value = 'tracker'
   const result = await runSharedAction(sharedEngagementId.value, 'UPDATE_ACCOUNTING_STATUS', { ...trackerForm.value, idempotencyKey: idempotencyKey('accounting-status') })
   sharedBusy.value = ''
@@ -92,11 +111,16 @@ async function submitSharedTracker() {
 
 async function submitSharedPackageApproval() {
   if (sharedBusy.value) return
+  sharedActionRetry.value = submitSharedPackageApproval
   sharedBusy.value = 'approval'
   const result = await approveAccountingFs(sharedEngagementId.value, { decision: packageDecision.value, explanation: packageExplanation.value, idempotencyKey: idempotencyKey('accounting-fs') })
   sharedBusy.value = ''
   if (result.ok) packageExplanation.value = ''
   sharedAcctNotify('Management ' + packageDecision.value + ' recorded for the accounting package.', result)
+}
+
+function retrySharedAction() {
+  if (sharedActionRetry.value) void sharedActionRetry.value()
 }
 
 const selectedEngagement = computed(() => scenarioEngagement())
@@ -266,10 +290,12 @@ function journalStatusFor(index) {
     <WorkflowGuide :guide="workflowGuides.accounting" />
 
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+    <div v-if="targetNotice" class="guide-status-message" role="status"><Icon name="info" :size="16" />{{ targetNotice }}</div>
 
     <section v-if="sharedDemoEnabled" class="panel shared-accounting-panel" aria-labelledby="shared-accounting-title">
       <div class="panel-heading"><div><span class="eyebrow">Shared D1 accounting process · {{ sharedEngagementId }}</span><h2 id="shared-accounting-title">Accounting tracker</h2></div><StatusPill :label="acctGenerations ? (acctGenerations.current ? 'Input g' + acctGenerations.input + ' · evaluated' : 'Input g' + acctGenerations.input + ' · audit at g' + acctGenerations.evaluated) : 'Loading…'" :tone="acctGenerations ? (acctGenerations.current ? 'good' : 'warn') : 'neutral'" /></div>
       <p v-if="sharedNotice" class="guide-status-message" role="status">{{ sharedNotice }}</p>
+      <ActionOutcome :result="sharedActionResult" :title="sharedBusy ? `${sharedBusy} accounting action` : 'Accounting action'" :pending="Boolean(sharedBusy)" stage-summary="The accounting package remains tied to the selected input generation." next-action="Recheck the tracker or hand the package to its named reviewer." @retry="retrySharedAction" />
       <ol class="tracker-steps">
         <li v-for="step in sharedAcctSteps" :key="step.id" class="tracker-row">
           <span aria-hidden="true">{{ step.state === 'COMPLETE' || step.state === 'READY' ? '✓' : step.state === 'IN_PROGRESS' ? '!' : '·' }}</span>
@@ -318,7 +344,7 @@ function journalStatusFor(index) {
       <dl class="import-contract"><div><dt>Required columns</dt><dd><code>account_code, account_name, area, debit, credit</code></dd></div><div><dt>Validation</dt><dd>Balanced control totals, unique account codes, literal Decimal values</dd></div><div><dt>Current result</dt><dd>{{ importSummary.rows }} rows · {{ importSummary.debitTotal }} / {{ importSummary.creditTotal }} · {{ importSummary.reflection }}</dd></div></dl>
     </section>
 
-    <section class="data-hero panel"><div class="data-file"><span class="file-icon"><Icon name="file" :size="20" /></span><div><span class="eyebrow">Selected trial balance</span><h2>{{ sourceLabel }}</h2><p>{{ accountingEngagement?.id || 'No accounting scope' }} · CSV receipt · literal Decimal parser · entity {{ sourceRows[0]?.entityId || '—' }} · period {{ sourceRows[0]?.period || '—' }} · source identity remains preserved</p></div></div><div class="data-status"><StatusPill :label="isBalanced ? 'Validated for processing' : 'Blocked — totals differ'" :tone="isBalanced ? 'good' : 'danger'" /><span>{{ sourceRows.length }} accounts · {{ sourceRows[0]?.currency || '—' }} · {{ sourceRows[0]?.period || '—' }}</span><small>Package {{ packageState }} · revision {{ packageRecord?.revision || '—' }} · source bridge: {{ bridgeState }}</small></div></section>
+    <section class="data-hero panel" :data-record-id="packageRecord?.source?.sourceId || packageRecord?.id"><div class="data-file"><span class="file-icon"><Icon name="file" :size="20" /></span><div><span class="eyebrow">Selected trial balance</span><h2>{{ sourceLabel }}</h2><p>{{ accountingEngagement?.id || 'No accounting scope' }} · CSV receipt · literal Decimal parser · entity {{ sourceRows[0]?.entityId || '—' }} · period {{ sourceRows[0]?.period || '—' }} · source identity remains preserved</p></div></div><div class="data-status"><StatusPill :label="isBalanced ? 'Validated for processing' : 'Blocked — totals differ'" :tone="isBalanced ? 'good' : 'danger'" /><span>{{ sourceRows.length }} accounts · {{ sourceRows[0]?.currency || '—' }} · {{ sourceRows[0]?.period || '—' }}</span><small>Package {{ packageState }} · revision {{ packageRecord?.revision || '—' }} · source bridge: {{ bridgeState }}</small></div></section>
 
     <section class="stats-strip compact"><div><span>Debit control total</span><strong>{{ formatMoney(debitTotal) }}</strong><small>Literal values only</small></div><div><span>Credit control total</span><strong>{{ formatMoney(creditTotal) }}</strong><small>{{ isBalanced ? 'Matches debits' : 'Must match before promotion' }}</small></div><div><span>Signed balance</span><strong>{{ formatMoney(closingTotal) }}</strong><small>{{ isBalanced ? 'Zero at approved precision' : 'Non-zero — source held' }}</small></div><div><span>Mapping coverage</span><strong>{{ mappingCoverage }}</strong><small>{{ mappingState }} · {{ mappingPercent }}% of selected rows assigned</small></div></section>
 
@@ -328,12 +354,12 @@ function journalStatusFor(index) {
       <section class="accounting-layout">
         <article class="panel table-panel">
           <div class="panel-heading"><div><span class="eyebrow">Canonical rows</span><h2>Trial balance control table</h2></div><button type="button" class="text-button" @click="showAllRows = !showAllRows">{{ showAllRows ? 'Show fewer' : `Show all ${sourceRows.length} rows` }} <Icon name="arrow-right" :size="15" /></button></div>
-          <div class="table-wrap responsive-table"><table><thead><tr><th>Account</th><th>Area</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Closing</th><th>Taxonomy destination</th><th>Status</th></tr></thead><tbody><tr v-for="row in visibleRows" :key="row.sourceRowId"><td><div class="account-cell"><code>{{ row.code }}</code><strong>{{ row.account }}</strong></div></td><td>{{ row.area }}</td><td class="num">{{ row.debit !== '0.00' ? formatMoney(row.debit) : '—' }}</td><td class="num">{{ row.credit !== '0.00' ? formatMoney(row.credit) : '—' }}</td><td class="num strong-number">{{ formatMoney(row.closing) }}</td><td>{{ row.mapped }}</td><td><StatusPill :label="row.status" :tone="row.status === 'Adjusted' ? 'warn' : row.status === 'Mapped' ? 'good' : 'danger'" /></td></tr></tbody><tfoot><tr><th colspan="2">Control totals</th><th class="num">{{ formatMoney(debitTotal) }}</th><th class="num">{{ formatMoney(creditTotal) }}</th><th class="num">{{ formatMoney(closingTotal) }}</th><th colspan="2"><StatusPill :label="isBalanced ? 'Balanced' : 'Unbalanced — held'" :tone="isBalanced ? 'good' : 'danger'" /></th></tr></tfoot></table></div>
+          <div class="table-wrap responsive-table"><table><thead><tr><th>Account</th><th>Area</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Closing</th><th>Taxonomy destination</th><th>Status</th></tr></thead><tbody><tr v-for="row in visibleRows" :key="row.sourceRowId" :data-record-id="row.sourceRowId"><td><div class="account-cell"><code>{{ row.code }}</code><strong>{{ row.account }}</strong></div></td><td>{{ row.area }}</td><td class="num">{{ row.debit !== '0.00' ? formatMoney(row.debit) : '—' }}</td><td class="num">{{ row.credit !== '0.00' ? formatMoney(row.credit) : '—' }}</td><td class="num strong-number">{{ formatMoney(row.closing) }}</td><td>{{ row.mapped }}</td><td><StatusPill :label="row.status" :tone="row.status === 'Adjusted' ? 'warn' : row.status === 'Mapped' ? 'good' : 'danger'" /></td></tr></tbody><tfoot><tr><th colspan="2">Control totals</th><th class="num">{{ formatMoney(debitTotal) }}</th><th class="num">{{ formatMoney(creditTotal) }}</th><th class="num">{{ formatMoney(closingTotal) }}</th><th colspan="2"><StatusPill :label="isBalanced ? 'Balanced' : 'Unbalanced — held'" :tone="isBalanced ? 'good' : 'danger'" /></th></tr></tfoot></table></div>
           <div class="table-footnote"><Icon name="database" :size="17" /><span>Source rows retain account codes as strings, including leading zeros. Raw receipts and replacement sources remain separate; no balancing plug is generated.</span></div>
         </article>
         <aside class="panel control-card"><div class="panel-heading"><div><span class="eyebrow">Validation run</span><h2>{{ isBalanced ? 'Checks passed' : 'Promotion held' }}</h2></div><StatusPill :label="isBalanced ? '0 exceptions' : 'Source exception'" :tone="isBalanced ? 'good' : 'danger'" /></div><ul class="check-list"><li><span class="list-icon" :class="isBalanced ? 'good' : 'danger'"><Icon :name="isBalanced ? 'check' : 'warning'" :size="14" /></span><span><strong>Entity / period / currency</strong><small>{{ sourceRows[0]?.entityId || '—' }} · {{ sourceRows[0]?.period || '—' }} · {{ sourceRows[0]?.currency || '—' }}</small></span></li><li><span class="list-icon" :class="isBalanced ? 'good' : 'danger'"><Icon :name="isBalanced ? 'check' : 'warning'" :size="14" /></span><span><strong>Row uniqueness</strong><small>{{ sourceRows.length }} canonical keys · duplicate detection active</small></span></li><li><span class="list-icon" :class="isBalanced ? 'good' : 'danger'"><Icon :name="isBalanced ? 'check' : 'warning'" :size="14" /></span><span><strong>Control totals</strong><small>{{ isBalanced ? 'Debit, credit and signed balance reconcile' : 'Debit and credit must agree before promotion' }}</small></span></li><li><span class="list-icon" :class="bridgeState === 'REFLECTED' ? 'warn' : bridgeState === 'NOT_REFLECTED' ? 'good' : 'danger'"><Icon :name="bridgeState === 'REFLECTED' ? 'warning' : bridgeState === 'NOT_REFLECTED' ? 'check' : 'warning'" :size="14" /></span><span><strong>Source reflection</strong><small>AJ-001 is {{ bridgeState.toLowerCase() }}; never apply a reflected journal twice</small></span></li></ul><button type="button" class="button secondary full-width" @click="toast = 'Validation report is a browser-local synthetic summary; no external file was created.'">View validation report <Icon name="arrow-right" :size="16" /></button></aside>
       </section>
-      <section class="split-grid"><article class="panel"><div class="panel-heading"><div><span class="eyebrow">Controlled journals</span><h2>Adjustments and source bridge</h2></div><button type="button" class="text-button" @click="toast = 'Journal register is represented by the immutable source bridge and revision tests in this synthetic build.'">Inspect register <Icon name="arrow-right" :size="15" /></button></div><div class="journal-list"><div v-for="(journal, index) in practiceJournals" :key="journal.id" class="journal-row"><span class="journal-id">{{ journal.id }}</span><span><strong>{{ journal.purpose }}</strong><small>{{ journal.origin }} · {{ journal.layer }} · {{ journal.support }}</small></span><strong class="journal-amount">{{ formatMoney(journal.amount) }}</strong><StatusPill :label="journalStatusFor(index)" :tone="journalStatusFor(index).includes('Reflected') || journalStatusFor(index).includes('authorized') ? 'good' : 'warn'" /><button v-if="index === 1" type="button" class="row-button" :disabled="actionWorking || journalStatusFor(index).includes('Staged') || journalStatusFor(index).includes('authorized')" @click="markJournal(index)">{{ journalStatusFor(index).includes('Staged') ? 'Staged' : journalStatusFor(index).includes('authorized') ? 'Authorized' : 'Stage for discussion' }}</button></div></div></article><article class="panel insight-card"><span class="eyebrow">Version rule</span><h2>AJ-001 is reflected once</h2><p>The replacement source already includes the QAR 5,000 depreciation entry. The bridge records that relationship and prevents the same journal from being appended a second time.</p><div class="equation"><span>TB v02</span><b>+</b><span>AJ-001</span><b>=</b><strong>TB v03</strong></div><div class="insight-metrics"><div><span>Net PPE</span><strong>{{ formatMoney(summary.netPpe) }}</strong></div><div><span>Current profit</span><strong>{{ formatMoney(summary.profit) }}</strong></div></div></article></section>
+      <section class="split-grid"><article class="panel"><div class="panel-heading"><div><span class="eyebrow">Controlled journals</span><h2>Adjustments and source bridge</h2></div><button type="button" class="text-button" @click="toast = 'Journal register is represented by the immutable source bridge and revision tests in this synthetic build.'">Inspect register <Icon name="arrow-right" :size="15" /></button></div><div class="journal-list"><div v-for="(journal, index) in practiceJournals" :key="journal.id" :data-record-id="journal.id" class="journal-row"><span class="journal-id">{{ journal.id }}</span><span><strong>{{ journal.purpose }}</strong><small>{{ journal.origin }} · {{ journal.layer }} · {{ journal.support }}</small></span><strong class="journal-amount">{{ formatMoney(journal.amount) }}</strong><StatusPill :label="journalStatusFor(index)" :tone="journalStatusFor(index).includes('Reflected') || journalStatusFor(index).includes('authorized') ? 'good' : 'warn'" /><button v-if="index === 1" type="button" class="row-button" :disabled="actionWorking || journalStatusFor(index).includes('Staged') || journalStatusFor(index).includes('authorized')" @click="markJournal(index)">{{ journalStatusFor(index).includes('Staged') ? 'Staged' : journalStatusFor(index).includes('authorized') ? 'Authorized' : 'Stage for discussion' }}</button></div></div></article><article class="panel insight-card"><span class="eyebrow">Version rule</span><h2>AJ-001 is reflected once</h2><p>The replacement source already includes the QAR 5,000 depreciation entry. The bridge records that relationship and prevents the same journal from being appended a second time.</p><div class="equation"><span>TB v02</span><b>+</b><span>AJ-001</span><b>=</b><strong>TB v03</strong></div><div class="insight-metrics"><div><span>Net PPE</span><strong>{{ formatMoney(summary.netPpe) }}</strong></div><div><span>Current profit</span><strong>{{ formatMoney(summary.profit) }}</strong></div></div></article></section>
     </template>
 
     <template v-else-if="activeTab === 'Mappings & reconciliations'">

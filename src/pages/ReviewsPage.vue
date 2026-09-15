@@ -5,6 +5,7 @@ import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import ApprovalChain from '../components/ApprovalChain.vue'
 import Icon from '../components/Icon.vue'
+import ActionOutcome from '../components/ActionOutcome.vue'
 import { approvals, formatMoney, workflowGuides } from '../data'
 import { loadDemoSession } from '../auth.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
@@ -12,8 +13,10 @@ import { useDemoContext } from '../demoContext.js'
 import { activeCommandContext, createSharedIntent, getApprovalCenter, getSharedDecisions, idempotencyKey, recordManagerCompletion, recordPartnerReview, runSharedAction } from '../sharedDemo.js'
 import { useDraftForms } from '../composables/useDraftForms.js'
 import { activeActor, actorById, clearReviewPoint as clearReviewPointCommand, createReviewPoint as createReviewPointCommand, recordCompletionRecommendation, scenario, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
+import { recordTargetFor } from '../navigation/recordTargets.js'
 
 const emit = defineEmits(['navigate'])
+const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
 
 const selectedEngagement = computed(() => scenarioEngagement())
 const points = computed(() => scenario.reviews.filter((point) => point.engagementId === selectedEngagement.value?.id).map((point) => ({
@@ -26,6 +29,8 @@ const points = computed(() => scenario.reviews.filter((point) => point.engagemen
 })))
 const toast = ref('')
 const activeFilter = ref('All points')
+const focusedPointId = ref('')
+const targetNotice = ref('')
 const filters = ['All points', 'Blocking', 'My queue']
 const filteredPoints = computed(() => points.value.filter((point) => activeFilter.value === 'All points' || (activeFilter.value === 'Blocking' && point.blocks) || (activeFilter.value === 'My queue' && point.assigneeActorId === activeActor()?.id)))
 const openCount = computed(() => points.value.filter((point) => point.status !== 'Cleared').length)
@@ -41,6 +46,15 @@ const scopedReviewers = computed(() => scenario.actors.filter((actor) => actor.a
 const completionRecommendation = computed(() => selectedEngagement.value?.evidence?.completionRecommendation || null)
 const canRecommendCompletion = computed(() => Boolean(activeActor()?.roles?.includes('audit_manager')))
 const completionBlockers = computed(() => completionRecommendation.value?.blockers || [])
+
+watch([() => props.navigationTarget?.recordId, () => points.value.map((point) => point.id).join('|')], ([recordId]) => {
+  const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
+  if (!recordId || (target.targetType !== 'reviews' && !(target.targetType === 'unknown' && props.navigationTarget?.routeKey === 'reviews'))) return
+  if (points.value.some((point) => point.id === recordId)) {
+    focusedPointId.value = recordId
+    targetNotice.value = ''
+  } else targetNotice.value = `${recordId} is not in the selected review scope.`
+}, { immediate: true })
 
 function clearPoint(point) {
   if (sharedDemoEnabled) {
@@ -109,6 +123,8 @@ const sharedDecisions = ref([])
 const sharedDecisionsLoading = ref(false)
 const sharedBusy = ref('')
 const sharedMessage = ref('')
+const sharedActionResult = ref(null)
+const sharedActionRetry = ref(null)
 const managerDecision = ref('RECOMMEND_COMPLETE')
 const managerRationale = ref('')
 const partnerDecision = ref('APPROVE_FOR_OPINION')
@@ -297,6 +313,7 @@ async function refreshApprovalCenter() {
 
 function sharedResult(message, result) {
   const outcome = String(result?.outcome || '').toUpperCase()
+  sharedActionResult.value = { ...result, outcome: result?.ok ? 'COMMITTED' : (outcome || 'REJECTED'), message: result?.ok ? message : (outcome === 'UNCERTAIN' ? 'The server did not confirm this commit. Retry the same request with the same button.' : ('Not committed (' + (result?.error?.code || 'ERROR') + '): ' + (result?.error?.message || ''))) }
   if (result?.ok) {
     sharedMessage.value = message
     refreshSharedContext()
@@ -311,8 +328,13 @@ function sharedResult(message, result) {
   window.setTimeout(() => { sharedMessage.value = '' }, 6000)
 }
 
+function retrySharedAction() {
+  if (sharedActionRetry.value) void sharedActionRetry.value()
+}
+
 async function submitSharedManager() {
   if (sharedBusy.value) return
+  sharedActionRetry.value = submitSharedManager
   sharedBusy.value = 'manager'
   const payload = { decision: managerDecision.value, rationale: managerRationale.value }
   const result = await sendSharedIntent('manager', 'RECORD_MANAGER_COMPLETION', payload, () => recordManagerCompletion(sharedEngagementId.value, { ...payload, idempotencyKey: idempotencyKey('manager-completion') }))
@@ -326,6 +348,7 @@ async function submitSharedManager() {
 
 async function submitSharedPartner() {
   if (sharedBusy.value) return
+  sharedActionRetry.value = submitSharedPartner
   sharedBusy.value = 'partner'
   const payload = { decision: partnerDecision.value, rationale: partnerRationale.value }
   const result = await sendSharedIntent('partner', 'RECORD_PARTNER_REVIEW', payload, () => recordPartnerReview(sharedEngagementId.value, { ...payload, idempotencyKey: idempotencyKey('partner-review') }))
@@ -341,9 +364,11 @@ async function submitSharedEqr() {
   if (sharedBusy.value) return
   if (!eqrCandidate.value) {
     sharedMessage.value = 'Select a published Draft FS candidate before recording the EQR decision.'
+    sharedActionResult.value = { outcome: 'REJECTED', message: sharedMessage.value }
     window.setTimeout(() => { sharedMessage.value = '' }, 6000)
     return
   }
+  sharedActionRetry.value = submitSharedEqr
   sharedBusy.value = 'eqr'
   const payload = { decision: eqrDecision.value, candidateId: eqrCandidate.value, note: eqrNote.value }
   const result = await sendSharedIntent('eqr', 'COMPLETE_EQR', payload, () => runSharedAction(sharedEngagementId.value, 'COMPLETE_EQR', { ...payload, idempotencyKey: idempotencyKey('eqr') }))
@@ -411,6 +436,7 @@ function recordCompletion() {
     <PageHeader eyebrow="Professional control" title="Reviews & approvals" description="Review points, applicability and signatures are separate records. A changed dependency keeps the historical approval intact but makes it stale for the current package." action-label="Create review point" @action="createReviewPoint" />
     <WorkflowGuide :guide="workflowGuides.reviews" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+    <div v-if="targetNotice" class="guide-status-message" role="status"><Icon name="warning" :size="16" />{{ targetNotice }}</div>
 
     <section class="stats-strip compact"><div><span>Open review points</span><strong>{{ openCount }}</strong><small>{{ openCount }} current points in this scope</small></div><div><span>Stale approvals</span><strong>3</strong><small>Created after a dependency changed</small></div><div><span>Reviewer queue</span><strong>6</strong><small>Across active engagements</small></div><div><span>Dependency health</span><strong>TRACKED</strong><small>Dependencies remain visible for review</small></div></section>
 
@@ -441,6 +467,7 @@ function recordCompletion() {
     <section v-if="sharedDemoEnabled" class="panel shared-completion-panel" aria-labelledby="shared-completion-title">
       <div class="panel-heading"><div><span class="eyebrow">Shared D1 completion chain</span><h2 id="shared-completion-title">Manager, partner and EQR handoffs</h2></div><StatusPill :label="sharedGate('manager-completion')?.state || 'WAITING'" :tone="sharedGate('manager-completion')?.state === 'APPROVED' ? 'good' : 'neutral'" /></div>
       <p v-if="sharedMessage" class="guide-status-message" role="status">{{ sharedMessage }}</p>
+      <ActionOutcome :result="sharedActionResult" :title="sharedBusy ? `${sharedBusy} review action` : 'Review action'" :pending="Boolean(sharedBusy)" stage-summary="Decisions remain bound to the current accounting generation and review scope." next-action="Open the next approval queue item or address the named blocker." @retry="retrySharedAction" />
       <div v-if="draftPrompt" class="draft-prompt" role="alert">
         <span>Local draft saved against revision {{ draftPrompt.baseRevision }}; the shared workspace is now at revision {{ draftPrompt.currentRevision }}.</span>
         <span class="draft-prompt-actions"><button type="button" class="row-button" @click="keepSharedDraft">Keep draft</button><button type="button" class="row-button" @click="discardSharedDraft">Discard draft</button></span>

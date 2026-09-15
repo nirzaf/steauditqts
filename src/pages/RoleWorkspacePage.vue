@@ -6,6 +6,7 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import SharedTasks from '../components/SharedTasks.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
+import ActionOutcome from '../components/ActionOutcome.vue'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { formatMoney, workflowGuides } from '../data'
 import { roleWorkspaceFor } from '../roleWorkspaces.js'
@@ -14,8 +15,10 @@ import { loadDemoSession } from '../auth.js'
 import { useDemoContext } from '../demoContext.js'
 import { activeCommandContext, createSharedIntent, runSharedAction } from '../sharedDemo.js'
 import { useDraftForms } from '../composables/useDraftForms.js'
+import { recordTargetFor } from '../navigation/recordTargets.js'
 
 const emit = defineEmits(['navigate'])
+const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
 const sharedEnabled = sharedDemoEnabled
 const toast = ref('')
 const busyTask = ref('')
@@ -38,10 +41,15 @@ function presentationLabel(value) {
 const {
   allowedActions: sharedAllowedActions,
   engagement: sharedEngagement,
+  tasks: projectedTasks,
+  outbox: projectedOutbox,
+  events: projectedEvents,
   refresh: refreshSharedContext,
 } = useDemoContext()
 const sharedActionBusy = ref('')
 const sharedActionMessage = ref('')
+const sharedActionResult = ref(null)
+const sharedActionRetry = ref(null)
 const sharedAdvanceReference = ref('')
 const sharedApprovedFee = ref('')
 const sharedActionAllowed = (action) => (sharedAllowedActions.value || []).includes(action)
@@ -73,7 +81,19 @@ const commercial = computed(() => commercialRecordFor(engagement.value?.id))
 const credentials = computed(() => (scenario.credentialBootstraps || []).filter((item) => item.engagementId === engagement.value?.id && !['EXPIRED', 'REVOKED'].includes(item.credentialState)))
 const activeCredential = computed(() => credentials.value[0] || null)
 const terms = computed(() => termsFor(engagement.value?.id))
-const notifications = computed(() => (scenario.outbox || []).filter((item) => item.engagementId === engagement.value?.id).slice(-5).reverse())
+const notifications = computed(() => (projectedOutbox.value || []).slice(-5).reverse())
+const roleTasks = computed(() => (workspace.value.tasks || []).map((task) => {
+  const projection = (projectedTasks.value || []).find((item) => item.target === task.target || item.taskId === task.id || item.linkedObjectId === task.target)
+  return { ...task, projectionState: projection?.state || '', projectionDue: projection?.dueDate || '' }
+}))
+const roleActivity = computed(() => (projectedEvents.value || []).slice(0, 4))
+const targetNotice = ref('')
+watch(() => props.navigationTarget?.recordId, (recordId) => {
+  const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
+  if (!recordId || (target.targetType !== 'role-workspace' && !(target.targetType === 'unknown' && props.navigationTarget?.routeKey === 'role-workspace'))) return
+  if (workspace.value.tasks?.some((task) => task.id === recordId) || projectedTasks.value.some((task) => (task.taskId || task.id) === recordId)) targetNotice.value = ''
+  else targetNotice.value = `${recordId} is not in this role workspace scope.`
+}, { immediate: true })
 const canIssueCredential = computed(() => Boolean(actor.value?.roles?.some((role) => ['engagement_partner', 'system_admin'].includes(role))))
 const canCompleteCredential = computed(() => Boolean(actor.value?.roles?.some((role) => ['client_contributor', 'client_finance', 'management_approver'].includes(role))))
 const canDecideTerms = computed(() => Boolean(actor.value?.roles?.includes('management_approver')))
@@ -90,6 +110,14 @@ function show(message) {
 
 function navigate(route) {
   emit('navigate', route)
+}
+
+function openTask(task) {
+  emit('navigate', {
+    routeKey: task.route,
+    engagementId: engagement.value?.id,
+    recordId: task.target || task.recordId || task.linkedObjectId || task.id,
+  })
 }
 
 function acknowledge(task) {
@@ -194,6 +222,11 @@ async function sendSharedIntent(key, action, payload, fallback) {
 
 function sharedActionOutcome(message, result) {
   const outcome = String(result?.outcome || '').toUpperCase()
+  sharedActionResult.value = {
+    ...result,
+    outcome: result?.ok ? 'COMMITTED' : (outcome || 'REJECTED'),
+    message: result?.ok ? message : ('Not committed (' + (result?.error?.code || 'ERROR') + '): ' + (result?.error?.message || '')),
+  }
   if (result?.ok) {
     sharedActionMessage.value = message
     refreshSharedContext()
@@ -205,13 +238,19 @@ function sharedActionOutcome(message, result) {
   window.setTimeout(() => { sharedActionMessage.value = '' }, 6000)
 }
 
+function retrySharedAction() {
+  if (sharedActionRetry.value) void sharedActionRetry.value()
+}
+
 async function submitSharedVerifyAdvance() {
   if (sharedActionBusy.value) return
   if (!String(sharedAdvanceReference.value).trim()) {
     sharedActionMessage.value = 'Provide the payment reference (for example PAY-0018).'
+    sharedActionResult.value = { outcome: 'REJECTED', message: sharedActionMessage.value }
     window.setTimeout(() => { sharedActionMessage.value = '' }, 6000)
     return
   }
+  sharedActionRetry.value = submitSharedVerifyAdvance
   sharedActionBusy.value = 'advance'
   const payload = { reference: String(sharedAdvanceReference.value).trim() }
   const result = await sendSharedIntent('advance', 'VERIFY_ADVANCE', payload, () => runSharedAction(engagement.value?.id, 'VERIFY_ADVANCE', payload))
@@ -225,6 +264,7 @@ async function submitSharedVerifyAdvance() {
 
 async function submitSharedIssueCredential() {
   if (sharedActionBusy.value) return
+  sharedActionRetry.value = submitSharedIssueCredential
   sharedActionBusy.value = 'credential'
   const result = await sendSharedIntent('credential', 'ISSUE_TEMP_CREDENTIAL', {}, () => runSharedAction(engagement.value?.id, 'ISSUE_TEMP_CREDENTIAL', {}))
   sharedActionBusy.value = ''
@@ -238,9 +278,11 @@ async function submitSharedApproveFee() {
   const fee = String(sharedApprovedFee.value).trim()
   if (!fee) {
     sharedActionMessage.value = 'Provide the approved fee as a base-10 money value (for example 12500.00).'
+    sharedActionResult.value = { outcome: 'REJECTED', message: sharedActionMessage.value }
     window.setTimeout(() => { sharedActionMessage.value = '' }, 6000)
     return
   }
+  sharedActionRetry.value = submitSharedApproveFee
   sharedActionBusy.value = 'fee'
   const payload = { approvedFee: fee }
   const result = await sendSharedIntent('fee', 'APPROVE_FEE', payload, () => runSharedAction(engagement.value?.id, 'APPROVE_FEE', payload))
@@ -330,6 +372,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
     <WorkflowGuide :guide="workflowGuides['role-workspace']" />
     <NextBestActionCard v-if="sharedEnabled" title="Your next shared handoff" compact @navigate="navigate" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
+    <div v-if="targetNotice" class="guide-status-message" role="status"><Icon name="info" :size="16" />{{ targetNotice }}</div>
 
     <section class="role-scope-banner panel">
       <div class="role-scope-icon" :class="`tone-${workspace.tone}`"><Icon :name="workspace.icon" :size="22" /></div>
@@ -340,7 +383,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
     <section class="metric-grid role-metrics" aria-label="Role workspace metrics">
       <article v-if="!sharedEnabled" class="metric-card accent-navy"><div class="metric-card-top"><span>Current gate progress</span><span class="metric-icon"><Icon name="workflow" :size="17" /></span></div><strong>{{ gates.currentReady }}/{{ gates.currentDenominator }}</strong><small>{{ client?.name }} · current period</small></article>
       <article v-if="!sharedEnabled" class="metric-card accent-amber"><div class="metric-card-top"><span>Open blockers</span><span class="metric-icon"><Icon name="warning" :size="17" /></span></div><strong>{{ blockers.length }}</strong><small>Each blocker names its next owner</small></article>
-      <article class="metric-card accent-green"><div class="metric-card-top"><span>Tasks in this role</span><span class="metric-icon"><Icon name="list-check" :size="17" /></span></div><strong>{{ workspace.tasks.length }}</strong><small>Use the links below to open the working page</small></article>
+      <article class="metric-card accent-green"><div class="metric-card-top"><span>Tasks in this role</span><span class="metric-icon"><Icon name="list-check" :size="17" /></span></div><strong>{{ roleTasks.length }}</strong><small>{{ projectedTasks.length ? `${projectedTasks.length} projected records in scope` : 'Use the links below to open the working page' }}</small></article>
       <article class="metric-card accent-blue"><div class="metric-card-top"><span>Workspace status</span><span class="metric-icon"><Icon name="shield" :size="17" /></span></div><strong>GUIDED VIEW</strong><small>Follow the next handoff to continue.</small></article>
     </section>
 
@@ -348,10 +391,10 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
       <article class="panel role-task-panel">
         <div class="panel-heading"><div><span class="eyebrow">My tasks</span><h2>Work owned by this persona</h2></div><span class="muted-label">Select a task, then open its record</span></div>
         <div class="role-task-list">
-          <article v-for="task in workspace.tasks" :key="task.id" class="role-task-card">
+          <article v-for="task in roleTasks" :key="task.id" class="role-task-card">
             <span class="role-task-icon" :class="`task-${task.tone}`"><Icon :name="task.icon" :size="18" /></span>
-            <div class="role-task-copy"><strong>{{ task.title }}</strong><p>{{ task.detail }}</p><span v-if="!sharedEnabled" class="role-task-state"><i :class="`state-${task.tone}`"></i>{{ task.command === 'ADVANCE_VERIFY' ? (commercial?.advanceState === 'VERIFIED' ? 'Verified' : 'Needs finance action') : 'Ready to inspect' }}</span></div>
-            <div class="role-task-actions"><button type="button" class="text-button" @click="navigate(task.route)">{{ task.action }} <Icon name="arrow-right" :size="15" /></button><button v-if="!sharedEnabled && task.command === 'ADVANCE_VERIFY'" type="button" class="button secondary small" :disabled="busyTask === task.id || commercial?.advanceState === 'VERIFIED'" @click="verifyAdvance(task)">{{ busyTask === task.id ? 'Saving…' : commercial?.advanceState === 'VERIFIED' ? 'Verified' : 'Verify advance' }}</button><button v-else-if="!sharedEnabled && task.command === 'TIME_ENTRY'" type="button" class="button secondary small" :disabled="busyTask === task.id" @click="acknowledge(task)">{{ busyTask === task.id ? 'Saving…' : 'Record task' }}</button></div>
+            <div class="role-task-copy"><strong>{{ task.title }}</strong><p>{{ task.detail }}</p><span v-if="!sharedEnabled" class="role-task-state"><i :class="`state-${task.tone}`"></i>{{ task.command === 'ADVANCE_VERIFY' ? (commercial?.advanceState === 'VERIFIED' ? 'Verified' : 'Needs finance action') : task.projectionState ? `${task.projectionState.replaceAll('_', ' ')}${task.projectionDue ? ` · due ${task.projectionDue}` : ''}` : 'Ready to inspect' }}</span></div>
+            <div class="role-task-actions"><button type="button" class="text-button" @click="openTask(task)">{{ task.action }} <Icon name="arrow-right" :size="15" /></button><button v-if="!sharedEnabled && task.command === 'ADVANCE_VERIFY'" type="button" class="button secondary small" :disabled="busyTask === task.id || commercial?.advanceState === 'VERIFIED'" @click="verifyAdvance(task)">{{ busyTask === task.id ? 'Saving…' : commercial?.advanceState === 'VERIFIED' ? 'Verified' : 'Verify advance' }}</button><button v-else-if="!sharedEnabled && task.command === 'TIME_ENTRY'" type="button" class="button secondary small" :disabled="busyTask === task.id" @click="acknowledge(task)">{{ busyTask === task.id ? 'Saving…' : 'Record task' }}</button></div>
           </article>
         </div>
       </article>
@@ -369,6 +412,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
     <section v-if="sharedEnabled" class="panel shared-actions-panel" aria-labelledby="shared-actions-title">
       <div class="panel-heading"><div><span class="eyebrow">Shared commands · server-checked authority</span><h2 id="shared-actions-title">Registered equivalents for this persona</h2></div></div>
       <p v-if="sharedActionMessage" class="guide-status-message" role="status">{{ sharedActionMessage }}</p>
+      <ActionOutcome :result="sharedActionResult" :title="sharedActionBusy ? `${sharedActionBusy} shared action` : 'Shared workflow action'" :pending="Boolean(sharedActionBusy)" next-action="Open the named owning page or next queue item." @retry="retrySharedAction" />
       <div class="shared-actions-grid">
         <form v-if="sharedActionAllowed('VERIFY_ADVANCE')" class="shared-action-form" @submit.prevent="submitSharedVerifyAdvance">
           <span class="eyebrow">Verify advance payment (G4 · Finance)</span>
@@ -419,6 +463,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
     </section>
 
     <section v-if="notifications.length" class="panel notification-panel"><div class="panel-heading"><div><span class="eyebrow">Handoff updates</span><h2>Handoffs and notifications</h2></div><span class="muted-label">Track each recipient and reference</span></div><div class="notification-list"><article v-for="item in notifications" :key="item.id" class="notification-row"><span class="notification-icon"><Icon :name="item.channel === 'PORTAL' ? 'message' : 'send'" :size="17" /></span><div><strong>{{ item.reference }}</strong><p>{{ presentationLabel(item.preview) }}</p><small>{{ item.channel }} · {{ presentationLabel(item.state) }}</small></div><StatusPill :label="presentationLabel(item.state)" tone="neutral" /></article></div><div class="prototype-note inline-note"><Icon name="info" :size="15" /><span>Each handoff shows its recipient, reference, timestamp and current status.</span></div></section>
+    <section v-if="!sharedEnabled && roleActivity.length" class="panel notification-panel"><div class="panel-heading"><div><span class="eyebrow">Recent activity</span><h2>What changed in this engagement</h2></div><span class="muted-label">Read-only projection</span></div><div class="notification-list"><article v-for="item in roleActivity" :key="item.eventId" class="notification-row"><span class="notification-icon"><Icon name="pulse" :size="17" /></span><div><strong>{{ presentationLabel(item.action) }}</strong><p>{{ presentationLabel(item.actor) }}{{ item.objectId ? ` · ${item.objectId}` : '' }}</p><small>{{ item.createdAt }}</small></div><StatusPill label="Recorded" tone="neutral" /></article></div></section>
   </div>
 </template>
 

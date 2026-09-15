@@ -12,8 +12,10 @@ import { useDemoContext } from '../demoContext.js'
 import { loadDemoSession } from '../auth'
 import { workflowGuides } from '../data'
 import { pipelineLanes, pipelineStages } from '../pipelineData'
+import { recordTargetFor } from '../navigation/recordTargets.js'
 
 const emit = defineEmits(['navigate'])
+const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
 
 // Phase B — validity is derived from D1 for the active shared engagement.
 // In local mode the inspector says it is a projection.
@@ -49,6 +51,9 @@ const statusText = computed(() => reducedMotion.value
   : playing.value
     ? 'Playing automatically · pauses when this page is hidden.'
     : 'Paused · select a stage or use Previous / Next.')
+
+const gateStageIndex = Object.freeze({ G1: 0, G2: 1, G3: 2, G4: 2, G5: 3, G6: 4, G7: 5, G8: 6, G9: 7, G10: 7 })
+const targetNotice = ref('')
 
 function announce(stage, prefix = 'Selected') {
   liveMessage.value = `${prefix}: stage ${stage.number}, ${stage.title}. ${stage.summary}`
@@ -128,8 +133,23 @@ function handleStageKeydown(event, index) {
   }
 }
 
+watch(() => props.navigationTarget?.recordId, (recordId) => {
+  const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
+  if (!recordId || (target.targetType !== 'pipeline' && !(target.targetType === 'unknown' && props.navigationTarget?.routeKey === 'pipeline'))) return
+  const index = gateStageIndex[String(recordId).toUpperCase()]
+  if (index == null) {
+    targetNotice.value = `${recordId} is not a named stage in this pipeline scope.`
+    return
+  }
+  targetNotice.value = ''
+  setStage(index, 'Opened')
+}, { immediate: true })
+
 function openDestination() {
-  emit('navigate', activeDestination.value.route)
+  emit('navigate', {
+    routeKey: activeDestination.value.route,
+    engagementId: demoActiveEngagementId.value || undefined,
+  })
 }
 
 function statusTone(stage) {
@@ -183,6 +203,7 @@ onBeforeUnmount(() => {
     />
 
     <WorkflowGuide :guide="workflowGuides.pipeline" />
+    <div v-if="targetNotice" class="guide-status-message" role="status"><Icon name="warning" :size="16" />{{ targetNotice }}</div>
     <ProcessValidityInspector :progress="demoProgress" :loading="demoLoading" :error="demoProgressError" :mode="demoMode" :last-sync="demoLastSync" @navigate="emit('navigate', $event)" />
     <SharedPipelineStatus v-if="sharedDemoEnabled" :engagement-id="sharedEngagementId" @navigate="emit('navigate', $event)" />
 
