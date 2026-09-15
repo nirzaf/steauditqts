@@ -57,9 +57,12 @@ function publicError(error) {
 export function apiErrorFromResponse(response, payload = {}, requestId = correlationId()) {
   const responseCorrelationId = response?.headers?.get?.('X-Correlation-Id') || requestId
   const status = Number(response?.status || 0)
-  return new AuditFlowApiError(payload?.error?.message || `AuditFlow API returned ${status}.`, {
+  // The worker's unconfirmed-commit contract (503 UNCERTAIN) carries a
+  // top-level code/message instead of an error envelope; keep it explicit so
+  // the UI can distinguish "not committed" from an unknown failure.
+  return new AuditFlowApiError(payload?.error?.message || payload?.message || `AuditFlow API returned ${status}.`, {
     status,
-    code: payload?.error?.code || (status === 403 ? 'ACCESS_DENIED' : status === 409 ? 'REVISION_CONFLICT' : 'API_ERROR'),
+    code: payload?.error?.code || payload?.code || (status === 403 ? 'ACCESS_DENIED' : status === 409 ? 'REVISION_CONFLICT' : 'API_ERROR'),
     correlationId: responseCorrelationId,
     retryAfter: response?.headers?.get?.('Retry-After') || null,
   })

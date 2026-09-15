@@ -4,12 +4,67 @@ import { demoUsers, findDemoUser } from '../auth'
 import Icon from '../components/Icon.vue'
 
 const emit = defineEmits(['login'])
-const selectedId = ref(demoUsers[0].id)
-const email = ref(demoUsers[0].email)
-const password = ref(demoUsers[0].password)
+const invitationMode = computed(() => {
+  try { return Boolean(new URL(window.location.href).searchParams.get('invite')) } catch { return false }
+})
+const availableUsers = computed(() => invitationMode.value ? demoUsers.filter((user) => user.id === 'client-demo') : demoUsers)
+const selectedId = ref(invitationMode.value ? 'client-demo' : demoUsers[0].id)
+const selectedSeed = computed(() => availableUsers.value.find((user) => user.id === selectedId.value) || availableUsers.value[0] || demoUsers[0])
+const email = ref(selectedSeed.value.email)
+const password = ref(selectedSeed.value.password)
 const errorMessage = ref('')
+const activeFilterId = ref('all')
+const roleSearch = ref('')
+const showManualSignIn = ref(false)
 
-const selectedUser = computed(() => demoUsers.find((user) => user.id === selectedId.value) || demoUsers[0])
+const selectedUser = computed(() => availableUsers.value.find((user) => user.id === selectedId.value) || availableUsers.value[0] || demoUsers[0])
+
+const categoryDefinitions = [
+  { id: 'all', label: 'All roles', shortLabel: 'All' },
+  { id: 'client', label: 'Client workspace', shortLabel: 'Client' },
+  { id: 'audit', label: 'Audit team', shortLabel: 'Audit' },
+  { id: 'accounting', label: 'Accounting & finance', shortLabel: 'Accounting' },
+  { id: 'quality', label: 'Quality & operations', shortLabel: 'Quality + ops' },
+]
+
+const roleCategories = {
+  'client-demo': 'client',
+  'client-management-demo': 'client',
+  'audit-senior-demo': 'audit',
+  'preparer-demo': 'audit',
+  'audit-manager-demo': 'audit',
+  'partner-demo': 'audit',
+  'accountant-demo': 'accounting',
+  'accounting-reviewer-demo': 'accounting',
+  'finance-demo': 'accounting',
+  'admin-demo': 'quality',
+  'system-admin-only-demo': 'quality',
+  'eqr-demo': 'quality',
+  'records-demo': 'quality',
+  'compliance-demo': 'quality',
+}
+
+const recommendedRoleIds = new Set(['client-demo', 'audit-senior-demo', 'partner-demo'])
+
+const categoryFilters = computed(() => categoryDefinitions.map((category) => ({
+  ...category,
+  count: category.id === 'all'
+    ? availableUsers.value.length
+    : availableUsers.value.filter((user) => roleCategories[user.id] === category.id).length,
+})))
+
+const filteredUsers = computed(() => {
+  const needle = roleSearch.value.trim().toLowerCase()
+  return availableUsers.value.filter((user) => {
+    const inCategory = activeFilterId.value === 'all' || roleCategories[user.id] === activeFilterId.value
+    if (!inCategory) return false
+    if (!needle) return true
+    return [user.roleLabel, user.name, user.organization, user.description]
+      .some((value) => value.toLowerCase().includes(needle))
+  })
+})
+
+const activeFilterLabel = computed(() => categoryFilters.value.find((filter) => filter.id === activeFilterId.value)?.label || 'All roles')
 
 const workflowSteps = [
   { number: '01', label: 'Scope', detail: 'Client + engagement', icon: 'users' },
@@ -33,6 +88,10 @@ function chooseUser(user) {
 
 function signIn() {
   const user = findDemoUser({ email: email.value, password: password.value })
+  if (invitationMode.value && user?.id !== 'client-demo') {
+    errorMessage.value = 'This invitation is fixed to the Client portal. Use the Client portal demo account.'
+    return
+  }
   if (!user) {
     errorMessage.value = 'Choose one of the demo personas or enter its exact credentials.'
     return
@@ -43,6 +102,11 @@ function signIn() {
 function enterDemo(user) {
   chooseUser(user)
   emit('login', user)
+}
+
+function openManualSignIn() {
+  showManualSignIn.value = !showManualSignIn.value
+  if (showManualSignIn.value) requestAnimationFrame(() => document.querySelector('.manual-signin-panel input')?.focus())
 }
 </script>
 
@@ -75,24 +139,51 @@ function enterDemo(user) {
     </section>
 
     <section class="login-panel" aria-labelledby="login-title">
-      <div class="login-panel-heading"><span class="eyebrow">Demo access</span><h2 id="login-title">Sign in to AuditFlow</h2><p>Pick a persona to see the pages and actions that role can use.</p></div>
-      <div class="persona-grid">
-        <button v-for="user in demoUsers" :key="user.id" type="button" class="persona-card" :class="[{ selected: selectedId === user.id }, `tone-${user.tone}`]" @click="chooseUser(user)">
-          <span class="persona-avatar avatar" :class="`avatar-${user.tone}`">{{ user.initials }}</span>
-          <span class="persona-card-copy"><strong>{{ user.roleLabel }}</strong><span>{{ user.name }} · {{ user.organization }}</span><small>{{ user.description }}</small></span>
-          <span class="persona-selected" aria-hidden="true">{{ selectedId === user.id ? 'Selected' : 'Select' }}</span>
+      <div class="login-panel-heading"><span class="eyebrow">Demo access</span><h2 id="login-title">{{ invitationMode ? 'Open your client invitation' : 'Choose your starting point' }}</h2><p>{{ invitationMode ? 'This invitation opens a private client walkthrough. Your access stays inside the client portal.' : 'Filter by team, select a persona, and launch the workflow in one click.' }}</p></div>
+
+      <div class="login-access-toolbar">
+        <div class="login-access-toolbar-heading"><strong>{{ invitationMode ? 'Invitation access' : 'Role directory' }}</strong><span>{{ invitationMode ? 'Client portal access is fixed for this invitation.' : 'Start with a recommended path or explore every handoff.' }}</span></div>
+        <span class="login-access-count">{{ filteredUsers.length }} of {{ availableUsers.length }} visible</span>
+      </div>
+
+      <div class="login-filter-tabs" role="tablist" aria-label="Filter demo personas">
+        <button v-for="filter in categoryFilters" :key="filter.id" type="button" class="login-filter-tab" :class="{ active: activeFilterId === filter.id }" role="tab" :aria-selected="activeFilterId === filter.id" @click="activeFilterId = filter.id">
+          <span>{{ filter.shortLabel }}</span><strong>{{ filter.count }}</strong>
         </button>
       </div>
 
-      <form class="login-form" @submit.prevent="signIn">
-        <div class="login-form-heading"><span>Selected persona</span><strong>{{ selectedUser.roleLabel }}</strong></div>
-        <label>Email<input v-model="email" type="email" autocomplete="username" /></label>
-        <label>Password<input v-model="password" type="text" autocomplete="current-password" /></label>
-        <p v-if="errorMessage" class="login-error" role="alert">{{ errorMessage }}</p>
-        <button type="submit" class="button primary full-width">Sign in as {{ selectedUser.name }}<Icon name="arrow-right" :size="17" /></button>
-      </form>
+      <label class="login-role-search">
+        <Icon name="search" :size="17" />
+        <span class="sr-only">Search demo roles</span>
+        <input v-model="roleSearch" type="search" placeholder="Search by role, person, or focus" />
+      </label>
 
-      <div class="login-credentials"><span class="guide-label"><Icon name="key" :size="14" />Quick demo credentials</span><div v-for="user in demoUsers" :key="`${user.id}-credentials`" class="credential-row"><span><strong>{{ user.roleLabel }}</strong><small>{{ user.email }} · {{ user.password }}</small></span><button type="button" class="text-button" @click="enterDemo(user)">Enter demo <Icon name="arrow-right" :size="15" /></button></div></div>
+      <p class="login-result-count" aria-live="polite"><strong>{{ activeFilterLabel }}</strong><span>{{ filteredUsers.length === 1 ? '1 persona' : `${filteredUsers.length} personas` }} available</span><small>Launch demo skips manual sign-in.</small></p>
+
+      <div class="persona-grid">
+        <article v-for="user in filteredUsers" :key="user.id" class="persona-card" :class="[{ selected: selectedId === user.id }, `tone-${user.tone}`]">
+          <button type="button" class="persona-card-select" :aria-pressed="selectedId === user.id" :aria-label="`Select ${user.roleLabel}`" @click="chooseUser(user)">
+            <span class="persona-avatar avatar" :class="`avatar-${user.tone}`">{{ user.initials }}</span>
+            <span class="persona-card-copy"><span class="persona-card-title"><strong>{{ user.roleLabel }}</strong><em v-if="recommendedRoleIds.has(user.id)">Recommended</em></span><span>{{ user.name }} · {{ user.organization }}</span><small>{{ user.description }}</small></span>
+            <span class="persona-selected" aria-hidden="true">{{ selectedId === user.id ? 'Selected' : 'Select' }}</span>
+          </button>
+          <button type="button" class="persona-launch" @click="enterDemo(user)">Launch demo <Icon name="arrow-right" :size="15" /></button>
+        </article>
+      </div>
+
+      <p v-if="!filteredUsers.length" class="login-empty">No personas match “{{ roleSearch }}”. <button type="button" class="text-button" @click="roleSearch = ''; activeFilterId = 'all'">Clear filters</button></p>
+
+      <button type="button" class="manual-signin-toggle" :aria-expanded="showManualSignIn" @click="openManualSignIn"><span><Icon name="key" :size="15" />Sign in manually</span><small>Use the selected persona’s demo credentials</small><Icon name="chevron-down" :size="16" :class="{ rotated: showManualSignIn }" /></button>
+
+      <div v-if="showManualSignIn" class="manual-signin-panel">
+        <form class="login-form" @submit.prevent="signIn">
+          <div class="login-form-heading"><span>Selected persona</span><strong>{{ selectedUser.roleLabel }}</strong></div>
+          <label>Email<input v-model="email" type="email" autocomplete="username" /></label>
+          <label>Password<input v-model="password" type="text" autocomplete="current-password" /></label>
+          <p v-if="errorMessage" class="login-error" role="alert">{{ errorMessage }}</p>
+          <button type="submit" class="button primary full-width">Sign in as {{ selectedUser.name }}<Icon name="arrow-right" :size="17" /></button>
+        </form>
+      </div>
     </section>
   </main>
 </template>

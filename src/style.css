@@ -366,7 +366,7 @@ p { color: var(--muted); }
 .guide-status-message { margin: 9px 0 0; color: var(--good); font-size: .68rem; line-height: 1.4; }
 
 /* Demo persona access and role-specific portal surfaces. */
-.login-shell { min-height: 100dvh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(450px, 570px); align-items: start; background: var(--canvas); }
+.login-shell { min-height: 100dvh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(520px, 680px); align-items: start; background: var(--canvas); }
 .login-intro { position: sticky; top: 0; align-self: start; isolation: isolate; display: grid; grid-template-rows: auto 1fr; gap: 30px; width: 100%; height: 100dvh; min-height: 100dvh; overflow: hidden; padding: clamp(30px, 5vw, 72px) clamp(24px, 6vw, 96px); color: #dce9f7; background: radial-gradient(circle at 15% 15%, rgba(37,99,235,.35), transparent 36%), radial-gradient(circle at 88% 76%, rgba(41,98,180,.22), transparent 34%), var(--primary-dark); }
 .login-intro::before { content: ''; position: absolute; z-index: -1; inset: 0; opacity: .32; background-image: linear-gradient(rgba(174, 205, 240, .09) 1px, transparent 1px), linear-gradient(90deg, rgba(174, 205, 240, .09) 1px, transparent 1px); background-size: 48px 48px; mask-image: linear-gradient(to bottom, rgba(0,0,0,.78), transparent 84%); pointer-events: none; }
 .login-intro::after { content: ''; position: absolute; z-index: -1; width: 34vw; height: 34vw; right: -15vw; bottom: -18vw; border: 1px solid rgba(160, 198, 238, .13); border-radius: 50%; box-shadow: 0 0 0 34px rgba(160, 198, 238, .035), 0 0 0 68px rgba(160, 198, 238, .025); pointer-events: none; }
@@ -398,7 +398,7 @@ p { color: var(--muted); }
 .login-stat { display: grid; gap: 2px; padding: 13px 14px; border-top: 1px solid rgba(174, 205, 240, .28); border-bottom: 1px solid rgba(174, 205, 240, .1); background: rgba(255,255,255,.025); }
 .login-stat strong { color: #fff; font-size: 1.25rem; line-height: 1.1; }
 .login-stat span { color: #9fb8d2; font-size: .66rem; }
-.login-panel { align-self: center; width: min(100%, 570px); padding: clamp(24px, 4vw, 48px); }
+.login-panel { align-self: center; width: min(100%, 680px); padding: clamp(24px, 4vw, 48px); }
 .login-panel-heading h2 { margin-bottom: 5px; color: var(--primary); font-size: clamp(1.45rem, 2.4vw, 2rem); }
 .login-panel-heading p { margin-bottom: 20px; color: var(--subtle); font-size: .86rem; }
 .persona-grid { display: grid; gap: 9px; }
@@ -429,6 +429,55 @@ p { color: var(--muted); }
 .credential-row strong { color: var(--primary); font-size: .7rem; }
 .credential-row small { overflow: hidden; color: var(--subtle); font-family: 'Fira Code', monospace; font-size: .62rem; text-overflow: ellipsis; white-space: nowrap; }
 .credential-row .text-button { min-height: 36px; flex: 0 0 auto; font-size: .68rem; }
+
+/* Streamlined role directory: filter first, then launch a persona without a second credential list. */
+.login-access-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 2px 0 10px; }
+.login-access-toolbar-heading { min-width: 0; display: grid; gap: 2px; }
+.login-access-toolbar-heading strong { color: var(--primary); font-size: .74rem; }
+.login-access-toolbar-heading span { color: var(--subtle); font-size: .64rem; line-height: 1.35; }
+.login-access-count { flex: 0 0 auto; color: var(--secondary); font: 600 .61rem 'Fira Code', monospace; white-space: nowrap; }
+.login-filter-tabs { display: flex; gap: 6px; margin-bottom: 10px; padding: 4px; overflow-x: auto; border: 1px solid #d9e4ef; border-radius: 10px; background: #f7faff; scrollbar-width: thin; }
+.login-filter-tab { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; flex: 1 0 auto; padding: 6px 9px; color: var(--subtle); border: 1px solid transparent; border-radius: 7px; background: transparent; font-size: .66rem; font-weight: 650; white-space: nowrap; transition: color 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
+.login-filter-tab strong { display: inline-grid; min-width: 19px; min-height: 19px; place-items: center; padding: 0 4px; color: currentColor; border-radius: 5px; background: rgba(37,99,235,.08); font: 600 .6rem 'Fira Code', monospace; }
+.login-filter-tab:hover { color: var(--primary); background: #fff; border-color: #c9d8e9; }
+.login-filter-tab.active { color: var(--primary); border-color: #a8c5eb; background: #fff; box-shadow: 0 1px 4px rgba(20, 52, 86, .08); }
+.login-filter-tab.active strong { color: var(--secondary); background: var(--soft-blue); }
+.login-role-search { display: flex; align-items: center; gap: 8px; min-height: 41px; margin-bottom: 9px; padding: 0 11px; color: var(--subtle); border: 1px solid var(--line-strong); border-radius: 9px; background: #fff; transition: border-color 160ms ease, box-shadow 160ms ease; }
+.login-role-search:focus-within { border-color: #82aee9; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+.login-role-search .icon { flex: 0 0 auto; color: var(--secondary); }
+.login-role-search input { width: 100%; min-width: 0; padding: 10px 0; color: var(--ink); border: 0; outline: 0; background: transparent; font-size: .75rem; }
+.login-role-search input::placeholder { color: #93a5b9; }
+.login-result-count { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 8px; margin: 0 0 10px; color: var(--subtle); font-size: .65rem; }
+.login-result-count strong { color: var(--primary); font-size: .68rem; }
+.login-result-count small { margin-left: auto; color: var(--secondary); font-size: .61rem; }
+.persona-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.persona-card { display: grid; grid-template-columns: 1fr; gap: 0; min-width: 0; padding: 0; overflow: hidden; }
+.persona-card-select { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: start; gap: 9px; width: 100%; min-width: 0; min-height: 92px; padding: 12px 11px 8px; color: var(--ink); border: 0; background: transparent; text-align: left; }
+.persona-card-select:hover { background: #fbfdff; }
+.persona-card-select:focus-visible, .persona-launch:focus-visible, .login-filter-tab:focus-visible, .manual-signin-toggle:focus-visible { position: relative; z-index: 1; outline: 3px solid rgba(37,99,235,.28); outline-offset: -2px; }
+.persona-card-copy { min-width: 0; display: grid; gap: 3px; }
+.persona-card-copy > .persona-card-title { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: visible; color: inherit; text-overflow: clip; white-space: normal; }
+.persona-card-title strong { overflow: hidden; color: var(--primary); font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
+.persona-card-title em { flex: 0 0 auto; padding: 2px 5px; color: #176c3a; border: 1px solid #b9dfc5; border-radius: 999px; background: #f1fbf3; font-size: .53rem; font-style: normal; font-weight: 700; letter-spacing: .02em; }
+.persona-card-copy > span:not(.persona-card-title) { overflow: hidden; color: var(--subtle); font-size: .63rem; text-overflow: ellipsis; white-space: nowrap; }
+.persona-card-copy small { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: .63rem; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.persona-avatar { width: 36px; height: 36px; border-radius: 10px; font-size: .68rem; }
+.persona-selected { align-self: start; padding-top: 3px; color: var(--secondary); font-size: .57rem; font-weight: 700; white-space: nowrap; }
+.persona-card:not(.selected) .persona-selected { color: var(--subtle); font-weight: 500; }
+.persona-launch { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 33px; margin: 0 10px 10px; padding: 6px 9px; color: var(--secondary); border: 1px solid #d7e4f2; border-radius: 7px; background: #f7fbff; font-size: .63rem; font-weight: 700; text-align: left; transition: color 160ms ease, border-color 160ms ease, background 160ms ease; }
+.persona-launch:hover { color: var(--primary); border-color: #9bbce5; background: var(--soft-blue); }
+.persona-launch .icon { margin-left: auto; }
+.login-empty { margin: 0; padding: 15px 12px; color: var(--subtle); border: 1px dashed #cbd8e7; border-radius: 9px; background: #fbfdff; font-size: .7rem; }
+.login-empty .text-button { min-height: 28px; margin-left: 4px; color: var(--secondary); font-size: .68rem; }
+.manual-signin-toggle { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; margin-top: 16px; padding: 11px 12px; color: var(--primary); border: 1px solid #d7e2f0; border-radius: 9px; background: #fbfdff; text-align: left; transition: border-color 160ms ease, background 160ms ease; }
+.manual-signin-toggle:hover { border-color: #9fb7d2; background: #f6faff; }
+.manual-signin-toggle > span:first-child { display: inline-flex; align-items: center; gap: 7px; font-size: .7rem; font-weight: 700; }
+.manual-signin-toggle > span:first-child .icon { color: var(--secondary); }
+.manual-signin-toggle small { min-width: 0; overflow: hidden; color: var(--subtle); font-size: .62rem; text-overflow: ellipsis; white-space: nowrap; }
+.manual-signin-toggle > .icon { color: var(--subtle); transition: transform 160ms ease; }
+.manual-signin-toggle > .icon.rotated { transform: rotate(180deg); }
+.manual-signin-panel { margin-top: 10px; padding: 0 12px 12px; border: 1px solid #d7e2f0; border-radius: 9px; background: #fff; }
+.manual-signin-panel .login-form { margin-top: 0; padding-top: 13px; border-top: 0; }
 @keyframes login-reveal { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 .portal-banner, .admin-banner, .read-only-banner { display: flex; align-items: center; gap: 13px; min-width: 0; margin-bottom: 18px; padding: 17px 19px; border-color: #c8d8ea; background: linear-gradient(120deg, #fff 0%, #f5f9ff 100%); }
@@ -2092,6 +2141,14 @@ tfoot th { color: var(--primary); background: #f7faff; }
 }
 
 @media (max-width: 680px) {
+  /* The role directory is a full-width single column on phones. Explicitly
+     zero the grid item minimums so intrinsic copy cannot widen the track and
+     create a clipped second viewport on mobile browsers. */
+  .login-shell { width: 100%; max-width: 100%; min-width: 0; grid-template-columns: minmax(0, 1fr); overflow-x: clip; }
+  .login-shell > * { min-width: 0; max-width: 100%; }
+  .login-intro, .login-panel { width: 100%; min-width: 0; max-width: 100%; }
+  .persona-grid, .persona-card, .persona-card-select { min-width: 0; max-width: 100%; }
+  .persona-launch, .login-filter-tab { min-height: 44px; }
   .page { padding: 24px 15px 48px; }
   .import-contract { grid-template-columns: 1fr; }
   .assessment-tabs { flex-wrap: wrap; padding: 10px 15px; }
@@ -2339,6 +2396,34 @@ tfoot th { color: var(--primary); background: #f7faff; }
   .pipeline-boundary .button { grid-column: 2; width: 100%; }
 }
 
+/* Keep the shared shell usable at phone widths. Header controls must not shrink
+   below a comfortable touch target, and long breadcrumb trails collapse to the
+   current page instead of forcing the top bar into several rows. */
+@media (max-width: 680px) {
+  .topbar-left { min-width: 0; flex: 1 1 auto; }
+  .topbar-actions { flex: 0 0 auto; }
+  .mobile-menu { min-width: 44px; flex: 0 0 44px; }
+  .top-search { flex: 0 0 38px; }
+  .top-user-button { min-width: 44px; min-height: 44px; flex: 0 0 44px; justify-content: center; padding: 0; }
+  .breadcrumbs { min-width: 0; flex-wrap: nowrap; gap: 0; }
+  .breadcrumbs .breadcrumb-link, .breadcrumbs > .icon { display: none; }
+  .breadcrumbs strong { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Keep every actionable control comfortable to tap on a narrow viewport.
+     Dense tables and pipeline stages remain scroll-contained, while their
+     controls still meet the mobile target size. */
+  button { min-height: 44px; }
+  button.button { min-height: 44px !important; }
+  .row-button { min-height: 44px !important; padding: 8px 0; }
+  .view-toggle button { width: 44px; height: 44px; }
+  .filter-row button, .range-toggle button, .sub-tabs button, .account-menu button { min-height: 44px; }
+  .approval-center-tabs button, .assessment-tabs > button, .login-filter-tabs > button,
+  .cycle-filter-row button, .readiness-filter button, .v5-role-filter button,
+  .admin-shortcut { min-height: 44px; }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea { min-height: 44px !important; }
+  .demo-nav-mini-select { min-width: 64px; min-height: 44px; }
+  .login-form input { min-height: 44px; }
+}
+
 @media (max-width: 1080px) {
   .v5-gate-layout, .v5-doc-layout, .v5-commercial-layout, .v5-role-notification-layout { grid-template-columns: 1fr; }
   .v5-gate-detail, .v5-doc-detail, .v5-close-panel { max-width: none; }
@@ -2368,6 +2453,13 @@ tfoot th { color: var(--primary); background: #f7faff; }
   .v5-role-filter .filter-row { flex-wrap: nowrap; }
   .v5-role-filter button { flex: 0 0 auto; }
   .v5-system-flow { padding-bottom: 17px; }
+  .login-access-toolbar { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .login-access-count { align-self: flex-start; }
+  .login-filter-tabs { margin-right: -2px; margin-left: -2px; }
+  .login-filter-tab { flex: 0 0 auto; }
+  .login-result-count small { width: 100%; margin-left: 0; }
+  .persona-grid { grid-template-columns: 1fr; }
+  .persona-card-select { min-height: 84px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2422,4 +2514,57 @@ tfoot th { color: var(--primary); background: #f7faff; }
   .artifact-detail-copy, .artifact-detail-actions { margin-right: 15px; margin-left: 15px; }
   .artifact-detail-actions { align-items: stretch; flex-direction: column; }
   .artifact-detail-actions .button { width: 100%; }
+}
+
+/* Client-safe shared portal states. */
+.portal-status { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; padding: 10px 12px; border: 1px solid #d8e4f1; border-radius: 9px; background: #f7fbff; color: var(--muted); font-size: .72rem; line-height: 1.4; }
+.portal-status.good { color: #176b49; border-color: #b8e4cf; background: #f0fbf5; }
+.portal-status.danger { color: #9e3f3f; border-color: #f1c7c7; background: #fff6f6; }
+.portal-empty-state { display: flex; align-items: flex-start; gap: 12px; margin: 14px 0; padding: 17px; border: 1px dashed #c8d7e8; border-radius: 11px; background: #f8fbff; color: var(--muted); }
+.portal-empty-state > svg { flex: 0 0 auto; color: var(--secondary); }
+.portal-empty-state strong { display: block; color: var(--primary); font-size: .78rem; }
+.portal-empty-state p { margin: 4px 0 0; font-size: .68rem; line-height: 1.45; }
+.portal-upload-form, .portal-message-composer, .portal-reply-form { display: grid; gap: 13px; margin-top: 15px; padding: 15px; border: 1px solid #cfe0f1; border-radius: 11px; background: linear-gradient(130deg, #f8fbff, #fff); }
+.portal-upload-form h3 { margin: 3px 0 4px; color: var(--primary); font-size: .95rem; }
+.portal-upload-form p, .portal-reply-form p { margin: 0; color: var(--muted); font-size: .68rem; line-height: 1.5; }
+.portal-upload-form label, .portal-message-composer label, .portal-reply-form label { display: grid; gap: 6px; color: var(--primary); font-size: .68rem; font-weight: 700; }
+.portal-upload-form input[type=file] { width: 100%; padding: 9px; border: 1px solid #c9d9ea; border-radius: 8px; background: #fff; color: var(--muted); font-size: .7rem; }
+.portal-upload-form .form-safety-note, .portal-message-composer .form-safety-note { max-width: 420px; }
+.sample-file-row { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.sample-file-row > span { display: grid; flex: 1 1 230px; gap: 2px; }
+.sample-file-row strong { color: var(--primary); font-size: .7rem; }
+.sample-file-row small { color: var(--subtle); font-size: .63rem; }
+.portal-receipts { display: grid; gap: 8px; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
+.portal-receipt-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; border: 1px solid #dce7f2; border-radius: 8px; background: #fbfdff; }
+.portal-receipt-row > span { display: grid; min-width: 0; gap: 2px; }
+.portal-receipt-row strong { overflow: hidden; color: var(--primary); font-size: .69rem; text-overflow: ellipsis; white-space: nowrap; }
+.portal-receipt-row small { color: var(--subtle); font-size: .61rem; }
+.portal-thread-panel { overflow: hidden; }
+.portal-message-list { display: grid; gap: 10px; margin-top: 12px; }
+.portal-message { max-width: 88%; padding: 12px 14px; border: 1px solid #d7e2ee; border-radius: 11px 11px 11px 4px; background: #f7faff; }
+.portal-message.is-client { justify-self: end; border-color: #c8e4d7; border-radius: 11px 11px 4px 11px; background: #f1fbf5; }
+.portal-message-meta { display: flex; align-items: center; gap: 8px; color: var(--subtle); font-size: .6rem; }
+.portal-message-meta strong { color: var(--primary); font-size: .66rem; text-transform: capitalize; }
+.portal-message-meta time { flex: 1; }
+.portal-message p { margin: 7px 0 0; color: var(--ink); font-size: .72rem; line-height: 1.5; white-space: pre-wrap; }
+.portal-message > small { display: block; margin-top: 7px; color: var(--subtle); font: .6rem 'Fira Code', monospace; }
+.portal-reply-form { border-color: #b9d5ee; background: #f5faff; }
+.account-menu-note { margin: 8px 12px; color: var(--subtle); font-size: .67rem; line-height: 1.4; }
+.invitation-panel { border-color: #bfd6ed; background: linear-gradient(135deg, #f8fbff, #fff); }
+.invitation-form { display: flex; align-items: flex-end; gap: 12px; margin-top: 14px; }
+.invitation-form label { display: grid; flex: 1; gap: 6px; color: var(--primary); font-size: .68rem; font-weight: 700; }
+.invitation-form select { min-height: 40px; padding: 8px 10px; border: 1px solid #c9d9ea; border-radius: 8px; background: #fff; color: var(--ink); }
+.invitation-result { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 15px; padding: 13px; border: 1px solid #b9e2cb; border-radius: 10px; background: #f3fcf6; }
+.invitation-result > div:first-child { display: grid; flex: 1; gap: 4px; min-width: 0; }
+.invitation-result strong { color: #176b49; font-size: .76rem; }
+.invitation-result small { color: #4d7b66; font-size: .63rem; }
+.invitation-result input { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid #bdd9c8; border-radius: 7px; background: #fff; color: #285f48; font: .63rem 'Fira Code', monospace; }
+.build-version { font: .6rem 'Fira Code', monospace; color: var(--subtle); white-space: nowrap; }
+@media (max-width: 680px) {
+  .portal-message { max-width: 100%; }
+  .portal-panel-footer, .portal-form-footer { align-items: stretch; flex-direction: column; }
+  .portal-panel-footer .button-row, .portal-form-footer .button-row { width: 100%; }
+  .portal-panel-footer .button, .portal-form-footer .button { width: 100%; }
+  .invitation-form, .invitation-result { align-items: stretch; flex-direction: column; }
+  .invitation-form .button, .invitation-result .button, .invitation-result a { width: 100%; justify-content: center; }
 }

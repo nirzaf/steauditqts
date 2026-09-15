@@ -8,7 +8,7 @@ import { demoUsers } from '../auth'
 import { navItems, workflowGuides } from '../data'
 import { activeActor, actorSession, scenario, setActorStatus } from '../domain/scenario.js'
 import { resetDemoData } from '../demoReset.js'
-import { isSharedDemoEnabled, resetSharedDemo } from '../sharedDemo.js'
+import { createDemoInvitation, getPortalMessages, isSharedDemoEnabled, replyPortalMessage, resetSharedDemo, sendPortalMessage } from '../sharedDemo.js'
 
 const emit = defineEmits(['navigate'])
 const accessRows = [
@@ -29,6 +29,64 @@ const actorRows = computed(() => scenario.actors.map((actor) => ({
 })))
 const activePersonaCount = computed(() => actorRows.value.filter((actor) => actor.active).length)
 const currentSessionEpoch = computed(() => activeActor()?.sessionEpoch || '—')
+const invitationPersona = ref('client-demo')
+const invitationBusy = ref(false)
+const invitationResult = ref(null)
+const inboxMessages = ref([])
+const inboxBody = ref('')
+const inboxStatus = ref('')
+const inboxSending = ref(false)
+const inboxReplyTarget = ref(null)
+
+const invitationEngagementId = computed(() => {
+  const runId = invitationResult.value?.runId || ''
+  return runId ? `run-${runId.replace(/^run-/, '').slice(0, 10)}-0018-AUD-26` : ''
+})
+
+async function createInvitation() {
+  if (invitationBusy.value) return
+  invitationBusy.value = true; invitationResult.value = null
+  const result = await createDemoInvitation({ personaId: invitationPersona.value })
+  invitationResult.value = result.ok ? result.invitation : { error: result.error?.message || 'The invitation could not be created.' }
+  inboxMessages.value = []
+  inboxStatus.value = ''
+  if (result.ok) await loadInvitationInbox()
+  invitationBusy.value = false
+}
+
+async function loadInvitationInbox() {
+  if (!invitationEngagementId.value || !invitationResult.value?.runId) return
+  const result = await getPortalMessages(invitationEngagementId.value, invitationResult.value.runId)
+  if (result.ok) {
+    inboxMessages.value = Array.isArray(result.messages) ? result.messages : []
+    inboxStatus.value = ''
+  } else inboxStatus.value = result.error?.message || 'The invitation inbox could not be loaded.'
+}
+
+async function sendInboxMessage() {
+  const body = inboxBody.value.trim()
+  if (!body || inboxSending.value || !invitationEngagementId.value || !invitationResult.value?.runId) return
+  inboxSending.value = true; inboxStatus.value = 'Saving to the shared client thread…'
+  const wasReply = Boolean(inboxReplyTarget.value)
+  const result = wasReply
+    ? await replyPortalMessage(inboxReplyTarget.value.messageId, { body })
+    : await sendPortalMessage(invitationEngagementId.value, { body }, invitationResult.value.runId)
+  if (result.ok) { inboxBody.value = ''; inboxReplyTarget.value = null; inboxStatus.value = wasReply ? 'Team reply saved.' : 'Team message saved.'; await loadInvitationInbox() }
+  else inboxStatus.value = result.error?.message || 'The team message was not saved. Retry.'
+  inboxSending.value = false
+}
+
+function beginInboxReply(message) {
+  inboxReplyTarget.value = message
+  inboxBody.value = ''
+  inboxStatus.value = `Replying to ${message.senderRole.replaceAll('_', ' ')}`
+}
+
+async function copyInvitation() {
+  if (!invitationResult.value?.inviteUrl) return
+  try { await navigator.clipboard.writeText(invitationResult.value.inviteUrl); toast.value = 'Invitation link copied.' } catch { toast.value = 'Copy was blocked; select the link and copy it manually.' }
+  window.setTimeout(() => { toast.value = '' }, 3500)
+}
 
 function navigate(route) { emit('navigate', route) }
 
@@ -77,6 +135,10 @@ function toggleActor(actor) {
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="shield" :size="17" />{{ toast }}</div>
 
     <section class="panel demo-controls-panel"><div class="panel-heading"><div><span class="eyebrow">Demo controls</span><h2>Reset the walkthrough</h2></div></div><p class="muted-copy">Clears the synthetic scenario plus browser-local comments, preferences and profiles. You stay signed in so the tour can be re-run immediately. For a full sign-out, use the account menu.</p><div class="button-row"><button type="button" class="button secondary" @click="handleDemoReset">Reset demo data</button><button type="button" class="text-button" @click="navigate('readiness')">Run rehearsal instead <Icon name="arrow-right" :size="15" /></button></div></section>
+
+    <section class="panel invitation-panel"><div class="panel-heading"><div><span class="eyebrow">Client-safe access</span><h2>Create a private walkthrough invitation</h2></div><StatusPill label="7-day link · 5 browser sessions" tone="neutral" /></div><p class="panel-copy">Create a fresh run-scoped fictional engagement for a client review. The link opens the client portal only; no persona switcher or presenter controls are exposed to the recipient.</p><div class="invitation-form"><label>Client persona<select v-model="invitationPersona"><option value="client-demo">Client portal · Nadia Faris</option><option value="client-management-demo">Client management approver · Nadia Faris</option></select></label><button type="button" class="button primary" :disabled="invitationBusy" @click="createInvitation">{{ invitationBusy ? 'Creating…' : 'Create invitation' }}<Icon name="arrow-right" :size="16" /></button></div><div v-if="invitationResult?.inviteUrl" class="invitation-result"><div><strong>Invitation ready</strong><small>Run {{ invitationResult.runId }} · expires {{ invitationResult.expiresAt }}</small><input :value="invitationResult.inviteUrl" readonly aria-label="Client invitation URL" /></div><div class="button-row"><button type="button" class="button secondary" @click="copyInvitation">Copy link</button><a class="button secondary" :href="invitationResult.inviteUrl" target="_blank" rel="noopener">Open preview</a></div></div><p v-if="invitationResult?.error" class="portal-status danger" role="alert">{{ invitationResult.error }}</p></section>
+
+    <section v-if="invitationResult?.runId" class="panel invitation-inbox-panel"><div class="panel-heading"><div><span class="eyebrow">Team inbox · invitation run</span><h2>Answer the client thread</h2></div><button type="button" class="text-button" @click="loadInvitationInbox">Refresh <Icon name="refresh" :size="15" /></button></div><p class="panel-copy">This presenter-only inbox is scoped to <code>{{ invitationResult.runId }}</code>. Replies are visible to every browser using the same invitation; internal staff notes remain hidden from the client.</p><div v-if="!inboxMessages.length" class="portal-empty-state"><Icon name="message" :size="21" /><div><strong>No client message yet</strong><p>Open the invitation in another browser and send a question. It will appear here without sharing any public R2 or database URL.</p></div></div><div v-else class="portal-message-list"><article v-for="message in inboxMessages" :key="message.messageId" class="portal-message" :class="{ 'is-client': ['client_contributor','client_finance','management_approver'].includes(message.senderRole) }"><div class="portal-message-meta"><strong>{{ message.senderRole.replaceAll('_', ' ') }}</strong><time>{{ message.createdAt }}</time><button type="button" class="text-button" @click="beginInboxReply(message)">Reply</button></div><p>{{ message.body }}</p><small v-if="message.requestId">Request {{ message.requestId }}</small></article></div><p v-if="inboxStatus" class="portal-status" role="status" aria-live="polite">{{ inboxStatus }}</p><form class="portal-message-composer" @submit.prevent="sendInboxMessage"><label>{{ inboxReplyTarget ? `Reply to ${inboxReplyTarget.senderRole.replaceAll('_', ' ')}` : 'Team message' }}<textarea v-model="inboxBody" rows="3" maxlength="2000" placeholder="Send a clarification or next-step note to the invited client."></textarea></label><div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />Only the selected invitation run is addressed.</span><div class="button-row"><button v-if="inboxReplyTarget" type="button" class="button secondary" @click="inboxReplyTarget = null; inboxBody = ''; inboxStatus = ''">Cancel</button><button type="submit" class="button primary" :disabled="inboxSending || !inboxBody.trim()">{{ inboxSending ? 'Sending…' : inboxReplyTarget ? 'Send reply' : 'Send team message' }}<Icon name="arrow-right" :size="16" /></button></div></div></form></section>
 
     <div class="admin-metric-grid"><article class="admin-metric"><span>Active personas</span><strong>{{ activePersonaCount }}</strong><small>{{ actorRows.length }} scoped actors · session epoch {{ currentSessionEpoch }}</small></article><article class="admin-metric"><span>Workflow pages</span><strong>15</strong><small>9 core + 6 portal pages</small></article><article class="admin-metric"><span>Open blockers</span><strong>4</strong><small>Visible in the Overview queue</small></article><article class="admin-metric"><span>Integration health</span><strong>3 / 4</strong><small>One retry needs attention</small></article></div>
 

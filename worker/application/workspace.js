@@ -45,6 +45,27 @@ export function filterWorkspaceEvents(events = [], { includeInternal = false } =
   return (Array.isArray(events) ? events : []).filter((event) => includeInternal || isWorkspaceEventPublic(event))
 }
 
+// M7 §5 — published document artifacts in the workspace projection. Every
+// screen reads the same server truth (which Draft-FS versions exist, what the
+// final release published) instead of guessing it from local scenario state.
+// Client personas see only published, client-visible rows — the same rule the
+// artifact list endpoint applies for client personas.
+export function serializeWorkspaceArtifacts(artifacts = [], { clientOnly = false } = {}) {
+  const list = Array.isArray(artifacts) ? artifacts : []
+  const visible = clientOnly
+    ? list.filter((row) => String(row.state || '').toUpperCase() === 'PUBLISHED' && String(row.visibility || '').toUpperCase() === 'CLIENT_VISIBLE')
+    : list
+  return visible.map((row) => ({
+    documentId: row.document_id || null,
+    documentType: row.document_type || null,
+    title: row.title || null,
+    version: row.version || null,
+    state: String(row.state || '').toUpperCase(),
+    visibility: String(row.visibility || '').toUpperCase(),
+    createdAt: row.created_at || null,
+  }))
+}
+
 export function allowedActionsForRoles(roles = [], service = 'AUDIT') {
   const normalizedService = String(service || 'AUDIT').toUpperCase()
   const keys = Object.entries(ACTION_REGISTRY)
@@ -68,6 +89,7 @@ export function buildWorkspaceProjection({
   notifications = [],
   recentEvents = [],
   outbox = [],
+  artifacts = [],
   accounting = null,
   accountingSteps = [],
   blockers = [],
@@ -110,6 +132,7 @@ export function buildWorkspaceProjection({
     notifications,
     recentEvents: filterWorkspaceEvents(recentEvents, { includeInternal: roles.some((role) => ['system_admin', 'engagement_partner', 'audit_manager'].includes(role)) }),
     outbox: visibleOutbox,
+    artifacts: serializeWorkspaceArtifacts(artifacts, { clientOnly }),
     accounting,
     accountingSteps: Array.isArray(accountingSteps) ? accountingSteps : [],
     allowedActions: allowedActionsForRoles(roles, safeContext.service),

@@ -6,7 +6,7 @@ import AsyncPageError from './components/AsyncPageError.vue'
 import AsyncPageLoading from './components/AsyncPageLoading.vue'
 import { clearDemoSession, demoUsers, getDemoUser, loadDemoSession, saveDemoSession } from './auth'
 import { resetDemoData } from './demoReset.js'
-import { createDemoSession, getActiveDemoView, getDemoContexts, isSharedDemoEnabled, setActiveDemoView, switchDemoView } from './sharedDemo.js'
+import { activeDemoSession, clearActiveDemoSession, createDemoSession, getActiveDemoView, getDemoContexts, isSharedDemoEnabled, setActiveDemoView, switchDemoView } from './sharedDemo.js'
 import { client, navItems } from './data'
 import { roleRouteSets } from './roleWorkspaces.js'
 import { setActivePersona } from './domain/scenario.js'
@@ -66,8 +66,15 @@ const routes = {
   'admin-console': { label: 'Admin console', title: 'Admin console', roles: ['admin', 'system-admin'], component: asyncPage(() => import('./pages/AdminConsolePage.vue'), 'Admin console') },
 }
 
-const currentUser = ref(loadDemoSession())
+// An invitation is an explicit client entry point. Do not let a stale
+// presenter persona from localStorage silently win when the same browser
+// opens a client link; the LoginPage must be shown so the Worker can bind the
+// session to the invitation's fixed client persona.
+const invitationEntry = typeof window !== 'undefined' && Boolean(new URL(window.location.href).searchParams.get('invite'))
+const currentUser = ref(invitationEntry ? null : loadDemoSession())
+if (invitationEntry) clearDemoSession()
 if (currentUser.value) setActivePersona(currentUser.value.id)
+const isClientInvitation = computed(() => Boolean(activeDemoSession.value?.clientMode))
 const currentRoute = ref(getRouteFromHash())
 const mobileNavOpen = ref(false)
 const search = ref('')
@@ -139,6 +146,7 @@ const paletteRoutes = computed(() => visibleNavItems.value.map((item) => ({ key:
 const routeRolesMap = computed(() => Object.fromEntries(Object.entries(routes).map(([key, entry]) => [key, ROUTE_REGISTRY[key]?.roles || entry.roles])))
 
 function canAccessRoute(key, role) {
+  if (key === 'shared-demo' && isClientInvitation.value) return false
   return Boolean(routes[key] && ROUTE_REGISTRY[key]?.roles?.includes(role) && routes[key].roles.includes(role))
 }
 
@@ -147,6 +155,7 @@ const activeNav = computed(() => visibleNavItems.value.find((item) => item.key =
 const isClient = computed(() => currentUser.value?.role === 'client')
 const isClientManagement = computed(() => currentUser.value?.role === 'client-management')
 const isAccountant = computed(() => ['accountant', 'accounting-reviewer', 'preparer'].includes(currentUser.value?.role))
+const buildCommit = computed(() => String(import.meta.env.VITE_BUILD_COMMIT || 'local').slice(0, 12))
 const workspaceName = computed(() => isClient.value || isClientManagement.value ? currentUser.value.organization : currentUser.value?.role === 'accountant' || currentUser.value?.role === 'accounting-reviewer' ? 'Quadrate Accounting' : 'Quadrate Audit')
 const workspaceSubtitle = computed(() => isClient.value ? 'Client portal' : currentUser.value?.roleLabel || 'Demo workspace')
 const workspaceInitials = computed(() => currentUser.value?.initials || 'Q')
@@ -169,10 +178,9 @@ const visibleNavItems = computed(() => {
       { key: 'role-workspace', label: 'My role workspace', icon: 'grid', section: 'Client portal' },
       { key: 'client-home', label: 'Portal overview', icon: 'grid', section: 'Client portal' },
       { key: 'client-details', label: 'Client details', icon: 'users', section: 'Client portal' },
-      { key: 'client-communications', label: 'Communications', icon: 'message', section: 'Client portal', badge: '2' },
+      { key: 'client-communications', label: 'Communications', icon: 'message', section: 'Client portal' },
       { key: 'artifacts', label: 'Published outputs', icon: 'file', section: 'Client portal' },
       { key: 'pipeline', label: 'Pipeline visualizer', icon: 'workflow', section: 'Client portal' },
-      { key: 'shared-demo', label: 'Shared demo control room', icon: 'workflow', section: 'Client portal' },
       { key: 'client-architecture', label: 'How the platform works', icon: 'workflow', section: 'Client portal' },
     ]
   }
@@ -319,6 +327,10 @@ function handleLogin(user) {
 // otherwise falls back to the first allowed context, and stays on the
 // current route when authorized (else opens the role workspace).
 async function handlePersonaSwitch(personaId) {
+  if (isClientInvitation.value) {
+    permissionNotice.value = 'This client invitation is fixed to the client portal. Sign out to return to presenter access.'
+    return
+  }
   const user = getDemoUser(personaId)
   if (!user || personaBusy.value) return
   if (user.id === currentUser.value?.id) return
@@ -405,6 +417,7 @@ function showLogin() {
   if (currentRoute.value) pendingDeepLink.value = currentRoute.value
   clearDemoSession()
   setActivePersona(null)
+  clearActiveDemoSession()
   setActiveDemoView(null)
   currentUser.value = null
   currentRoute.value = ''
@@ -463,10 +476,10 @@ onBeforeUnmount(() => {
     </aside>
 
     <div class="app-main">
-      <header class="topbar"><div class="topbar-left"><button type="button" class="mobile-menu" aria-label="Open navigation" title="Open navigation" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = true"><Icon name="menu" :size="19" /></button><nav class="breadcrumbs" aria-label="Context breadcrumb"><template v-for="(crumb, index) in demoCrumbs" :key="`${crumb.label}-${index}`"><button v-if="crumb.route" type="button" class="text-button breadcrumb-link" @click="navigate(crumb.route)">{{ crumb.label }}</button><strong v-else aria-current="page">{{ crumb.label }}</strong><Icon v-if="index < demoCrumbs.length - 1" name="chevron-right" :size="16" /></template></nav></div><div class="topbar-actions"><form class="top-search" role="search" @submit.prevent="submitSearch"><Icon name="search" :size="17" /><input v-model="search" type="search" aria-label="Search clients, engagements and IDs (opens command palette)" placeholder="Search anything (Ctrl/Cmd+K)" @focus="commandPaletteOpen = true" /></form><button type="button" class="top-icon-button" :aria-label="`Notifications, ${demoNotificationCount} items`" :title="`Notifications, ${demoNotificationCount} items`" @click="demoNotificationsOpen = true"><Icon name="bell" :size="18" /><span aria-hidden="true">{{ demoNotificationCount }}</span></button><div class="account-control"><button type="button" class="top-user top-user-button" aria-label="Open account menu" title="Open account menu" :aria-expanded="accountMenuOpen" @click="accountMenuOpen = !accountMenuOpen"><span class="avatar" :class="`avatar-${currentUser.tone}`">{{ currentUser.initials }}</span><span><strong>{{ currentUser.name }}</strong><small>{{ currentUser.roleLabel }}</small></span><Icon name="chevron-down" :size="15" /></button><div v-if="accountMenuOpen" class="account-menu" role="menu"><div class="account-menu-heading"><strong>{{ currentUser.name }}</strong><span>{{ currentUser.email }}</span></div><span class="account-menu-label">Switch demo persona</span><button v-for="persona in demoUsers.filter((candidate) => candidate.id !== currentUser.id)" :key="persona.id" type="button" role="menuitem" :disabled="personaBusy" @click="accountMenuOpen = false; handlePersonaSwitch(persona.id)">{{ persona.roleLabel }}</button><button type="button" role="menuitem" @click="showLogin">Sign out</button></div></div></div></header>
+      <header class="topbar"><div class="topbar-left"><button type="button" class="mobile-menu" aria-label="Open navigation" title="Open navigation" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = true"><Icon name="menu" :size="19" /></button><nav class="breadcrumbs" aria-label="Context breadcrumb"><template v-for="(crumb, index) in demoCrumbs" :key="`${crumb.label}-${index}`"><button v-if="crumb.route" type="button" class="text-button breadcrumb-link" @click="navigate(crumb.route)">{{ crumb.label }}</button><strong v-else aria-current="page">{{ crumb.label }}</strong><Icon v-if="index < demoCrumbs.length - 1" name="chevron-right" :size="16" /></template></nav></div><div class="topbar-actions"><form class="top-search" role="search" @submit.prevent="submitSearch"><Icon name="search" :size="17" /><input v-model="search" type="search" aria-label="Search clients, engagements and IDs (opens command palette)" placeholder="Search anything (Ctrl/Cmd+K)" @focus="commandPaletteOpen = true" /></form><button type="button" class="top-icon-button" :aria-label="`Notifications, ${demoNotificationCount} items`" :title="`Notifications, ${demoNotificationCount} items`" @click="demoNotificationsOpen = true"><Icon name="bell" :size="18" /><span aria-hidden="true">{{ demoNotificationCount }}</span></button><div class="account-control"><button type="button" class="top-user top-user-button" aria-label="Open account menu" title="Open account menu" :aria-expanded="accountMenuOpen" @click="accountMenuOpen = !accountMenuOpen"><span class="avatar" :class="`avatar-${currentUser.tone}`">{{ currentUser.initials }}</span><span><strong>{{ currentUser.name }}</strong><small>{{ currentUser.roleLabel }}</small></span><Icon name="chevron-down" :size="15" /></button><div v-if="accountMenuOpen" class="account-menu" role="menu"><div class="account-menu-heading"><strong>{{ currentUser.name }}</strong><span>{{ currentUser.email }}</span></div><template v-if="!isClientInvitation"><span class="account-menu-label">Switch demo persona</span><button v-for="persona in demoUsers.filter((candidate) => candidate.id !== currentUser.id)" :key="persona.id" type="button" role="menuitem" :disabled="personaBusy" @click="accountMenuOpen = false; handlePersonaSwitch(persona.id)">{{ persona.roleLabel }}</button></template><p v-else class="account-menu-note">Client invitation access is fixed to this portal.</p><button type="button" role="menuitem" @click="showLogin">Sign out</button></div></div></div></header>
       <DemoNavigator
         :current-user="currentUser"
-        :personas="demoUsers"
+        :personas="isClientInvitation ? [] : demoUsers"
         :contexts="demoContexts"
         :active-engagement-id="activeEngagementId"
         :active-context="demoActiveContext"
@@ -481,7 +494,7 @@ onBeforeUnmount(() => {
         @open-palette="commandPaletteOpen = true"
         @open-notifications="demoNotificationsOpen = true"
       />
-      <div class="system-strip"><span><i></i> {{ systemLabel }}</span><span>{{ demoActiveContext ? `${demoActiveContext.clientName} · ${demoActiveContext.serviceLabel} ${demoActiveContext.period}` : (isClient ? currentUser.organization : `${client.name} · ${client.period}`) }}</span></div>
+      <div class="system-strip"><span><i></i> {{ systemLabel }}</span><span>{{ demoActiveContext ? `${demoActiveContext.clientName} · ${demoActiveContext.serviceLabel} ${demoActiveContext.period}` : (isClient ? currentUser.organization : `${client.name} · ${client.period}`) }}</span><span class="build-version">Build {{ buildCommit }}</span></div>
       <div v-if="permissionNotice" class="permission-notice" role="status" aria-live="polite"><Icon name="warning" :size="17" />{{ permissionNotice }}</div>
       <main id="main-content" class="main-content" tabindex="-1"><component :is="current.component" @navigate="navigate" /></main>
     </div>
@@ -499,7 +512,7 @@ onBeforeUnmount(() => {
     <CommandPalette
       :open="commandPaletteOpen"
       :contexts="demoContexts"
-      :personas="demoUsers"
+      :personas="isClientInvitation ? [] : demoUsers"
       :routes="paletteRoutes"
       :tasks="demoTasks"
       :initial-query="search"

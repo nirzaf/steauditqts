@@ -7,14 +7,30 @@ import { questionPolicyFor, validateQuestionResponse } from '../shared/questionP
 import { buildWorkspaceProjection, isWorkspaceEventPublic } from './application/workspace.js';
 import { actionAllowed, actionDefinition } from './application/actions.js';
 import { CommandInputError, readCommandEnvelope } from './http/commandEnvelope.js';
+import { executeDecisionBatch } from './repositories/decisionBatch.js';
 
 const DEFAULT_ENGAGEMENT_ID = 'ENG-0018-AUD-2026'
 const MAX_REQUEST_BYTES = 16_000
 const MAX_COMMENT_LENGTH = 1_200
 const MAX_CONTEXT_LENGTH = 1_200
 const MAX_PAGE_SIZE = 50
+const MAX_UPLOAD_BYTES = 10_000_000
+const UPLOAD_TTL_SECONDS = 24 * 60 * 60
+const INVITATION_TTL_SECONDS = 7 * 24 * 60 * 60
+const MAX_INVITATION_SESSIONS = 5
+const MAX_MESSAGE_LENGTH = 2_000
+const ALLOWED_UPLOAD_TYPES = new Set([
+  'application/pdf',
+  'text/csv',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+])
 const SAFE_KEY = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
 const SAFE_ENGAGEMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}$/
+const SAFE_RUN_ID = /^run-[a-z0-9]{8,32}$/
+const SAFE_INVITATION_ID = /^inv-[a-zA-Z0-9_-]{8,120}$/
+const SAFE_RECEIPT_ID = /^rec-[a-zA-Z0-9_-]{8,120}$/
+const SAFE_MESSAGE_ID = /^msg-[a-zA-Z0-9_-]{8,120}$/
 const ALLOWED_ORIGINS = new Set([
   'https://ste.quadrate.lk',
   'http://localhost:5173',
@@ -109,6 +125,52 @@ function cleanText(value, maxLength, fallback = '') {
   return text && text.length <= maxLength ? text : null
 }
 
+function hexFromBytes(bytes) {
+  return [...new Uint8Array(bytes)].map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+async function sha256Hex(value) {
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value
+  return hexFromBytes(await crypto.subtle.digest('SHA-256', bytes))
+}
+
+function randomToken(prefix = '') {
+  const token = `${crypto.randomUUID().replaceAll('-', '')}${crypto.randomUUID().replaceAll('-', '')}`
+  return `${prefix}${token}`
+}
+
+function runScopedEngagementId(runId, logicalEngagementId) {
+  const runToken = String(runId || '').replace(/^run-/, '').slice(0, 10)
+  const logical = String(logicalEngagementId || '')
+  const match = logical.match(/^ENG-(\d{4})-(AUD|ACC)-\d{4}$/)
+  if (!SAFE_RUN_ID.test(runId) || !match) return null
+  return `run-${runToken}-${match[1]}-${match[2]}-26`
+}
+
+function isClientPersona(persona) {
+  return Boolean(persona?.roles?.some((role) => ['client_contributor', 'client_finance', 'management_approver'].includes(role)))
+}
+
+function isClientModeSession(session) {
+  return Number(session?.clientMode || 0) === 1
+}
+
+function canWriteClientSession(session) {
+  return !isClientModeSession(session) || Boolean(session.invitationId)
+}
+
+function invitationExpiresAt() {
+  return new Date(Date.now() + INVITATION_TTL_SECONDS * 1000).toISOString()
+}
+
+function uploadExpiresAt() {
+  return new Date(Date.now() + UPLOAD_TTL_SECONDS * 1000).toISOString()
+}
+
+function sqlDateTime(iso) {
+  return String(iso || new Date().toISOString()).replace('T', ' ').replace(/\.\d{3}Z$/, '')
+}
+
 function readBoolean(value) {
   return value === true || String(value ?? '').trim().toLowerCase() === 'true';
 }
@@ -167,6 +229,7 @@ async function saveClientProfile(request, env) {
   if (!engagementId) return error(request, 'A valid engagementId is required.')
   const checked = await requireEngagementScope(request, env, engagementId)
   if (checked.response) return checked.response
+  if (!canWriteClientSession(checked.session)) return error(request, 'Open an invitation link before submitting client details.', 403, 'INVITATION_REQUIRED')
   const legalName = cleanText(payload.legalName, 160)
   const registration = cleanText(payload.registration, 80)
   const contactName = cleanText(payload.contactName, 80)
@@ -224,6 +287,7 @@ async function createComment(request, env) {
   if (!engagementId) return error(request, 'A valid engagementId is required.')
   const checked = await requireEngagementScope(request, env, engagementId)
   if (checked.response) return checked.response
+  if (!canWriteClientSession(checked.session)) return error(request, 'Open an invitation link before adding client comments.', 403, 'INVITATION_REQUIRED')
   const pageKey = readKey(payload.pageKey)
   const stepKey = readKey(payload.stepKey, pageKey || '')
   const requestedAuthorName = cleanText(payload.authorName, 80)
@@ -281,6 +345,7 @@ async function saveStepPreference(request, env) {
   if (!engagementId) return error(request, 'A valid engagementId is required.')
   const checked = await requireEngagementScope(request, env, engagementId)
   if (checked.response) return checked.response
+  if (!canWriteClientSession(checked.session)) return error(request, 'Open an invitation link before changing client preferences.', 403, 'INVITATION_REQUIRED')
   const stepKey = readKey(payload.stepKey)
   const updatedBy = cleanText(payload.updatedBy, 80, 'Client contact')
   if (!engagementId || !stepKey || !updatedBy || typeof payload.isOptional !== 'boolean') {
@@ -344,6 +409,20 @@ function sessionCookie(sessionId) {
   return `${DEMO_SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${DEMO_SESSION_TTL_SECONDS}`;
 }
 
+async function readSessionScope(env, sessionId) {
+  if (!env.DB || !sessionId) return null
+  try {
+    return await env.DB.prepare(
+      `SELECT session_id, run_id, invitation_id, client_mode, created_at
+       FROM auditflow_demo_session_scopes WHERE session_id = ?1`,
+    ).bind(sessionId).first()
+  } catch {
+    // The additive client-safe migration may not be present on an older local
+    // Worker. Keep the legacy session path available until it is applied.
+    return null
+  }
+}
+
 async function resolveDemoSession(request, env) {
   const sessionId = readSessionId(request);
   if (!sessionId || !env.DB) return null;
@@ -361,7 +440,16 @@ async function resolveDemoSession(request, env) {
   if (!Number.isFinite(lastActivity) || Date.now() - lastActivity > 60_000) {
     void env.DB.prepare("UPDATE auditflow_demo_sessions SET last_activity = datetime('now') WHERE session_id = ?1").bind(sessionId).run().catch(() => {});
   }
-  return { sessionId: row.session_id, personaId: row.persona_id, actorId: row.actor_id, roles: persona.roles };
+  const scope = await readSessionScope(env, row.session_id)
+  return {
+    sessionId: row.session_id,
+    personaId: row.persona_id,
+    actorId: row.actor_id,
+    roles: persona.roles,
+    runId: scope?.run_id || '',
+    invitationId: scope?.invitation_id || '',
+    clientMode: Number(scope?.client_mode || 0),
+  };
 }
 
 function serializeEngagementState(row) {
@@ -421,18 +509,106 @@ function serializeEvent(row) {
   };
 }
 
+async function readInvitation(env, token) {
+  const raw = String(token || '').trim()
+  if (!/^[A-Za-z0-9_-]{40,160}$/.test(raw)) return null
+  const tokenHash = await sha256Hex(raw)
+  let row
+  try {
+    row = await env.DB.prepare(
+      `SELECT invitation_id, run_id, token_hash, persona_id, status, max_sessions, session_count, created_at, expires_at
+       FROM auditflow_demo_invitations WHERE token_hash = ?1`,
+    ).bind(tokenHash).first()
+  } catch {
+    return null
+  }
+  if (!row) return null
+  const expiry = new Date(`${row.expires_at}Z`.replace(/ZZ$/, 'Z')).getTime()
+  if (row.status !== 'ACTIVE' || !Number.isFinite(expiry) || expiry <= Date.now()) {
+    if (row.status === 'ACTIVE') void env.DB.prepare("UPDATE auditflow_demo_invitations SET status = 'EXPIRED' WHERE invitation_id = ?1").bind(row.invitation_id).run().catch(() => {})
+    return null
+  }
+  return row
+}
+
+async function createDemoInvitation(request, env) {
+  if (env.ALLOW_DEMO_WRITES === 'false') return error(request, 'Demo writes are currently disabled.', 403, 'WRITES_DISABLED')
+  const checked = await requireDemoSession(request, env)
+  if (checked.response) return checked.response
+  if (!hasAnyRole(checked.session, ['system_admin', 'engagement_partner'])) return error(request, 'Only the Admin or Partner demo persona can create a client invitation.', 403, 'INVITATION_NOT_AUTHORIZED')
+  const payload = await readJson(request)
+  if (!payload) return error(request, 'Send a JSON object in the request body.')
+  const personaId = String(payload.personaId || 'client-demo').trim()
+  const persona = DEMO_PERSONAS[personaId]
+  if (!persona || !isClientPersona(persona)) return error(request, 'Choose a client demo persona for the invitation.', 400, 'UNKNOWN_CLIENT_PERSONA')
+  const invitationId = `inv-${crypto.randomUUID().replaceAll('-', '')}`
+  const rawToken = randomToken('')
+  const tokenHash = await sha256Hex(rawToken)
+  const runId = `run-${crypto.randomUUID().replaceAll('-', '').slice(0, 10)}`
+  const generationId = `gen-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`
+  const expiresAt = invitationExpiresAt()
+  await ensureRunSeed(env, runId, generationId, checked.session.sessionId)
+  await env.DB.prepare(
+    `INSERT INTO auditflow_demo_invitations
+      (invitation_id, run_id, token_hash, persona_id, status, max_sessions, session_count, expires_at)
+     VALUES (?1, ?2, ?3, ?4, 'ACTIVE', ?5, 0, ?6)`,
+  ).bind(invitationId, runId, tokenHash, personaId, MAX_INVITATION_SESSIONS, sqlDateTime(expiresAt)).run()
+  const siteOrigin = new URL(request.url).origin.replace(/\/api$/, '')
+  const inviteUrl = `${siteOrigin}/?invite=${encodeURIComponent(rawToken)}#/client-home`
+  return json(request, { ok: true, invitation: { invitationId, runId, personaId, inviteUrl, expiresAt }, evidenceLevel: 'SIMULATION' }, 201)
+}
+
+async function writeSessionScope(env, sessionId, { runId = '', invitationId = '', clientMode = 0 } = {}) {
+  if (!env.DB || !sessionId || !SAFE_RUN_ID.test(runId)) return
+  try {
+    await env.DB.prepare(
+      `INSERT INTO auditflow_demo_session_scopes (session_id, run_id, invitation_id, client_mode)
+       VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT (session_id) DO UPDATE SET run_id = excluded.run_id, invitation_id = excluded.invitation_id, client_mode = excluded.client_mode`,
+    ).bind(sessionId, runId, invitationId, clientMode ? 1 : 0).run()
+  } catch { /* migration is additive; legacy sessions remain usable */ }
+}
+
 async function createDemoSession(request, env) {
   if (env.ALLOW_DEMO_WRITES === 'false') return error(request, 'Demo writes are currently disabled.', 403, 'WRITES_DISABLED');
   const payload = await readJson(request);
   if (!payload) return error(request, 'Send a JSON object in the request body.');
-  const personaId = String(payload.personaId || '').trim();
+  const requestedPersonaId = String(payload.personaId || '').trim();
+  const inviteToken = String(payload.inviteToken || '').trim();
+  const invitation = inviteToken ? await readInvitation(env, inviteToken) : null
+  if (inviteToken && !invitation) return error(request, 'This client invitation is invalid, expired, or already at its session limit.', 410, 'INVITATION_UNAVAILABLE')
+  const personaId = invitation?.persona_id || requestedPersonaId;
   const persona = DEMO_PERSONAS[personaId];
   if (!persona) return error(request, 'Choose one of the demo personas.', 400, 'UNKNOWN_PERSONA');
+  if (invitation && requestedPersonaId && requestedPersonaId !== invitation.persona_id) return error(request, 'This invitation is bound to the client persona it was issued for.', 403, 'INVITATION_PERSONA_MISMATCH')
+  if (invitation && !isClientPersona(persona)) return error(request, 'Only a client persona can join this invitation.', 403, 'INVITATION_PERSONA_MISMATCH')
   // Keep the viewer's parent session stable across tabs. A login/persona
   // change rotates the effective actor in the new view, while existing views
   // remain bound to their own persona and cannot be changed by that tab.
   const existing = await resolveDemoSession(request, env);
   const sessionId = existing?.sessionId || (crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '').slice(0, 8));
+  let runId = invitation?.run_id || existing?.runId || ''
+  let generationId = ''
+  let clientMode = invitation || isClientPersona(persona) ? 1 : 0
+  if (clientMode && !runId) {
+    runId = `run-${crypto.randomUUID().replaceAll('-', '').slice(0, 10)}`
+    generationId = `gen-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`
+  }
+  if (invitation) {
+    const alreadyJoined = existing?.invitationId === invitation.invitation_id
+    if (!alreadyJoined) {
+      const joined = await env.DB.prepare(
+      `UPDATE auditflow_demo_invitations SET session_count = session_count + 1, last_used_at = datetime('now')
+       WHERE invitation_id = ?1 AND status = 'ACTIVE' AND session_count < max_sessions`,
+      ).bind(invitation.invitation_id).run()
+      if (joined?.meta && !joined.meta.changes) return error(request, 'This client invitation has reached its session limit.', 410, 'INVITATION_UNAVAILABLE')
+    }
+    try {
+      const seeded = await env.DB.prepare('SELECT generation_id FROM auditflow_demo_runs WHERE run_id = ?1').bind(invitation.run_id).first()
+      generationId = seeded?.generation_id || ''
+    } catch { generationId = '' }
+  }
+  if (clientMode && runId) await ensureRunSeed(env, runId, generationId || `gen-${runId.slice(4)}`, sessionId)
   if (existing) {
     await env.DB.prepare(
       `UPDATE auditflow_demo_sessions SET persona_id = ?1, actor_id = ?2, expires_at = datetime('now', '+1 day'), last_activity = datetime('now') WHERE session_id = ?3`,
@@ -443,15 +619,18 @@ async function createDemoSession(request, env) {
        VALUES (?1, ?2, ?3, datetime('now', '+1 day'))`,
     ).bind(sessionId, personaId, persona.actorId).run();
   }
+  if (clientMode && runId) await writeSessionScope(env, sessionId, { runId, invitationId: invitation?.invitation_id || '', clientMode: 1 })
   const correlationId = requestCorrelationId(request);
   const headers = baseHeaders(request, correlationId);
   headers['Set-Cookie'] = sessionCookie(sessionId);
   let view = null;
   try {
-    const descriptor = await ensureDemoRunAndView(env, { sessionId, personaId, actorId: persona.actorId, roles: persona.roles }, { personaId, engagementId: DEFAULT_ENGAGEMENT_ID, reuse: false });
-    if (descriptor) view = serializeView(descriptor.row, { sessionId, personaId, actorId: persona.actorId, roles: persona.roles }, descriptor.contexts);
+    const session = { sessionId, personaId, actorId: persona.actorId, roles: persona.roles, runId, invitationId: invitation?.invitation_id || '', clientMode }
+    const requestedEngagement = invitation ? runScopedEngagementId(runId, DEFAULT_ENGAGEMENT_ID) : DEFAULT_ENGAGEMENT_ID
+    const descriptor = await ensureDemoRunAndView(env, session, { personaId, engagementId: requestedEngagement, reuse: false });
+    if (descriptor) view = serializeView(descriptor.row, session, descriptor.contexts);
   } catch { /* M7 view migration can be applied independently of legacy login. */ }
-  return Response.json({ ok: true, session: { personaId, actorId: persona.actorId, roles: persona.roles }, view, evidenceLevel: 'SIMULATION' }, { status: 201, headers });
+  return Response.json({ ok: true, session: { personaId, actorId: persona.actorId, roles: persona.roles, runId, invitationId: invitation?.invitation_id || '', clientMode, readOnly: clientMode === 1 && !invitation }, view, evidenceLevel: 'SIMULATION' }, { status: 201, headers });
 }
 
 async function getDemoMe(request, env) {
@@ -462,7 +641,20 @@ async function getDemoMe(request, env) {
   const viewId = readViewId(request);
   const view = viewId ? await readDemoView(env, session, viewId) : null;
   const effective = view ? effectiveSessionForView(view, session) : session;
-  return json(request, { ok: true, session: { personaId: effective.personaId, actorId: effective.actorId, roles: effective.roles }, view: view ? serializeView(view, effective, await listAuthorizedContexts(env, effective)) : null, evidenceLevel: 'SIMULATION' });
+  return json(request, {
+    ok: true,
+    session: {
+      personaId: effective.personaId,
+      actorId: effective.actorId,
+      roles: effective.roles,
+      runId: effective.runId || '',
+      invitationId: effective.invitationId || '',
+      clientMode: Number(effective.clientMode || 0),
+      readOnly: isClientModeSession(effective) && !effective.invitationId,
+    },
+    view: view ? serializeView(view, effective, await listAuthorizedContexts(env, effective)) : null,
+    evidenceLevel: 'SIMULATION',
+  });
 }
 
 async function getEngagement(request, env, engagementId) {
@@ -520,7 +712,7 @@ async function listArtifacts(request, env, url) {
   const checked = await requireEngagementScope(request, env, engagementId);
   if (checked.response) return checked.response;
   if (!engagementId) return error(request, 'A valid engagementId is required.');
-  if (!(ACTOR_ASSIGNMENTS[checked.session.actorId] || []).includes(engagementId)) return error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
+  if (!(await isAssignedToEngagement(env, checked.session, engagementId))) return error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
   const result = await env.DB.prepare(
     'SELECT * FROM auditflow_artifacts WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT 100',
   ).bind(engagementId).all();
@@ -538,7 +730,7 @@ async function listOutbox(request, env, url) {
   const checked = await requireEngagementScope(request, env, engagementId);
   if (checked.response) return checked.response;
   if (!engagementId) return error(request, 'A valid engagementId is required.');
-  if (!(ACTOR_ASSIGNMENTS[checked.session.actorId] || []).includes(engagementId)) return error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
+  if (!(await isAssignedToEngagement(env, checked.session, engagementId))) return error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
   const result = await env.DB.prepare(
     'SELECT * FROM auditflow_outbox WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT 100',
   ).bind(engagementId).all();
@@ -566,6 +758,20 @@ const ACTOR_ASSIGNMENTS = {
   'ACT-SARA': ['ENG-0018-AUD-2026', 'ENG-0009-ACC-2026'],
   'ACT-RECORDS': ['ENG-0018-AUD-2026', 'ENG-0009-ACC-2026'],
 };
+
+const DEMO_RUN_CONTEXT_DEFINITIONS = Object.freeze([
+  { logicalEngagementId: 'ENG-0018-AUD-2026', clientId: 'CLI-0018', service: 'AUDIT', period: 'FY2026', linkedLogicalEngagementId: '' },
+  { logicalEngagementId: 'ENG-0018-ACC-2026', clientId: 'CLI-0018', service: 'ACCOUNTING', period: 'FY2026', linkedLogicalEngagementId: 'ENG-0018-AUD-2026' },
+  { logicalEngagementId: 'ENG-0009-ACC-2026', clientId: 'CLI-0009', service: 'ACCOUNTING', period: 'FY2026', linkedLogicalEngagementId: '' },
+]);
+
+function logicalContextFor(engagementId) {
+  return DEMO_RUN_CONTEXT_DEFINITIONS.find((item) => item.logicalEngagementId === engagementId) || null;
+}
+
+function scopedRunContexts(session) {
+  return Boolean(session?.runId && SAFE_RUN_ID.test(session.runId))
+}
 
 // Phase A — unified demo navigation directory. Client and service labels are
 // presentation-only; authorization always comes from ACTOR_ASSIGNMENTS plus
@@ -643,6 +849,7 @@ function routeKeysForSession(session, service = '') {
   add('admin-console', ['admin', 'system-admin']);
   if (roles.includes('client') || roles.includes('client-management')) {
     keys.add('client-home'); keys.add('client-details'); keys.add('client-communications'); keys.add('client-architecture');
+    keys.delete('shared-demo');
   }
   if (roles.includes('accountant') || roles.includes('accounting-reviewer') || roles.includes('preparer')) {
     keys.add('accountant-home'); keys.add('accountant-client'); keys.add('accountant-architecture');
@@ -680,7 +887,88 @@ function serializeView(row, session, contexts = []) {
   };
 }
 
+async function ensureRunSeed(env, runId, generationId, hostSessionId = '') {
+  if (!env.DB || !SAFE_RUN_ID.test(runId)) return false
+  const generation = cleanText(generationId, 80, `gen-${runId.slice(4)}`) || `gen-${runId.slice(4)}`
+  await env.DB.prepare(
+    `INSERT INTO auditflow_demo_runs (run_id, name, generation_id, state, host_session_id)
+     VALUES (?1, 'Client invitation demo', ?2, 'ACTIVE', ?3)
+     ON CONFLICT (run_id) DO UPDATE SET generation_id = excluded.generation_id, updated_at = datetime('now')`,
+  ).bind(runId, generation, hostSessionId).run()
+  for (const definition of DEMO_RUN_CONTEXT_DEFINITIONS) {
+    const engagementId = runScopedEngagementId(runId, definition.logicalEngagementId)
+    if (!engagementId) continue
+    await env.DB.prepare(
+      `INSERT INTO auditflow_demo_run_contexts
+        (run_id, logical_engagement_id, engagement_id, client_id, service, period, generation_id, linked_logical_engagement_id)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+       ON CONFLICT (engagement_id) DO NOTHING`,
+    ).bind(runId, definition.logicalEngagementId, engagementId, definition.clientId, definition.service, definition.period, generation, definition.linkedLogicalEngagementId).run()
+    await env.DB.prepare(
+      `INSERT INTO auditflow_engagement_state
+        (engagement_id, client_id, service, period, revision, current_stage, g_status, generation_id)
+       VALUES (?1, ?2, ?3, ?4, 1, 'STAGE-01', '{}', ?5)
+       ON CONFLICT (engagement_id) DO NOTHING`,
+    ).bind(engagementId, definition.clientId, definition.service, definition.period, generation).run()
+    // Seed one clearly fictional PBC request for the client walkthrough. The
+    // request is run-prefixed, so uploads and replies can never collide with
+    // legacy synthetic records or another invitation run.
+    if (definition.service === 'AUDIT') {
+      const requestId = `PBC-${runId.slice(4, 14).toUpperCase()}-TB`
+      try {
+        await env.DB.prepare(
+          `INSERT INTO auditflow_pbc_requests
+            (request_id, engagement_id, title, description, category, period, due_date, client_owner, reviewer, acceptance_criteria, state)
+           VALUES (?1, ?2, 'Trial balance and ledger extract', 'Upload the fictional trial balance and supporting ledger extract for the FY2026 walkthrough.', 'Financial data', ?3, '2026-09-30', 'Client finance contact', 'Audit Senior', 'PDF, CSV, XLS or XLSX file under 10 MB', 'OPEN')
+           ON CONFLICT (request_id) DO NOTHING`,
+        ).bind(requestId, engagementId, definition.period).run()
+      } catch { /* older local installations can apply the additive migration later */ }
+    }
+  }
+  return true
+}
+
+async function runContextFor(env, session, engagementId) {
+  if (!scopedRunContexts(session)) return null
+  return env.DB.prepare(
+    `SELECT run_id, logical_engagement_id, engagement_id, client_id, service, period, generation_id, linked_logical_engagement_id
+     FROM auditflow_demo_run_contexts WHERE run_id = ?1 AND engagement_id = ?2`,
+  ).bind(session.runId, engagementId).first()
+}
+
+async function isAssignedToEngagement(env, session, engagementId) {
+  if (scopedRunContexts(session)) {
+    const context = await runContextFor(env, session, engagementId)
+    if (!context) return false
+    const allowed = ACTOR_ASSIGNMENTS[session.actorId] || []
+    return allowed.includes(context.logical_engagement_id)
+  }
+  return (ACTOR_ASSIGNMENTS[session.actorId] || []).includes(engagementId)
+}
+
 async function listAuthorizedContexts(env, session) {
+  if (scopedRunContexts(session)) {
+    const result = await env.DB.prepare(
+      `SELECT c.run_id, c.logical_engagement_id, c.engagement_id, c.client_id, c.service, c.period,
+        c.generation_id, c.linked_logical_engagement_id, e.revision, e.current_stage, e.updated_at
+       FROM auditflow_demo_run_contexts c
+       JOIN auditflow_engagement_state e ON e.engagement_id = c.engagement_id
+       WHERE c.run_id = ?1 ORDER BY c.engagement_id`,
+    ).bind(session.runId).all()
+    const allowed = ACTOR_ASSIGNMENTS[session.actorId] || []
+    const rows = (result.results || []).filter((row) => allowed.includes(row.logical_engagement_id))
+    const linked = new Map(rows.map((row) => [row.logical_engagement_id, row.engagement_id]))
+    return rows.map((row) => {
+      const context = serializeDemoContext(row)
+      return {
+        ...context,
+        allowedRouteKeys: routeKeysForSession(session, context.service),
+        linkedEngagementId: row.linked_logical_engagement_id ? linked.get(row.linked_logical_engagement_id) || null : null,
+        runId: row.run_id,
+        logicalEngagementId: row.logical_engagement_id,
+      }
+    })
+  }
   const allowed = ACTOR_ASSIGNMENTS[session?.actorId] || [];
   if (!allowed.length) return [];
   const placeholders = allowed.map((_, index) => `?${index + 1}`).join(', ');
@@ -751,11 +1039,13 @@ async function ensureDemoRunAndView(env, session, { personaId = session?.persona
   const effectiveCandidate = { ...session, personaId: chosenPersona, actorId: persona.actorId, roles: persona.roles };
   const contexts = await listAuthorizedContexts(env, effectiveCandidate);
   const personaAssignments = ACTOR_ASSIGNMENTS[persona.actorId] || [];
-  const selected = contexts.find((context) => context.engagementId === engagementId && personaAssignments.includes(context.engagementId))
-    || contexts.find((context) => personaAssignments.includes(context.engagementId))
-    || contexts[0];
+  const selected = scopedRunContexts(session)
+    ? contexts.find((context) => context.engagementId === engagementId) || contexts[0]
+    : contexts.find((context) => context.engagementId === engagementId && personaAssignments.includes(context.engagementId))
+      || contexts.find((context) => personaAssignments.includes(context.engagementId))
+      || contexts[0];
   if (!selected) throw new Error('No authorized engagement is available for this demo view.');
-  const runId = `run-${session.sessionId.slice(0, 24)}`;
+  const runId = scopedRunContexts(session) ? session.runId : `run-${session.sessionId.slice(0, 24)}`;
   try {
     await env.DB.prepare(
       `INSERT INTO auditflow_demo_runs (run_id, name, generation_id, state, host_session_id)
@@ -933,7 +1223,9 @@ async function touchEngagement(env, engagementId, stage) {
   return readEngagementRow(env, engagementId);
 }
 
-async function upsertTask(env, task) {
+// Pure task upsert statement shared by the live write path and the batched
+// completion-chain commits (M7 PIPE-F11).
+function taskUpsertStatement(task) {
   const routeForObjectType = {
     assessment: 'clients',
     commercial: 'blueprint',
@@ -961,8 +1253,8 @@ async function upsertTask(env, task) {
   const state = task.state || 'OPEN';
   const priority = String(task.priority || (state === 'BLOCKED' ? 'CRITICAL' : ['decision', 'review_point'].includes(task.linkedObjectType) ? 'HIGH' : 'NORMAL')).toUpperCase();
   const dueDate = task.dueDate || '';
-  await env.DB.prepare(
-    `INSERT INTO auditflow_tasks
+  return {
+    sql: `INSERT INTO auditflow_tasks
       (task_id, engagement_id, assignee_persona, assignee_role, title, state, due_date, linked_object_type, linked_object_id,
        priority, blocker_code, route, target, stage, creator, sla_due_at, escalation_state, updated_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, datetime('now'))
@@ -983,30 +1275,31 @@ async function upsertTask(env, task) {
        sla_due_at = excluded.sla_due_at,
        escalation_state = excluded.escalation_state,
        updated_at = datetime('now')`,
-  ).bind(
-    task.taskId,
-    task.engagementId,
-    task.assigneePersona || '',
-    task.assigneeRole || '',
-    task.title,
-    state,
-    dueDate,
-    task.linkedObjectType || '',
-    task.linkedObjectId || '',
-    ['CRITICAL', 'HIGH', 'NORMAL', 'LOW'].includes(priority) ? priority : 'NORMAL',
-    task.blockerCode || '',
-    task.route || routeForObjectType[task.linkedObjectType] || 'role-workspace',
-    task.target || task.assigneeRole || '',
-    task.stage || stageForObjectType[task.linkedObjectType] || '',
-    task.creator || 'WORKFLOW',
-    task.slaDueAt || dueDate,
-    task.escalationState || (state === 'BLOCKED' ? 'ESCALATED' : 'NONE'),
-  ).run();
+    params: [
+      task.taskId,
+      task.engagementId,
+      task.assigneePersona || '',
+      task.assigneeRole || '',
+      task.title,
+      state,
+      dueDate,
+      task.linkedObjectType || '',
+      task.linkedObjectId || '',
+      ['CRITICAL', 'HIGH', 'NORMAL', 'LOW'].includes(priority) ? priority : 'NORMAL',
+      task.blockerCode || '',
+      task.route || routeForObjectType[task.linkedObjectType] || 'role-workspace',
+      task.target || task.assigneeRole || '',
+      task.stage || stageForObjectType[task.linkedObjectType] || '',
+      task.creator || 'WORKFLOW',
+      task.slaDueAt || dueDate,
+      task.escalationState || (state === 'BLOCKED' ? 'ESCALATED' : 'NONE'),
+    ],
+  };
 }
 
-async function sha256Hex(value) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+async function upsertTask(env, task) {
+  const statement = taskUpsertStatement(task);
+  await env.DB.prepare(statement.sql).bind(...statement.params).run();
 }
 
 async function actionSubmitClientDetails(request, env, session, id, payload, correlationId) {
@@ -1723,7 +2016,7 @@ async function actionRespondDraftFs(request, env, session, id, payload, correlat
   return json(request, { ok: true, decision: { decisionId, decision, version }, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
 }
 
-async function actionCompleteEqr(request, env, session, id, payload, correlationId) {
+async function actionCompleteEqr(request, env, session, id, payload, correlationId, tx) {
   if (!hasAnyRole(session, ['eqr_reviewer'])) {
     return error(request, 'Only the EQR Reviewer demo persona can complete the quality review.', 403, 'ROLE_NOT_AUTHORIZED');
   }
@@ -1745,6 +2038,26 @@ async function actionCompleteEqr(request, env, session, id, payload, correlation
     if (generations.input !== generations.evaluated) return error(request, 'Accounting input is stale; audit must evaluate the current generation before EQR.', 409, 'ACCOUNTING_INPUT_STALE');
   }
   const decisionId = crypto.randomUUID();
+  const eqrEventAction = `EQR_${decision === 'RETURN' ? 'RETURNED' : decision === 'HOLD' ? 'ON_HOLD' : 'APPROVED'}`;
+  if (tx) {
+    const engagement = await readEngagementRow(env, id);
+    const nextRevision = Number(engagement?.revision || 1) + 1;
+    tx.setDecision({
+      id: decisionId,
+      type: 'EQR',
+      objectVersion: candidateId,
+      value: decision,
+      rationale: note,
+      inputGeneration: currentInputGeneration,
+      rowRevision: nextRevision,
+      eventAction: eqrEventAction,
+      eventObjectType: 'decision',
+      eventObjectId: decisionId,
+      resultExtras: { decision: { decisionId, decision, candidateId, inputGeneration: currentInputGeneration } },
+    });
+    tx.addEffect({ sql: `UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`, params: [`eqr-${id}`] });
+    return json(request, { ok: true, decision: { decisionId, decision, candidateId, inputGeneration: currentInputGeneration }, engagement: serializeEngagementState({ ...(engagement || {}), revision: nextRevision }), evidenceLevel: 'SIMULATION' }, 201);
+  }
   if (strictCommand) {
     const engagement = await readEngagementRow(env, id);
     await env.DB.prepare(
@@ -1759,11 +2072,11 @@ async function actionCompleteEqr(request, env, session, id, payload, correlation
   }
   await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`eqr-${id}`).run();
   const engagement = await touchEngagement(env, id, null);
-  await appendEvent(env, { engagementId: id, actor: session.actorId, action: `EQR_${decision === 'RETURN' ? 'RETURNED' : decision === 'HOLD' ? 'ON_HOLD' : 'APPROVED'}`, objectType: 'decision', objectId: decisionId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
+  await appendEvent(env, { engagementId: id, actor: session.actorId, action: eqrEventAction, objectType: 'decision', objectId: decisionId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   return json(request, { ok: true, decision: { decisionId, decision, candidateId, inputGeneration: currentInputGeneration }, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
 }
 
-async function actionRecordAuditOpinion(request, env, session, id, payload, correlationId) {
+async function actionRecordAuditOpinion(request, env, session, id, payload, correlationId, tx) {
   if (!hasAnyRole(session, ['engagement_partner'])) {
     return error(request, 'Only the Partner demo persona can form the audit opinion.', 403, 'ROLE_NOT_AUTHORIZED');
   }
@@ -1822,6 +2135,24 @@ async function actionRecordAuditOpinion(request, env, session, id, payload, corr
     return error(request, 'Blocking evaluation holds must be resolved before forming the opinion, starting with: ' + names + '.', 409, 'ASSESSMENT_HOLDS_FOR_OPINION');
   }
   const decisionId = crypto.randomUUID();
+  if (tx) {
+    const engagementRow = await readEngagementRow(env, id);
+    tx.setDecision({
+      id: decisionId,
+      type: 'AUDIT_OPINION',
+      objectVersion: candidateVersion,
+      value: opinionType,
+      rationale,
+      inputGeneration: generations.input,
+      rowRevision: 1,
+      eventAction: 'AUDIT_OPINION_RECORDED',
+      eventObjectType: 'decision',
+      eventObjectId: decisionId,
+      resultExtras: { decision: { decisionId, opinionType, candidateVersion, inputGeneration: generations.input } },
+    });
+    tx.setStage('STAGE-07');
+    return json(request, { ok: true, decision: { decisionId, opinionType, candidateVersion, inputGeneration: generations.input }, engagement: serializeEngagementState({ ...(engagementRow || {}), revision: tx.nextRevision, current_stage: 'STAGE-07' }), evidenceLevel: 'SIMULATION' }, 201);
+  }
   await env.DB.prepare(
     `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
      VALUES (?1, ?2, 'AUDIT_OPINION', ?3, ?4, ?5, ?6, 1, ?7)`,
@@ -1847,7 +2178,7 @@ function centsToMoney(cents) {
 // Phase C — explicit manager completion and partner review handoffs plus
 // the final client discussion. Each record carries the accounting input
 // generation it evaluated, so later TB changes visibly stale it.
-async function actionRecordManagerCompletion(request, env, session, id, payload, correlationId) {
+async function actionRecordManagerCompletion(request, env, session, id, payload, correlationId, tx) {
   if (!hasAnyRole(session, ['audit_manager'])) {
     return error(request, 'Only the Audit Manager demo persona can record the completion recommendation.', 403, 'ROLE_NOT_AUTHORIZED');
   }
@@ -1871,38 +2202,56 @@ async function actionRecordManagerCompletion(request, env, session, id, payload,
   const engagement = await readEngagementRow(env, id);
   if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
   const decisionId = crypto.randomUUID();
+  const partnerTask = { taskId: 'partner-review-' + id, engagementId: id, assigneeRole: 'engagement_partner', title: 'Review manager completion recommendation', state: decision === 'RECOMMEND_COMPLETE' ? 'OPEN' : 'COMPLETE', linkedObjectType: 'decision', linkedObjectId: decisionId };
+  // A return is an explicit correction handoff, not just a historical
+  // decision. Keep the decision immutable and create a fresh, actionable
+  // task for the scoped senior/preparer so the approval center can surface
+  // the correction without overwriting prior review history.
+  const correctionTaskId = decision === 'RETURN_TO_TEAM' ? `audit-correction-${id}-${decisionId}` : '';
+  const correctionTask = correctionTaskId ? {
+    taskId: correctionTaskId,
+    engagementId: id,
+    assigneeRole: 'audit_senior',
+    title: 'Correct and resubmit audit file',
+    state: 'OPEN',
+    priority: 'HIGH',
+    blockerCode: 'MANAGER_RETURNED',
+    route: 'audit',
+    stage: 'STAGE-07',
+    linkedObjectType: 'decision',
+    linkedObjectId: decisionId,
+    creator: session.actorId,
+  } : null;
+  const nextRevision = engagement.revision + 1;
+  if (tx) {
+    tx.setDecision({
+      id: decisionId,
+      type: 'MANAGER_COMPLETION',
+      objectVersion: 'rev-' + engagement.revision,
+      value: decision,
+      rationale,
+      inputGeneration: generations.input,
+      rowRevision: nextRevision,
+      eventAction: 'MANAGER_COMPLETION_RECORDED',
+      eventObjectType: 'decision',
+      eventObjectId: decisionId,
+      resultExtras: { decision: { decisionId: decisionId, decision: decision, inputGeneration: generations.input }, correctionTaskId: correctionTaskId || null },
+    });
+    tx.addEffect(taskUpsertStatement(partnerTask));
+    if (correctionTask) tx.addEffect(taskUpsertStatement(correctionTask));
+    return json(request, { ok: true, decision: { decisionId: decisionId, decision: decision, inputGeneration: generations.input }, correctionTaskId: correctionTaskId || null, engagement: serializeEngagementState({ ...engagement, revision: nextRevision }), evidenceLevel: 'SIMULATION' }, 201);
+  }
   await env.DB.prepare(
     'INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)',
   ).bind(decisionId, id, 'MANAGER_COMPLETION', 'rev-' + engagement.revision, decision, session.actorId, rationale, engagement.revision + 1, generations.input).run();
-  await upsertTask(env, { taskId: 'partner-review-' + id, engagementId: id, assigneeRole: 'engagement_partner', title: 'Review manager completion recommendation', state: decision === 'RECOMMEND_COMPLETE' ? 'OPEN' : 'COMPLETE', linkedObjectType: 'decision', linkedObjectId: decisionId });
-  let correctionTaskId = '';
-  if (decision === 'RETURN_TO_TEAM') {
-    // A return is an explicit correction handoff, not just a historical
-    // decision. Keep the decision immutable and create a fresh, actionable
-    // task for the scoped senior/preparer so the approval center can surface
-    // the correction without overwriting prior review history.
-    correctionTaskId = `audit-correction-${id}-${decisionId}`;
-    await upsertTask(env, {
-      taskId: correctionTaskId,
-      engagementId: id,
-      assigneeRole: 'audit_senior',
-      title: 'Correct and resubmit audit file',
-      state: 'OPEN',
-      priority: 'HIGH',
-      blockerCode: 'MANAGER_RETURNED',
-      route: 'audit',
-      stage: 'STAGE-07',
-      linkedObjectType: 'decision',
-      linkedObjectId: decisionId,
-      creator: session.actorId,
-    });
-  }
+  await upsertTask(env, partnerTask);
+  if (correctionTask) await upsertTask(env, correctionTask);
   const next = await touchEngagement(env, id, null);
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'MANAGER_COMPLETION_RECORDED', objectType: 'decision', objectId: decisionId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId: correlationId });
   return json(request, { ok: true, decision: { decisionId: decisionId, decision: decision, inputGeneration: generations.input }, correctionTaskId: correctionTaskId || null, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
 }
 
-async function actionRecordPartnerReview(request, env, session, id, payload, correlationId) {
+async function actionRecordPartnerReview(request, env, session, id, payload, correlationId, tx) {
   if (!hasAnyRole(session, ['engagement_partner'])) {
     return error(request, 'Only the Partner demo persona can record the completion review.', 403, 'ROLE_NOT_AUTHORIZED');
   }
@@ -1923,6 +2272,24 @@ async function actionRecordPartnerReview(request, env, session, id, payload, cor
   const engagement = await readEngagementRow(env, id);
   if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
   const decisionId = crypto.randomUUID();
+  const nextRevision = engagement.revision + 1;
+  if (tx) {
+    tx.setDecision({
+      id: decisionId,
+      type: 'PARTNER_COMPLETION_REVIEW',
+      objectVersion: 'rev-' + engagement.revision,
+      value: decision,
+      rationale,
+      inputGeneration: generations.input,
+      rowRevision: nextRevision,
+      eventAction: 'PARTNER_REVIEW_RECORDED',
+      eventObjectType: 'decision',
+      eventObjectId: decisionId,
+      resultExtras: { decision: { decisionId: decisionId, decision: decision, inputGeneration: generations.input } },
+    });
+    tx.addEffect({ sql: `UPDATE auditflow_tasks SET state = ?1, completed_at = datetime('now') WHERE task_id = ?2`, params: [decision === 'APPROVE_FOR_OPINION' ? 'COMPLETE' : 'OPEN', 'partner-review-' + id] });
+    return json(request, { ok: true, decision: { decisionId: decisionId, decision: decision, inputGeneration: generations.input }, engagement: serializeEngagementState({ ...engagement, revision: nextRevision }), evidenceLevel: 'SIMULATION' }, 201);
+  }
   await env.DB.prepare(
     'INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)',
   ).bind(decisionId, id, 'PARTNER_COMPLETION_REVIEW', 'rev-' + engagement.revision, decision, session.actorId, rationale, engagement.revision + 1, generations.input).run();
@@ -1932,7 +2299,7 @@ async function actionRecordPartnerReview(request, env, session, id, payload, cor
   return json(request, { ok: true, decision: { decisionId: decisionId, decision: decision, inputGeneration: generations.input }, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
 }
 
-async function actionRecordFinalDiscussion(request, env, session, id, payload, correlationId) {
+async function actionRecordFinalDiscussion(request, env, session, id, payload, correlationId, tx) {
   if (!hasAnyRole(session, ['engagement_partner'])) {
     return error(request, 'Only the Partner demo persona can record the final client discussion.', 403, 'ROLE_NOT_AUTHORIZED');
   }
@@ -1950,6 +2317,23 @@ async function actionRecordFinalDiscussion(request, env, session, id, payload, c
   if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
   const decisionId = crypto.randomUUID();
   const rationale = 'Attendees: ' + attendees + ' | Topics: ' + topics + ' | Outcome: ' + outcome;
+  const nextRevision = engagement.revision + 1;
+  if (tx) {
+    tx.setDecision({
+      id: decisionId,
+      type: 'FINAL_CLIENT_DISCUSSION',
+      objectVersion: date,
+      value: 'RECORDED',
+      rationale,
+      inputGeneration: generations.input,
+      rowRevision: nextRevision,
+      eventAction: 'FINAL_DISCUSSION_RECORDED',
+      eventObjectType: 'decision',
+      eventObjectId: decisionId,
+      resultExtras: { decision: { decisionId: decisionId, date: date, inputGeneration: generations.input } },
+    });
+    return json(request, { ok: true, decision: { decisionId: decisionId, date: date, inputGeneration: generations.input }, engagement: serializeEngagementState({ ...engagement, revision: nextRevision }), evidenceLevel: 'SIMULATION' }, 201);
+  }
   await env.DB.prepare(
     'INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)',
   ).bind(decisionId, id, 'FINAL_CLIENT_DISCUSSION', date, 'RECORDED', session.actorId, rationale, engagement.revision + 1, generations.input).run();
@@ -1993,7 +2377,7 @@ async function actionReturnToManager(request, env, session, id, payload, correla
     { ...payload, decision: 'RETURN_TO_MANAGER' }, correlationId);
 }
 
-async function actionVerifyReleaseCheckpoint(request, env, session, id, payload, correlationId) {
+async function actionVerifyReleaseCheckpoint(request, env, session, id, payload, correlationId, tx) {
   if (!hasAnyRole(session, ['records_custodian'])) {
     return error(request, 'Only the Records Custodian demo persona can verify a release checkpoint.', 403, 'ROLE_NOT_AUTHORIZED');
   }
@@ -2026,6 +2410,23 @@ async function actionVerifyReleaseCheckpoint(request, env, session, id, payload,
   if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
   const checkpointId = `CHK-${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`;
   const rationale = cleanText(payload.note || payload.rationale, MAX_CONTEXT_LENGTH, '') || `Verified ${report.document_id} + ${fs.document_id} for release ${release.decision_id}.`;
+  const nextRevision = engagement.revision + 1;
+  if (tx) {
+    tx.setDecision({
+      id: checkpointId,
+      type: 'RELEASE_CHECKPOINT',
+      objectVersion: release.object_version,
+      value: 'VERIFIED',
+      rationale,
+      inputGeneration: Number(release.input_generation || 1),
+      rowRevision: nextRevision,
+      eventAction: 'RELEASE_CHECKPOINT_VERIFIED',
+      eventObjectType: 'checkpoint',
+      eventObjectId: checkpointId,
+      resultExtras: { checkpointId, targetVersion: release.object_version, reportId: report.document_id, fsId: fs.document_id, duplicate: false },
+    });
+    return json(request, { ok: true, duplicate: false, checkpointId, targetVersion: release.object_version, reportId: report.document_id, fsId: fs.document_id, engagement: serializeEngagementState({ ...engagement, revision: nextRevision }), evidenceLevel: 'SIMULATION' }, 201);
+  }
   await env.DB.prepare(
     `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
       VALUES (?1, ?2, 'RELEASE_CHECKPOINT', ?3, 'VERIFIED', ?4, ?5, ?6, ?7)`,
@@ -2035,7 +2436,7 @@ async function actionVerifyReleaseCheckpoint(request, env, session, id, payload,
   return json(request, { ok: true, duplicate: false, checkpointId, targetVersion: release.object_version, reportId: report.document_id, fsId: fs.document_id, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
 }
 
-async function actionAssembleArchive(request, env, session, id, payload, correlationId) {
+async function actionAssembleArchive(request, env, session, id, payload, correlationId, tx) {
   if (!hasAnyRole(session, ['records_custodian'])) {
     return error(request, 'Only the Records Custodian demo persona can assemble the archive.', 403, 'ROLE_NOT_AUTHORIZED');
   }
@@ -2069,6 +2470,23 @@ async function actionAssembleArchive(request, env, session, id, payload, correla
   ).bind(id).all();
   const archiveId = `ARCH-${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`;
   const manifest = (artifacts.results || []).map((row) => `${row.document_type}:${row.document_id}:${row.version}`).join('|');
+  const nextRevision = engagement.revision + 1;
+  if (tx) {
+    tx.setDecision({
+      id: archiveId,
+      type: 'ARCHIVE',
+      objectVersion: checkpoint.object_version,
+      value: 'ASSEMBLED',
+      rationale: cleanText(payload.note || payload.rationale, MAX_CONTEXT_LENGTH, '') || `Archive manifest ${manifest || 'empty'} assembled from checkpoint ${checkpoint.decision_id}.`,
+      inputGeneration: Number(checkpoint.input_generation || 1),
+      rowRevision: nextRevision,
+      eventAction: 'ARCHIVE_ASSEMBLED',
+      eventObjectType: 'archive',
+      eventObjectId: archiveId,
+      resultExtras: { archiveId, targetVersion: checkpoint.object_version, manifest, duplicate: false },
+    });
+    return json(request, { ok: true, duplicate: false, archiveId, targetVersion: checkpoint.object_version, manifest, engagement: serializeEngagementState({ ...engagement, revision: nextRevision }), evidenceLevel: 'SIMULATION' }, 201);
+  }
   await env.DB.prepare(
     `INSERT INTO auditflow_decisions (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision, input_generation)
      VALUES (?1, ?2, 'ARCHIVE', ?3, 'ASSEMBLED', ?4, ?5, ?6, ?7)`,
@@ -2157,7 +2575,7 @@ async function latestDecision(env, engagementId, type) {
   ).bind(engagementId, type).first();
 }
 
-async function actionReleaseFinalReport(request, env, session, id, payload, correlationId) {
+async function actionReleaseFinalReport(request, env, session, id, payload, correlationId, tx) {
   if (!hasAnyRole(session, ['engagement_partner'])) {
     return error(request, 'Only the Partner demo persona can release the final report.', 403, 'ROLE_NOT_AUTHORIZED');
   }
@@ -2247,6 +2665,40 @@ async function actionReleaseFinalReport(request, env, session, id, payload, corr
   const fsId = crypto.randomUUID();
   const releaseRevision = Number(releaseEngagement.revision || 1) + 1;
   const artifactVisibility = strictCommand ? 'INTERNAL' : 'CLIENT_VISIBLE';
+  if (tx) {
+    const reportContent = JSON.stringify({ schemaVersion: 'M7-FINAL-REPORT-1', documentType: 'FINAL_REPORT', releaseId, engagementId: id, candidateVersion, opinion: opinion.decision, generatedFor: 'synthetic-demo' });
+    const fsContent = JSON.stringify({ schemaVersion: 'M7-FINAL-FS-1', documentType: 'FINAL_FS', releaseId, engagementId: id, candidateVersion, reportingPeriod: releaseEngagement.period, currency: 'QAR', generatedFor: 'synthetic-demo' });
+    tx.setFallbackEffects([
+      { sql: `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at)
+          VALUES (?1, ?2, 'FINAL_REPORT', 'Final audit report', ?3, 'PUBLISHED', ?4, ?5, datetime('now'))`, params: [reportId, id, candidateVersion, artifactVisibility, session.actorId] },
+      { sql: `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at)
+          VALUES (?1, ?2, 'FINAL_FS', ?3, ?4, 'PUBLISHED', ?5, ?6, datetime('now'))`, params: [fsId, id, `Final financial statements ${candidateVersion}`, candidateVersion, artifactVisibility, session.actorId] },
+    ]);
+    tx.setDecision({
+      id: releaseId,
+      type: 'RELEASE',
+      objectVersion: candidateVersion,
+      value: 'RELEASED',
+      rationale: cleanText(payload.rationale, MAX_CONTEXT_LENGTH) || '',
+      inputGeneration: generations.input,
+      rowRevision: releaseRevision,
+      eventAction: 'FINAL_RELEASED',
+      eventObjectType: 'decision',
+      eventObjectId: releaseId,
+      resultExtras: { releaseId, reportId, fsId, candidateVersion, duplicate: false },
+    });
+    tx.setStage('STAGE-08');
+    tx.addEffect({ sql: `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at, content_json, release_id)
+        VALUES (?1, ?2, 'FINAL_REPORT', 'Final audit report', ?3, 'PUBLISHED', ?4, ?5, datetime('now'), ?6, ?7)`, params: [reportId, id, candidateVersion, artifactVisibility, session.actorId, reportContent, releaseId] });
+    tx.addEffect({ sql: `INSERT INTO auditflow_artifacts (document_id, engagement_id, document_type, title, version, state, visibility, created_by, published_at, content_json, release_id)
+        VALUES (?1, ?2, 'FINAL_FS', ?3, ?4, 'PUBLISHED', ?5, ?6, datetime('now'), ?7, ?8)`, params: [fsId, id, `Final financial statements ${candidateVersion}`, candidateVersion, artifactVisibility, session.actorId, fsContent, releaseId] });
+    tx.addEffect({ sql: `INSERT INTO auditflow_decision_targets
+        (decision_id, generation_id, engagement_id, target_id, target_revision, content_hash, input_generation, policy_version)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+       ON CONFLICT (decision_id) DO NOTHING`, params: [releaseId, releaseEngagement.generation_id, id, fsId, releaseRevision, `${reportId}:${fsId}:${candidateVersion}`, generations.input, 'M7-RELEASE-2026-09'] });
+    tx.addEffect(taskUpsertStatement({ taskId: `invoice-${id}`, engagementId: id, assigneeRole: 'finance_team', title: 'Generate final invoice', state: 'OPEN', linkedObjectType: 'decision', linkedObjectId: releaseId }));
+    return json(request, { ok: true, duplicate: false, releaseId, reportId, fsId, candidateVersion, checks: releaseChecks, engagement: serializeEngagementState({ ...releaseEngagement, revision: releaseRevision, current_stage: 'STAGE-08' }), evidenceLevel: 'SIMULATION' }, 201);
+  }
   if (strictCommand) {
     const reportContent = JSON.stringify({ schemaVersion: 'M7-FINAL-REPORT-1', documentType: 'FINAL_REPORT', releaseId, engagementId: id, candidateVersion, opinion: opinion.decision, generatedFor: 'synthetic-demo' });
     const fsContent = JSON.stringify({ schemaVersion: 'M7-FINAL-FS-1', documentType: 'FINAL_FS', releaseId, engagementId: id, candidateVersion, reportingPeriod: releaseEngagement.period, currency: 'QAR', generatedFor: 'synthetic-demo' });
@@ -2509,6 +2961,92 @@ async function responseJson(response) {
   try { return await response.clone().json(); } catch { return null; }
 }
 
+// M7 PIPE-F11 — guarded completion-chain actions commit atomically through
+// worker/repositories/decisionBatch.js when the strict command carries a
+// workspace view. Handlers either collect statements into this sink (batch
+// mode) or keep the sequential legacy writes (live mode).
+const DECISION_BATCH_ACTIONS = new Set([
+  'RECORD_MANAGER_COMPLETION',
+  'RECORD_PARTNER_REVIEW',
+  'RECORD_FINAL_DISCUSSION',
+  'RECORD_AUDIT_OPINION',
+  'COMPLETE_EQR',
+  'RELEASE_FINAL_REPORT',
+  'VERIFY_RELEASE_CHECKPOINT',
+  'ASSEMBLE_ARCHIVE',
+]);
+
+function createDecisionTx(command) {
+  return {
+    command,
+    nextRevision: command.expectedRevision + 1,
+    stage: '',
+    decision: null,
+    effects: [],
+    fallbackEffects: null,
+    setDecision(decision) { this.decision = decision; },
+    addEffect(statement) { this.effects.push(statement); },
+    setFallbackEffects(statements) { this.fallbackEffects = statements; },
+    setStage(stage) { this.stage = stage; },
+  };
+}
+
+function unconfirmedOutcome(request, command, engagementId, actorId, correlationId) {
+  return json(request, {
+    ok: false,
+    outcome: 'UNCERTAIN',
+    code: 'COMMIT_UNCONFIRMED',
+    message: 'The command outcome could not be confirmed. Reconcile or retry the same idempotency key.',
+    commandId: command.commandId,
+    engagementId,
+    generationId: command.generationId,
+    actorId,
+    revision: command.expectedRevision,
+    evidenceLevel: 'SIMULATION',
+  }, 503, correlationId);
+}
+
+function decisionBatchResponse(request, body, command, result, status, correlationId) {
+  if (result.outcome === 'REJECTED') {
+    return error(request, result.message || 'The record changed before this command could commit.', 409, result.code || 'REVISION_OR_GENERATION_CONFLICT');
+  }
+  if (result.replayed) return json(request, { ...body, ...result, replayed: true, evidenceLevel: 'SIMULATION' }, 200, correlationId);
+  return json(request, {
+    ...body,
+    outcome: 'COMMITTED',
+    commandId: command.commandId,
+    engagementId: command.engagementId,
+    generationId: command.generationId,
+    actorId: command.actorId,
+    revision: command.expectedRevision + 1,
+  }, status, correlationId);
+}
+
+async function commitDecisionBatch(request, env, command, tx, handlerResponse, correlationId) {
+  const body = await responseJson(handlerResponse);
+  if (!body?.ok || !tx.decision) return null; // rejections and duplicates keep the generic receipt path
+  const run = (effects) => executeDecisionBatch(
+    env.DB,
+    { ...command, correlationId: correlationId || '' },
+    { ...tx.decision, stage: tx.stage || undefined },
+    [],
+    effects,
+  );
+  try {
+    return decisionBatchResponse(request, body, command, await run(tx.effects), handlerResponse.status, correlationId);
+  } catch (batchError) {
+    // Migration 0009 columns may be absent on older installations. Retry the
+    // same atomic commit once with the legacy artifact shape before failing
+    // uncertain; the batch is all-or-nothing so nothing is half-applied.
+    if (tx.fallbackEffects && /no such column|unknown column|content_json|release_id/i.test(String(batchError?.message || batchError))) {
+      try {
+        return decisionBatchResponse(request, body, command, await run(tx.fallbackEffects), handlerResponse.status, correlationId);
+      } catch { /* fall through to the uncertain outcome */ }
+    }
+    throw batchError;
+  }
+}
+
 async function resolveEffectiveActionSession(request, env, session, engagementId) {
   const viewId = readViewId(request);
   if (!viewId) return { session, view: null };
@@ -2529,7 +3067,8 @@ async function dispatchEngagementAction(request, env, engagementId) {
   const resolved = await resolveEffectiveActionSession(request, env, parentSession, id);
   if (resolved.response) return resolved.response;
   const session = resolved.session;
-  if (!(ACTOR_ASSIGNMENTS[session.actorId] || []).includes(id)) {
+  if (!canWriteClientSession(session)) return error(request, 'Open an invitation link before submitting client actions.', 403, 'INVITATION_REQUIRED');
+  if (!(await isAssignedToEngagement(env, session, id))) {
     return error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
   }
   // The migrated client sends the strict envelope. Keep the legacy shape
@@ -2589,7 +3128,7 @@ async function dispatchEngagementAction(request, env, engagementId) {
     // Reset/generation changes still fail closed before this lookup.
     if (!current || current.generation_id !== valid.value.expectedGenerationId) return error(request, 'The command targets an older demo generation.', 409, 'GENERATION_CONFLICT');
     if (resolved.view && resolved.view.generation_id !== current.generation_id) return error(request, 'The workspace view targets an older demo generation.', 409, 'RESET_REQUIRED');
-    command = { commandId: `cmd-${crypto.randomUUID().replaceAll('-', '')}`, generationId: valid.value.expectedGenerationId, engagementId: id, actorId: session.actorId, idempotencyKey: valid.value.idempotencyKey, requestDigest, expectedRevision: valid.value.expectedRevision, expectedContextVersion: valid.value.expectedContextVersion, viewId: resolved.view?.view_id || '', parentSessionId: parentSession.sessionId };
+    command = { commandId: `cmd-${crypto.randomUUID().replaceAll('-', '')}`, generationId: valid.value.expectedGenerationId, engagementId: id, actorId: session.actorId, idempotencyKey: valid.value.idempotencyKey, requestDigest, expectedRevision: valid.value.expectedRevision, expectedContextVersion: valid.value.expectedContextVersion, contextVersion: valid.value.expectedContextVersion, viewId: resolved.view?.view_id || '', parentSessionId: parentSession.sessionId };
     const prior = await readCommandReceipt(env, command);
     if (prior) {
       if (prior.request_digest !== requestDigest) return error(request, 'The idempotency key is already bound to a different command.', 409, 'IDEMPOTENCY_CONFLICT');
@@ -2620,6 +3159,7 @@ async function dispatchEngagementAction(request, env, engagementId) {
     // Only a fresh intent is subject to the current optimistic revision guard.
     if (Number(current.revision) !== valid.value.expectedRevision) return error(request, 'The engagement changed since this command was loaded.', 409, 'REVISION_CONFLICT');
   }
+  const decisionTx = strictEnvelope && command && command.viewId && DECISION_BATCH_ACTIONS.has(action) ? createDecisionTx(command) : null;
   let response;
   try {
   if (action === 'SUBMIT_AUDIT_FILE') response = await actionSubmitAuditFile(request, env, session, id, payload, correlationId);
@@ -2627,8 +3167,8 @@ async function dispatchEngagementAction(request, env, engagementId) {
   else if (action === 'RETURN_TO_TEAM') response = await actionReturnToTeam(request, env, session, id, payload, correlationId);
   else if (action === 'REVIEW_PARTNER_COMPLETION') response = await actionReviewPartnerCompletion(request, env, session, id, payload, correlationId);
   else if (action === 'RETURN_TO_MANAGER') response = await actionReturnToManager(request, env, session, id, payload, correlationId);
-  else if (action === 'VERIFY_RELEASE_CHECKPOINT') response = await actionVerifyReleaseCheckpoint(request, env, session, id, payload, correlationId);
-  else if (action === 'ASSEMBLE_ARCHIVE') response = await actionAssembleArchive(request, env, session, id, payload, correlationId);
+  else if (action === 'VERIFY_RELEASE_CHECKPOINT') response = await actionVerifyReleaseCheckpoint(request, env, session, id, payload, correlationId, decisionTx);
+  else if (action === 'ASSEMBLE_ARCHIVE') response = await actionAssembleArchive(request, env, session, id, payload, correlationId, decisionTx);
   else if (action === 'APPLY_SCENARIO_PRESET') response = await actionApplyScenarioPreset(request, env, session, id, payload, correlationId);
   else if (action === 'SUBMIT_CLIENT_DETAILS') response = await actionSubmitClientDetails(request, env, session, id, payload, correlationId);
   else if (action === 'ACCEPT_CLIENT') response = await actionAcceptClient(request, env, session, id, payload, correlationId);
@@ -2648,16 +3188,16 @@ async function dispatchEngagementAction(request, env, engagementId) {
   else if (action === 'CLEAR_REVIEW_POINT') response = await actionClearReviewPoint(request, env, session, id, payload, correlationId);
   else if (action === 'PUBLISH_DRAFT_FS') response = await actionPublishDraftFs(request, env, session, id, payload, correlationId);
   else if (action === 'RESPOND_DRAFT_FS') response = await actionRespondDraftFs(request, env, session, id, payload, correlationId);
-  else if (action === 'COMPLETE_EQR') response = await actionCompleteEqr(request, env, session, id, payload, correlationId);
+  else if (action === 'COMPLETE_EQR') response = await actionCompleteEqr(request, env, session, id, payload, correlationId, decisionTx);
   else if (action === 'RECORD_ASSESSMENT_RESPONSE') response = await recordAssessmentResponse(request, env, session, id, payload, correlationId);
   else if (action === 'UPDATE_ACCOUNTING_STATUS') response = await updateAccountingStatus(request, env, session, id, payload, correlationId);
   else if (action === 'APPROVE_ACCOUNTING_FS') response = await approveAccountingFs(request, env, session, id, payload, correlationId);
   else if (action === 'EVALUATE_ACCOUNTING_INPUT') response = await evaluateAccountingInput(request, env, session, id, payload, correlationId);
-  else if (action === 'RECORD_MANAGER_COMPLETION') response = await actionRecordManagerCompletion(request, env, session, id, payload, correlationId);
-  else if (action === 'RECORD_PARTNER_REVIEW') response = await actionRecordPartnerReview(request, env, session, id, payload, correlationId);
-  else if (action === 'RECORD_FINAL_DISCUSSION') response = await actionRecordFinalDiscussion(request, env, session, id, payload, correlationId);
-  else if (action === 'RECORD_AUDIT_OPINION') response = await actionRecordAuditOpinion(request, env, session, id, payload, correlationId);
-  else if (action === 'RELEASE_FINAL_REPORT') response = await actionReleaseFinalReport(request, env, session, id, payload, correlationId);
+  else if (action === 'RECORD_MANAGER_COMPLETION') response = await actionRecordManagerCompletion(request, env, session, id, payload, correlationId, decisionTx);
+  else if (action === 'RECORD_PARTNER_REVIEW') response = await actionRecordPartnerReview(request, env, session, id, payload, correlationId, decisionTx);
+  else if (action === 'RECORD_FINAL_DISCUSSION') response = await actionRecordFinalDiscussion(request, env, session, id, payload, correlationId, decisionTx);
+  else if (action === 'RECORD_AUDIT_OPINION') response = await actionRecordAuditOpinion(request, env, session, id, payload, correlationId, decisionTx);
+  else if (action === 'RELEASE_FINAL_REPORT') response = await actionReleaseFinalReport(request, env, session, id, payload, correlationId, decisionTx);
   else if (action === 'DELIVER_FINAL_REPORT') response = await actionDeliverFinalReport(request, env, session, id, payload, correlationId);
   else if (action === 'CREATE_INVOICE') response = await actionCreateInvoice(request, env, session, id, payload, correlationId);
   else if (action === 'CLOSE_ENGAGEMENT') response = await actionCloseEngagement(request, env, session, id, payload, correlationId);
@@ -2666,21 +3206,20 @@ async function dispatchEngagementAction(request, env, engagementId) {
     // A strict command that reaches an unexpected D1/provider failure has an
     // unconfirmed outcome. Do not turn an unknown commit state into a
     // rejection; the caller must reconcile or retry the same intent key.
-    if (command) {
-      return json(request, {
-        ok: false,
-        outcome: 'UNCERTAIN',
-        code: 'COMMIT_UNCONFIRMED',
-        message: 'The command outcome could not be confirmed. Reconcile or retry the same idempotency key.',
-        commandId: command.commandId,
-        engagementId: id,
-        generationId: command.generationId,
-        actorId: session.actorId,
-        revision: command.expectedRevision,
-        evidenceLevel: 'SIMULATION',
-      }, 503, correlationId);
-    }
+    if (command) return unconfirmedOutcome(request, command, id, session.actorId, correlationId);
     throw caught;
+  }
+  if (decisionTx) {
+    // The handler recorded its statements instead of writing directly; commit
+    // receipt claim, guarded revision bump, decision, effects and event as one
+    // all-or-nothing batch. The receipt is claimed inside the batch, so the
+    // post-hoc receipt persist below is skipped for these commands.
+    try {
+      const committed = await commitDecisionBatch(request, env, command, decisionTx, response, correlationId);
+      if (committed) return committed;
+    } catch {
+      return unconfirmedOutcome(request, command, id, session.actorId, correlationId);
+    }
   }
   if (command) {
     const body = await responseJson(response);
@@ -3348,7 +3887,7 @@ async function resolveWorkspaceContext(request, env, engagementId) {
     if (expectedVersion && Number(expectedVersion) !== Number(view.context_version)) return { response: error(request, 'The workspace context changed; reload before acting.', 409, 'CONTEXT_VERSION_CONFLICT') };
   }
   const effectiveSession = view ? effectiveSessionForView(view, checked.session) : checked.session;
-  if (!(ACTOR_ASSIGNMENTS[effectiveSession.actorId] || []).includes(id)) return { response: error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED') };
+  if (!(await isAssignedToEngagement(env, effectiveSession, id))) return { response: error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED') };
   return { session: checked.session, effectiveSession, view, engagementId: id };
 }
 
@@ -3451,6 +3990,9 @@ async function getWorkspace(request, env, engagementId) {
   const eventRows = await env.DB.prepare('SELECT * FROM auditflow_events WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT 50').bind(resolved.engagementId).all();
   const decisionRows = await env.DB.prepare('SELECT * FROM auditflow_decisions WHERE engagement_id = ?1 ORDER BY revision DESC, decided_at DESC, decision_id DESC LIMIT 200').bind(resolved.engagementId).all();
   const outboxRows = await env.DB.prepare('SELECT * FROM auditflow_outbox WHERE engagement_id = ?1 ORDER BY created_at DESC LIMIT 50').bind(resolved.engagementId).all();
+  // M7 §5 — published artifacts feed the projection so every screen (including
+  // the EQR candidate picker) works from the same server truth.
+  const artifactRows = await env.DB.prepare(`SELECT document_id, document_type, title, version, state, visibility, created_at FROM auditflow_artifacts WHERE engagement_id = ?1 AND state = 'PUBLISHED' ORDER BY created_at DESC LIMIT 100`).bind(resolved.engagementId).all();
   const effective = resolved.effectiveSession;
   const view = resolved.view || {
     view_id: `legacy-${effective.sessionId || 'session'}`,
@@ -3482,6 +4024,7 @@ async function getWorkspace(request, env, engagementId) {
     notifications,
     recentEvents: (eventRows.results || []).map(serializeEvent),
     outbox: outboxRows.results || [],
+    artifacts: artifactRows.results || [],
     accounting,
     accountingSteps,
     blockers: progress.blockers || [],
@@ -3540,7 +4083,7 @@ async function getProcessHealth(request, env, url) {
   if (!engagementId) return error(request, 'A valid engagementId is required.');
   const checked = await requirePortfolioAccess(request, env);
   if (checked.response) return checked.response;
-  if (!(ACTOR_ASSIGNMENTS[checked.session.actorId] || []).includes(engagementId)) {
+  if (!(await isAssignedToEngagement(env, checked.session, engagementId))) {
     return error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED');
   }
   const snapshot = await readProgressSnapshot(env, engagementId);
@@ -3690,7 +4233,40 @@ async function requireEngagementScope(request, env, engagementId) {
     if (expectedVersion && Number(expectedVersion) !== Number(view.context_version)) return { response: error(request, 'The workspace context changed; reload before acting.', 409, 'CONTEXT_VERSION_CONFLICT') };
     effective = effectiveSessionForView(view, checked.session);
   }
-  if (!(ACTOR_ASSIGNMENTS[effective.actorId] || []).includes(id)) {
+  if (!(await isAssignedToEngagement(env, effective, id))) {
+    return { response: error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED') };
+  }
+  return { ...checked, session: effective };
+}
+
+// A presenter/staff session normally addresses the legacy synthetic records.
+// When the Admin console opens a client invitation run, it may supply that
+// run id explicitly; the Worker still resolves the run context and the
+// actor's logical assignment before allowing any portal read or write. A
+// client session can never override its invitation run.
+async function requirePortalEngagementScope(request, env, engagementId, requestedRunId = '') {
+  const checked = await requireDemoSession(request, env);
+  if (checked.response) return checked;
+  const id = readEngagementId(engagementId);
+  if (!id) return { response: error(request, 'A valid engagement id is required.') };
+  const runId = String(requestedRunId || '').trim();
+  if (runId && !SAFE_RUN_ID.test(runId)) return { response: error(request, 'A valid invitation run id is required.', 400, 'RUN_ID_INVALID') };
+  let effective = checked.session;
+  if (scopedRunContexts(effective)) {
+    if (runId && runId !== effective.runId) {
+      return { response: error(request, 'This client session is fixed to its invitation run.', 403, 'INVITATION_SCOPE_CONFLICT') };
+    }
+  } else if (runId) {
+    if (isClientOnlySession(effective)) return { response: error(request, 'Client sessions cannot select another invitation run.', 403, 'INVITATION_SCOPE_CONFLICT') };
+    const context = await env.DB.prepare(
+      `SELECT run_id, logical_engagement_id, engagement_id
+       FROM auditflow_demo_run_contexts WHERE run_id = ?1 AND engagement_id = ?2`,
+    ).bind(runId, id).first();
+    const assigned = context && (ACTOR_ASSIGNMENTS[effective.actorId] || []).includes(context.logical_engagement_id);
+    if (!assigned) return { response: error(request, 'This staff persona is not assigned to the invitation run.', 403, 'SCOPE_DENIED') };
+    effective = { ...effective, runId, invitationId: '', clientMode: 0 };
+  }
+  if (!(await isAssignedToEngagement(env, effective, id))) {
     return { response: error(request, 'This demo persona is not assigned to the requested engagement.', 403, 'SCOPE_DENIED') };
   }
   return { ...checked, session: effective };
@@ -3708,6 +4284,322 @@ async function listPbc(request, env, url) {
     'SELECT * FROM auditflow_pbc_receipts WHERE engagement_id = ?1 ORDER BY uploaded_at DESC LIMIT 200',
   ).bind(engagementId).all();
   return json(request, { ok: true, requests: requests.results || [], receipts: receipts.results || [], evidenceLevel: 'SIMULATION' });
+}
+
+function serializePortalMessage(row) {
+  return {
+    messageId: row.message_id,
+    runId: row.run_id,
+    engagementId: row.engagement_id,
+    requestId: row.request_id || '',
+    threadId: row.thread_id || row.message_id,
+    replyTo: row.reply_to || '',
+    senderPersonaId: row.sender_persona_id,
+    senderActorId: row.sender_actor_id,
+    senderRole: row.sender_role,
+    body: row.body,
+    clientVisible: Boolean(row.client_visible),
+    state: row.state,
+    createdAt: row.created_at,
+    readAt: row.read_at || '',
+  }
+}
+
+function portalMessageScope(row, session) {
+  if (!row || !session || !scopedRunContexts(session)) return false
+  return row.run_id === session.runId && isAssignedToEngagementForContext(session, row.engagement_id)
+}
+
+function isAssignedToEngagementForContext(session, engagementId) {
+  // This synchronous helper is only used after the async scope check has
+  // already validated the run/engagement pair. It prevents accidental use of
+  // a legacy static id when serializing a portal thread.
+  return Boolean(session?.runId && SAFE_RUN_ID.test(session.runId) && readEngagementId(engagementId))
+}
+
+async function listPortalMessages(request, env, url) {
+  const engagementId = readEngagementId(url.searchParams.get('engagementId'))
+  if (!engagementId) return error(request, 'A valid engagementId is required.')
+  const checked = await requirePortalEngagementScope(request, env, engagementId, url.searchParams.get('runId') || '')
+  if (checked.response) return checked.response
+  const session = checked.session
+  if (!scopedRunContexts(session)) return json(request, { ok: true, messages: [], counts: { total: 0, unread: 0 }, latestPreview: null, lastTeamReply: null, evidenceLevel: 'SIMULATION' })
+  const result = await env.DB.prepare(
+    `SELECT * FROM auditflow_portal_messages
+     WHERE run_id = ?1 AND engagement_id = ?2
+     ORDER BY created_at ASC LIMIT 200`,
+  ).bind(session.runId, engagementId).all()
+  const rows = (result.results || []).filter((row) => !isClientOnlySession(session) || Number(row.client_visible) === 1)
+  const messages = rows.map(serializePortalMessage)
+  const latest = messages[messages.length - 1] || null
+  const latestTeam = [...messages].reverse().find((message) => !['client_contributor', 'client_finance', 'management_approver'].includes(message.senderRole)) || null
+  return json(request, {
+    ok: true,
+    messages,
+    counts: { total: messages.length, unread: messages.filter((message) => message.state === 'UNREAD' && message.senderActorId !== session.actorId).length },
+    latestPreview: latest ? { body: latest.body, createdAt: latest.createdAt, senderRole: latest.senderRole } : null,
+    lastTeamReply: latestTeam ? { body: latestTeam.body, createdAt: latestTeam.createdAt, senderRole: latestTeam.senderRole } : null,
+    evidenceLevel: 'SIMULATION',
+  })
+}
+
+async function createPortalMessage(request, env, { engagementId = '', replyTo = '', runId = '' } = {}) {
+  if (env.ALLOW_DEMO_WRITES === 'false') return error(request, 'Demo writes are currently disabled.', 403, 'WRITES_DISABLED')
+  const payload = await readJson(request)
+  if (!payload) return error(request, 'Send a JSON object in the request body.')
+  const id = readEngagementId(engagementId || payload.engagementId)
+  if (!id) return error(request, 'A valid engagementId is required.')
+  const checked = await requirePortalEngagementScope(request, env, id, runId || payload.runId || '')
+  if (checked.response) return checked.response
+  const session = checked.session
+  if (!scopedRunContexts(session)) return error(request, 'Open an invitation link before sending portal messages.', 403, 'INVITATION_REQUIRED')
+  if (!canWriteClientSession(session)) return error(request, 'Open an invitation link before sending portal messages.', 403, 'INVITATION_REQUIRED')
+  const body = cleanText(payload.body, MAX_MESSAGE_LENGTH)
+  if (!body) return error(request, 'Write a message before sending it (maximum 2,000 characters).')
+  const requestId = String(payload.requestId || '').trim()
+  if (requestId && !/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) return error(request, 'Provide a valid request id or leave it blank.')
+  if (requestId) {
+    const parentRequest = await env.DB.prepare('SELECT request_id FROM auditflow_pbc_requests WHERE request_id = ?1 AND engagement_id = ?2').bind(requestId, id).first()
+    if (!parentRequest) return error(request, 'That message request is not part of this engagement.', 404, 'PBC_REQUEST_NOT_FOUND')
+  }
+  const replyId = String(replyTo || payload.replyTo || '').trim()
+  let parent = null
+  if (replyId) {
+    if (!SAFE_MESSAGE_ID.test(replyId)) return error(request, 'Provide a valid message to reply to.')
+    parent = await env.DB.prepare('SELECT message_id, run_id, engagement_id, request_id, thread_id FROM auditflow_portal_messages WHERE message_id = ?1').bind(replyId).first()
+    if (!parent || parent.run_id !== session.runId || parent.engagement_id !== id) return error(request, 'That message is outside the current invitation run.', 404, 'MESSAGE_NOT_FOUND')
+  }
+  const messageId = `msg-${crypto.randomUUID().replaceAll('-', '')}`
+  const threadId = parent?.thread_id || parent?.message_id || requestId || `thread-${id}`
+  const senderRole = session.roles?.[0] || 'demo-user'
+  const isClient = isClientOnlySession(session)
+  const clientVisible = isClient ? 1 : (payload.clientVisible === false || payload.internal === true ? 0 : 1)
+  await env.DB.prepare(
+    `INSERT INTO auditflow_portal_messages
+      (message_id, run_id, engagement_id, request_id, thread_id, reply_to, sender_persona_id, sender_actor_id, sender_role, body, client_visible, state)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'UNREAD')`,
+  ).bind(messageId, session.runId, id, requestId || parent?.request_id || '', threadId, replyId, session.personaId, session.actorId, senderRole, body, clientVisible).run()
+  const created = await env.DB.prepare('SELECT * FROM auditflow_portal_messages WHERE message_id = ?1').bind(messageId).first()
+  return json(request, {
+    ok: true,
+    message: serializePortalMessage(created || {
+      message_id: messageId,
+      run_id: session.runId,
+      engagement_id: id,
+      request_id: requestId,
+      thread_id: threadId,
+      reply_to: replyId,
+      sender_persona_id: session.personaId,
+      sender_actor_id: session.actorId,
+      sender_role: senderRole,
+      body,
+      client_visible: clientVisible,
+      state: 'UNREAD',
+      created_at: new Date().toISOString(),
+      read_at: '',
+    }),
+    evidenceLevel: 'SIMULATION',
+  }, 201)
+}
+
+async function markPortalMessageRead(request, env, messageId) {
+  const checked = await requireDemoSession(request, env)
+  if (checked.response) return checked.response
+  if (!SAFE_MESSAGE_ID.test(messageId)) return error(request, 'A valid message id is required.')
+  const row = await env.DB.prepare('SELECT * FROM auditflow_portal_messages WHERE message_id = ?1').bind(messageId).first()
+  if (!row) return error(request, 'Message not found.', 404, 'MESSAGE_NOT_FOUND')
+  const scoped = await requirePortalEngagementScope(request, env, row.engagement_id, row.run_id)
+  if (scoped.response) return scoped.response
+  if (row.run_id !== scoped.session.runId) return error(request, 'Message not found in this invitation run.', 404, 'MESSAGE_NOT_FOUND')
+  if (isClientOnlySession(scoped.session) && Number(row.client_visible) !== 1) return error(request, 'That message is internal-only.', 404, 'MESSAGE_NOT_FOUND')
+  await env.DB.prepare("UPDATE auditflow_portal_messages SET state = 'READ', read_at = datetime('now') WHERE message_id = ?1 AND run_id = ?2").bind(messageId, scoped.session.runId).run()
+  return json(request, { ok: true, messageId, state: 'READ', evidenceLevel: 'SIMULATION' })
+}
+
+function safeUploadName(value) {
+  const raw = String(value || '').trim()
+  if (!raw || raw.includes('..') || /[\\/]/.test(raw)) return null
+  const cleaned = raw.replace(/[^a-zA-Z0-9._ -]/g, '_').slice(0, 240).trim()
+  return cleaned || null
+}
+
+function serializeUpload(row) {
+  return {
+    receiptId: row.receipt_id,
+    runId: row.run_id,
+    requestId: row.request_id,
+    engagementId: row.engagement_id,
+    objectKey: row.object_key,
+    fileName: row.file_name,
+    fileSize: Number(row.file_size || 0),
+    mimeType: row.mime_type,
+    contentSha256: row.content_sha256 || '',
+    expiresAt: row.expires_at,
+    storageState: row.storage_state,
+    storageError: row.storage_error || '',
+    uploadedBy: row.uploaded_by || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+async function insertDemoPbcReceipt(env, { receiptId, requestId, engagementId, fileName, fileSize, mimeType, contentSha256, version, actorId, runId, expiresAt, objectKey }) {
+  const common = [receiptId, requestId, engagementId, fileName, fileSize, mimeType, contentSha256, version, actorId]
+  try {
+    await env.DB.prepare(
+      `INSERT INTO auditflow_pbc_receipts
+        (receipt_id, request_id, engagement_id, file_name, file_size, mime_type, synthetic_hash, version, hard_copy, comment, state, uploaded_by, run_id, object_key, content_sha256, expires_at, storage_state, storage_error)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, '', 'RECEIVED', ?9, ?10, ?11, ?12, ?13, 'RECEIVED', '')`,
+    ).bind(...common, runId, objectKey, contentSha256, sqlDateTime(expiresAt)).run()
+  } catch (caught) {
+    if (!/no such column|unknown column/i.test(String(caught?.message || caught))) throw caught
+    await env.DB.prepare(
+      `INSERT INTO auditflow_pbc_receipts
+        (receipt_id, request_id, engagement_id, file_name, file_size, mime_type, synthetic_hash, version, hard_copy, comment, state, uploaded_by)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, '', 'RECEIVED', ?9)`,
+    ).bind(...common).run()
+  }
+}
+
+async function uploadDemoEvidence(request, env) {
+  if (env.ALLOW_DEMO_WRITES === 'false') return error(request, 'Demo writes are currently disabled.', 403, 'WRITES_DISABLED')
+  if (!env.DEMO_UPLOADS || typeof env.DEMO_UPLOADS.put !== 'function') return error(request, 'Temporary evidence storage is not configured for this demo.', 503, 'STORAGE_NOT_CONFIGURED')
+  const declaredLength = Number(request.headers.get('Content-Length') || 0)
+  // Multipart overhead is small but variable; reject clearly oversized
+  // bodies before formData() buffers them while the exact file-size check
+  // below remains authoritative for the 10 MB evidence limit.
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_UPLOAD_BYTES + 128_000) return error(request, 'The upload body is too large. Files must be 10 MB or smaller.', 413, 'UPLOAD_TOO_LARGE')
+  const form = await request.formData().catch(() => null)
+  const file = form?.get('file')
+  const engagementId = readEngagementId(form?.get('engagementId') || request.headers.get('X-AuditFlow-Engagement-Id'))
+  const requestId = String(form?.get('requestId') || request.headers.get('X-AuditFlow-Pbc-Request-Id') || '').trim()
+  if (!file || typeof file.arrayBuffer !== 'function') return error(request, 'Choose a PDF, CSV, XLS or XLSX file to upload.')
+  if (!engagementId || !/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) return error(request, 'A valid engagement and PBC request are required.')
+  const checked = await requireEngagementScope(request, env, engagementId)
+  if (checked.response) return checked.response
+  const session = checked.session
+  if (!scopedRunContexts(session) || !session.invitationId || !canWriteClientSession(session)) return error(request, 'Open an invitation link before uploading evidence.', 403, 'INVITATION_REQUIRED')
+  const parent = await env.DB.prepare('SELECT request_id FROM auditflow_pbc_requests WHERE request_id = ?1 AND engagement_id = ?2').bind(requestId, engagementId).first()
+  if (!parent) return error(request, 'That PBC request does not belong to this engagement.', 404, 'PBC_REQUEST_NOT_FOUND')
+  const idempotencyKey = String(request.headers.get('Idempotency-Key') || form.get('idempotencyKey') || '').trim()
+  if (idempotencyKey && !/^[A-Za-z0-9._:-]{8,120}$/.test(idempotencyKey)) return error(request, 'The upload idempotency key is invalid.')
+  if (idempotencyKey) {
+    const prior = await env.DB.prepare('SELECT * FROM auditflow_demo_uploads WHERE run_id = ?1 AND request_id = ?2 AND idempotency_key = ?3').bind(session.runId, requestId, idempotencyKey).first()
+    if (prior?.storage_state === 'RECEIVED') return json(request, { ok: true, receipt: serializeUpload(prior), replayed: true, evidenceLevel: 'SIMULATION' })
+    if (prior?.storage_state === 'STAGING') return error(request, 'An upload with this idempotency key is still being stored. Retry shortly.', 409, 'UPLOAD_IN_PROGRESS')
+  }
+  const fileName = safeUploadName(file.name || form.get('fileName'))
+  if (!fileName) return error(request, 'Use a simple file name without paths or parent-directory segments.')
+  const mimeType = String(file.type || '').toLowerCase()
+  if (!ALLOWED_UPLOAD_TYPES.has(mimeType)) return error(request, 'Only PDF, CSV, XLS and XLSX files are accepted.')
+  const fileSize = Number(file.size || 0)
+  if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > MAX_UPLOAD_BYTES) return error(request, 'Files must be between 1 byte and 10 MB.')
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  if (bytes.byteLength !== fileSize || bytes.byteLength > MAX_UPLOAD_BYTES) return error(request, 'The uploaded file size could not be verified safely.')
+  const contentSha256 = await sha256Hex(bytes)
+  const receiptId = `rec-${crypto.randomUUID().replaceAll('-', '')}`
+  const objectKey = `demo/${session.runId}/${engagementId}/${requestId}/${receiptId}-${fileName}`
+  const expiresAt = uploadExpiresAt()
+  let version = 1
+  const priorVersion = await env.DB.prepare('SELECT MAX(version) AS version FROM auditflow_pbc_receipts WHERE request_id = ?1').bind(requestId).first()
+  version = Number(priorVersion?.version || 0) + 1
+  try {
+    await env.DB.prepare(
+      `INSERT INTO auditflow_demo_uploads
+        (receipt_id, run_id, request_id, engagement_id, object_key, idempotency_key, file_name, file_size, mime_type, content_sha256, expires_at, storage_state, uploaded_by)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'STAGING', ?12)`,
+    ).bind(receiptId, session.runId, requestId, engagementId, objectKey, idempotencyKey, fileName, fileSize, mimeType, contentSha256, sqlDateTime(expiresAt), session.actorId).run()
+  } catch (caught) {
+    if (idempotencyKey && /unique|constraint/i.test(String(caught?.message || caught))) {
+      const replay = await env.DB.prepare('SELECT * FROM auditflow_demo_uploads WHERE run_id = ?1 AND request_id = ?2 AND idempotency_key = ?3').bind(session.runId, requestId, idempotencyKey).first()
+      if (replay?.storage_state === 'RECEIVED') return json(request, { ok: true, receipt: serializeUpload(replay), replayed: true, evidenceLevel: 'SIMULATION' })
+      if (replay?.storage_state === 'STAGING') return error(request, 'An upload with this idempotency key is still being stored. Retry shortly.', 409, 'UPLOAD_IN_PROGRESS')
+    }
+    return error(request, 'The upload could not be staged. Retry the same file.', 503, 'UPLOAD_STAGING_FAILED')
+  }
+  try {
+    await insertDemoPbcReceipt(env, { receiptId, requestId, engagementId, fileName, fileSize, mimeType, contentSha256, version, actorId: session.actorId, runId: session.runId, expiresAt, objectKey })
+    await env.DEMO_UPLOADS.put(objectKey, bytes, {
+      httpMetadata: { contentType: mimeType, contentLength: fileSize },
+      customMetadata: { runId: session.runId, engagementId, requestId, receiptId, expiresAt },
+    })
+    await env.DB.prepare("UPDATE auditflow_demo_uploads SET storage_state = 'RECEIVED', updated_at = datetime('now'), storage_error = '' WHERE receipt_id = ?1 AND run_id = ?2").bind(receiptId, session.runId).run()
+    await env.DB.prepare("UPDATE auditflow_pbc_requests SET state = 'RECEIVED', updated_at = datetime('now') WHERE request_id = ?1 AND engagement_id = ?2").bind(requestId, engagementId).run()
+    try {
+      await upsertTask(env, { taskId: `pbc-review-${requestId}`, engagementId, assigneeRole: 'audit_senior', title: `Review ${requestId} receipt v${version}`, state: 'OPEN', linkedObjectType: 'pbc_receipt', linkedObjectId: receiptId })
+      const engagement = await touchEngagement(env, engagementId, null)
+      await appendEvent(env, { engagementId, actor: session.actorId, action: 'PBC_RECEIPT_SUBMITTED', objectType: 'pbc_receipt', objectId: receiptId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey, correlationId: requestCorrelationId(request) })
+    } catch { /* receipt/object durability is primary; workflow side effects retry on review */ }
+    const saved = await env.DB.prepare('SELECT * FROM auditflow_demo_uploads WHERE receipt_id = ?1').bind(receiptId).first()
+    return json(request, { ok: true, receipt: serializeUpload(saved || { receipt_id: receiptId, run_id: session.runId, request_id: requestId, engagement_id: engagementId, object_key: objectKey, file_name: fileName, file_size: fileSize, mime_type: mimeType, content_sha256: contentSha256, expires_at: sqlDateTime(expiresAt), storage_state: 'RECEIVED', uploaded_by: session.actorId }), evidenceLevel: 'SIMULATION' }, 201)
+  } catch (caught) {
+    await env.DB.prepare("UPDATE auditflow_demo_uploads SET storage_state = 'FAILED', storage_error = ?2, updated_at = datetime('now') WHERE receipt_id = ?1").bind(receiptId, cleanText(caught?.message || caught, 240, 'Storage operation failed') || 'Storage operation failed').run().catch(() => {})
+    await env.DB.prepare("UPDATE auditflow_pbc_receipts SET state = 'FAILED', storage_state = 'FAILED', storage_error = ?2 WHERE receipt_id = ?1").bind(receiptId, cleanText(caught?.message || caught, 240, 'Storage operation failed') || 'Storage operation failed').run().catch(() => {})
+    await env.DEMO_UPLOADS.delete(objectKey).catch(() => {})
+    return error(request, 'The evidence file could not be stored. Retry the upload.', 503, 'UPLOAD_STORAGE_FAILED')
+  }
+}
+
+async function downloadDemoEvidence(request, env, receiptId) {
+  if (!SAFE_RECEIPT_ID.test(receiptId)) return error(request, 'A valid receipt id is required.')
+  const checked = await requireDemoSession(request, env)
+  if (checked.response) return checked.response
+  const row = await env.DB.prepare('SELECT * FROM auditflow_demo_uploads WHERE receipt_id = ?1 AND run_id = ?2').bind(receiptId, checked.session.runId).first()
+  if (!row) return error(request, 'Evidence receipt not found in this invitation run.', 404, 'UPLOAD_NOT_FOUND')
+  if (!(await isAssignedToEngagement(env, checked.session, row.engagement_id))) return error(request, 'This evidence is outside the current engagement scope.', 403, 'SCOPE_DENIED')
+  const expiry = new Date(`${row.expires_at}Z`.replace(/ZZ$/, 'Z')).getTime()
+  if (row.storage_state === 'EXPIRED' || (Number.isFinite(expiry) && expiry <= Date.now())) {
+    await env.DB.prepare("UPDATE auditflow_demo_uploads SET storage_state = 'EXPIRED', updated_at = datetime('now') WHERE receipt_id = ?1").bind(receiptId).run().catch(() => {})
+    return error(request, 'This temporary evidence file expired after 24 hours.', 410, 'FILE_EXPIRED')
+  }
+  if (row.storage_state !== 'RECEIVED') return error(request, 'This evidence file is not available for download.', 409, 'UPLOAD_NOT_READY')
+  if (!env.DEMO_UPLOADS || typeof env.DEMO_UPLOADS.get !== 'function') return error(request, 'Temporary evidence storage is not configured for this demo.', 503, 'STORAGE_NOT_CONFIGURED')
+  const object = await env.DEMO_UPLOADS.get(row.object_key)
+  if (!object) return error(request, 'The temporary evidence object is no longer available.', 404, 'UPLOAD_NOT_FOUND')
+  const headers = baseHeaders(request)
+  headers['Content-Type'] = row.mime_type || object.httpMetadata?.contentType || 'application/octet-stream'
+  headers['Content-Length'] = String(row.file_size || object.size || 0)
+  headers['Content-Disposition'] = `attachment; filename="${row.file_name.replace(/"/g, '')}"`
+  return new Response(object.body, { status: 200, headers })
+}
+
+async function withdrawDemoEvidence(request, env, receiptId) {
+  if (env.ALLOW_DEMO_WRITES === 'false') return error(request, 'Demo writes are currently disabled.', 403, 'WRITES_DISABLED')
+  if (!SAFE_RECEIPT_ID.test(receiptId)) return error(request, 'A valid receipt id is required.')
+  const checked = await requireDemoSession(request, env)
+  if (checked.response) return checked.response
+  const row = await env.DB.prepare('SELECT * FROM auditflow_demo_uploads WHERE receipt_id = ?1 AND run_id = ?2').bind(receiptId, checked.session.runId).first()
+  if (!row) return error(request, 'Evidence receipt not found in this invitation run.', 404, 'UPLOAD_NOT_FOUND')
+  if (!(await isAssignedToEngagement(env, checked.session, row.engagement_id))) return error(request, 'This evidence is outside the current engagement scope.', 403, 'SCOPE_DENIED')
+  if (row.uploaded_by !== checked.session.actorId) return error(request, 'Only the uploader can withdraw this temporary file.', 403, 'UPLOAD_DELETE_NOT_AUTHORIZED')
+  const expiry = new Date(`${row.expires_at}Z`.replace(/ZZ$/, 'Z')).getTime()
+  if (Number.isFinite(expiry) && expiry <= Date.now()) return error(request, 'Expired evidence can no longer be withdrawn.', 410, 'FILE_EXPIRED')
+  if (env.DEMO_UPLOADS?.delete) await env.DEMO_UPLOADS.delete(row.object_key)
+  await env.DB.prepare("UPDATE auditflow_demo_uploads SET storage_state = 'WITHDRAWN', updated_at = datetime('now') WHERE receipt_id = ?1 AND run_id = ?2").bind(receiptId, checked.session.runId).run()
+  await env.DB.prepare("UPDATE auditflow_pbc_receipts SET state = 'WITHDRAWN' WHERE receipt_id = ?1").bind(receiptId).run().catch(() => {})
+  return json(request, { ok: true, receiptId, storageState: 'WITHDRAWN', evidenceLevel: 'SIMULATION' })
+}
+
+async function cleanupDemoUploads(env) {
+  if (!env.DB) return { deleted: 0, expired: 0, failed: 0 }
+  let result
+  try {
+    result = await env.DB.prepare(
+      `SELECT receipt_id, object_key, storage_state FROM auditflow_demo_uploads
+       WHERE (storage_state = 'RECEIVED' AND expires_at <= datetime('now'))
+          OR (storage_state = 'STAGING' AND created_at <= datetime('now', '-30 minutes'))
+       ORDER BY created_at ASC LIMIT 200`,
+    ).all()
+  } catch { return { deleted: 0, expired: 0, failed: 0 } }
+  let deleted = 0; let expired = 0; let failed = 0
+  for (const row of result.results || []) {
+    try { if (env.DEMO_UPLOADS?.delete) await env.DEMO_UPLOADS.delete(row.object_key); deleted += 1 } catch { failed += 1 }
+    const nextState = row.storage_state === 'STAGING' ? 'FAILED' : 'EXPIRED'
+    const note = row.storage_state === 'STAGING' ? 'Abandoned staging upload cleaned up.' : (failed ? 'Expiry cleanup recorded; object deletion will retry.' : '')
+    await env.DB.prepare('UPDATE auditflow_demo_uploads SET storage_state = ?2, storage_error = ?3, updated_at = datetime(\'now\') WHERE receipt_id = ?1').bind(row.receipt_id, nextState, note).run().catch(() => { failed += 1 })
+    if (nextState === 'EXPIRED') { expired += 1; await env.DB.prepare("UPDATE auditflow_pbc_receipts SET state = 'EXPIRED', storage_state = 'EXPIRED' WHERE receipt_id = ?1").bind(row.receipt_id).run().catch(() => {}) }
+  }
+  return { deleted, expired, failed }
 }
 
 async function listWorkpapers(request, env, url) {
@@ -3762,11 +4654,13 @@ async function handle(request, env) {
       databaseConfigured: Boolean(env.DB),
       mode: trustedSharedDemoRequest(request, env) ? 'shared-demo-opt-in' : 'local-only',
       sharedDemoEnabled: trustedSharedDemoRequest(request, env),
+      deploymentVersion: env.DEPLOYMENT_SHA || 'local',
       evidenceLevel: 'SIMULATION',
     })
   }
   if (!trustedSharedDemoRequest(request, env)) return error(request, 'Shared demo data routes are disabled until a verified Cloudflare Access identity and isolated non-production binding are configured.', 403, 'SHARED_DEMO_DISABLED')
   if (!env.DB) return error(request, 'D1 is not configured for this Worker.', 503, 'DATABASE_UNAVAILABLE')
+  if (path === '/api/demo/invitations' && request.method === 'POST') return createDemoInvitation(request, env)
   if (path === '/api/demo/session' && request.method === 'POST') return createDemoSession(request, env)
   if (path === '/api/demo/me' && request.method === 'GET') return getDemoMe(request, env)
   if (path === '/api/demo/contexts' && request.method === 'GET') return getDemoContexts(request, env)
@@ -3787,6 +4681,20 @@ async function handle(request, env) {
   if (path === '/api/reviews' && request.method === 'GET') return listReviews(request, env, url)
   if (path === '/api/decisions' && request.method === 'GET') return listDecisions(request, env, url)
   if (path === '/api/outbox' && request.method === 'GET') return listOutbox(request, env, url)
+  if (path === '/api/portal/messages' && request.method === 'GET') return listPortalMessages(request, env, url)
+  if (path === '/api/portal/messages' && request.method === 'POST') return createPortalMessage(request, env, { engagementId: url.searchParams.get('engagementId') || '' })
+  const portalReadMatch = path.match(/^\/api\/portal\/messages\/(msg-[A-Za-z0-9_-]{8,120})\/read$/)
+  if (portalReadMatch && request.method === 'POST') return markPortalMessageRead(request, env, portalReadMatch[1])
+  const portalReplyMatch = path.match(/^\/api\/portal\/messages\/(msg-[A-Za-z0-9_-]{8,120})\/reply$/)
+  if (portalReplyMatch && request.method === 'POST') {
+    const parent = await env.DB.prepare('SELECT engagement_id, run_id FROM auditflow_portal_messages WHERE message_id = ?1').bind(portalReplyMatch[1]).first()
+    if (!parent) return error(request, 'Message not found.', 404, 'MESSAGE_NOT_FOUND')
+    return createPortalMessage(request, env, { engagementId: parent.engagement_id, replyTo: portalReplyMatch[1], runId: parent.run_id })
+  }
+  if (path === '/api/demo/uploads' && request.method === 'POST') return uploadDemoEvidence(request, env)
+  const uploadMatch = path.match(/^\/api\/demo\/uploads\/(rec-[A-Za-z0-9_-]{8,120})$/)
+  if (uploadMatch && request.method === 'GET') return downloadDemoEvidence(request, env, uploadMatch[1])
+  if (uploadMatch && request.method === 'DELETE') return withdrawDemoEvidence(request, env, uploadMatch[1])
   if (path === '/api/assessments' && request.method === 'GET') return getAssessmentSummary(request, env, url)
   if (path === '/api/accounting-status' && request.method === 'GET') return getAccountingStatus(request, env, url)
   {
@@ -3818,6 +4726,13 @@ export default {
     } catch (caught) {
       console.error('AuditFlow API request failed', caught)
       return error(request, 'The AuditFlow API could not complete that request.', 500, 'INTERNAL_ERROR')
+    }
+  },
+  async scheduled(controller, env) {
+    try {
+      await cleanupDemoUploads(env)
+    } catch (caught) {
+      console.error('AuditFlow demo upload cleanup failed', caught)
     }
   },
 }

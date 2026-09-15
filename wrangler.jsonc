@@ -17,6 +17,15 @@
       "database_id": "4a85e0dd-dddf-4ef5-9230-593d6878ada8"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "DEMO_UPLOADS",
+      "bucket_name": "steaudit-demo-uploads"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "vars": {
     "ALLOW_DEMO_WRITES": "true",
     "SHARED_DEMO_ENABLED": "true",

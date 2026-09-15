@@ -287,7 +287,7 @@ export function loadActiveEngagementId(storage) {
   try {
     const target = storage || (typeof window !== 'undefined' ? window.localStorage : null);
     const value = target?.getItem?.(DEMO_CONTEXT_STORAGE_KEY) || '';
-    return /^ENG-[A-Za-z0-9_-]{1,36}$/.test(value.trim()) ? value.trim() : DEFAULT_DEMO_ENGAGEMENT_ID;
+    return /^(?:ENG-|run-)[A-Za-z0-9_-]{1,79}$/.test(value.trim()) ? value.trim() : DEFAULT_DEMO_ENGAGEMENT_ID;
   } catch {
     return DEFAULT_DEMO_ENGAGEMENT_ID;
   }
@@ -349,6 +349,7 @@ const engagement = ref(null);
 const tasks = ref([]);
 const events = ref([]);
 const outbox = ref([]);
+const artifacts = ref([]);
 const progress = ref(null);
 const progressError = ref(null);
 const accountingStatus = ref(null);
@@ -364,7 +365,7 @@ let visibilityHandler = null;
 let mountedCount = 0;
 let refreshSeq = 0;
 
-async function refreshShared() {
+async function runRefreshShared() {
   if (!isSharedDemoEnabled) {
     contexts.value = [...LOCAL_FALLBACK_CONTEXTS];
     if (!contexts.value.some((c) => c.engagementId === activeEngagementId.value)) {
@@ -379,6 +380,7 @@ async function refreshShared() {
     accountingStatus.value = null;
     accountingSteps.value = [];
     allowedActions.value = [];
+    artifacts.value = [];
     contextsError.value = null;
     syncError.value = null;
     syncStatus.value = 'READY';
@@ -420,8 +422,12 @@ async function refreshShared() {
         accountingStatus.value = null;
         accountingSteps.value = [];
         allowedActions.value = [];
+        artifacts.value = [];
         syncError.value = null;
         syncStatus.value = 'RESET_REQUIRED';
+        // The re-fetch must start fresh even though a promise is still
+        // in flight for the abandoned engagement.
+        refreshInFlight = null;
         void refreshShared();
         return;
       }
@@ -447,6 +453,7 @@ async function refreshShared() {
       tasks.value = Array.isArray(workspace.tasks) ? workspace.tasks : [];
       events.value = Array.isArray(workspace.recentEvents) ? workspace.recentEvents : [];
       outbox.value = Array.isArray(workspace.outbox) ? workspace.outbox : [];
+      artifacts.value = Array.isArray(workspace.artifacts) ? workspace.artifacts : [];
       progress.value = wsProgress;
       progressError.value = null;
       accountingStatus.value = workspace.accounting || null;
@@ -503,15 +510,43 @@ async function refreshShared() {
   }
 }
 
+// M7 STATE-02 — single-flight refresh coalescing. Concurrent callers (page
+// mounts, poll ticks, visibility changes, post-command refreshes) share the
+// in-flight promise instead of stacking overlapping fetches.
+let refreshInFlight = null;
+
+function refreshShared() {
+  if (refreshInFlight) return refreshInFlight;
+  const current = runRefreshShared().finally(() => {
+    if (refreshInFlight === current) refreshInFlight = null;
+  });
+  refreshInFlight = current;
+  return current;
+}
+
+let pollChainActive = false;
+
+function scheduleNextPoll() {
+  if (!SHARED_DEMO_POLL_MS || SHARED_DEMO_POLL_MS <= 0 || typeof window === 'undefined') return;
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    if (typeof document !== 'undefined' && document.hidden) {
+      scheduleNextPoll();
+      return;
+    }
+    // The next tick is scheduled only after the current refresh settles, so
+    // slow responses can never stack overlapping polls.
+    void Promise.resolve(refreshShared()).finally(() => { scheduleNextPoll(); });
+  }, SHARED_DEMO_POLL_MS);
+}
+
 function startPolling() {
   mountedCount += 1;
-  if (pollTimer || typeof window === 'undefined') return;
+  if (pollChainActive || typeof window === 'undefined') return;
+  pollChainActive = true;
   void refreshShared();
-  if (SHARED_DEMO_POLL_MS > 0) {
-    pollTimer = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      void refreshShared();
-    }, SHARED_DEMO_POLL_MS);
+  scheduleNextPoll();
+  if (!visibilityHandler && typeof document !== 'undefined') {
     visibilityHandler = () => {
       if (typeof document !== 'undefined' && !document.hidden) void refreshShared();
     };
@@ -522,7 +557,8 @@ function startPolling() {
 function stopPolling() {
   mountedCount = Math.max(0, mountedCount - 1);
   if (mountedCount > 0) return;
-  if (pollTimer) clearInterval(pollTimer);
+  pollChainActive = false;
+  if (pollTimer) clearTimeout(pollTimer);
   pollTimer = null;
   if (visibilityHandler && typeof document !== 'undefined') document?.removeEventListener?.('visibilitychange', visibilityHandler);
   visibilityHandler = null;
@@ -541,12 +577,16 @@ export function switchSharedEngagement(engagementId) {
   tasks.value = [];
   events.value = [];
   outbox.value = [];
+  artifacts.value = [];
   progress.value = null;
   progressError.value = null;
   accountingStatus.value = null;
   accountingSteps.value = [];
   allowedActions.value = [];
   syncStatus.value = 'LOADING';
+  // The in-flight response still describes the previous engagement; drop it
+  // so the coalesced refresh below fetches the new selection immediately.
+  refreshInFlight = null;
   // Keep the browser-local scenario scope aligned best-effort so local pages
   // do not describe a different engagement than the navigator. A denial
   // keeps the shared selection; local pages remain labelled LOCAL.
@@ -574,6 +614,7 @@ export function useDemoContext() {
     tasks,
     events,
     outbox,
+    artifacts,
     progress,
     progressError,
     accountingStatus,

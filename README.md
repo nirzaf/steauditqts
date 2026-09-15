@@ -43,6 +43,14 @@ Every workflow guide includes a client-comment composer and a presentation-only 
 
 The default build is **LOCAL_ONLY**: it stores scoped synthetic comments, walkthrough preferences, and client submissions in browser storage and does not contact `/api`. Local saves are labelled `SAVED_LOCAL_DRAFT` and are never promised for automatic replay. A shared demo must be explicitly opted into at build time with a verified Cloudflare Access boundary and an isolated non-production binding; caller-supplied roles, passwords, Origin headers, or URLs are not authentication. The Worker fails closed unless that boundary is configured. In an explicitly enabled shared demo, the API is the `steaudit-api` Cloudflare Worker on the `ste.quadrate.lk/api/*` route and persists records in additive tables in a separately approved non-production binding.
 
+### Client-safe invitation runs
+
+An Admin or Partner demo session can create a seven-day invitation from the Admin console. Each invitation creates a short-lived, run-prefixed synthetic engagement namespace inside the existing `quadrate-db`; the recipient is fixed to the selected client persona and cannot switch to presenter or staff pages. Portal messages are stored in the run-scoped `auditflow_portal_messages` table, so a second browser using the same invitation sees the same thread while another invitation run remains isolated.
+
+Evidence uploads use the private `steaudit-demo-uploads` R2 bucket through the Worker `DEMO_UPLOADS` binding. The Worker accepts only PDF, CSV, XLS and XLSX files up to 10 MB, stores the receipt metadata and SHA-256 digest in D1, and refuses downloads after 24 hours. A `*/5 * * * *` scheduled handler removes expired/abandoned objects; the bucket also has a one-day lifecycle rule as a cleanup backstop. No public R2 URL or browser credential is issued.
+
+The additive client-safe schema is applied by `npm run db:migrate:client-safe`, which targets only the `auditflow_*` tables in the existing D1 database. The deployment workflow runs the migration before publishing the Worker and Pages bundle from the same commit. Configure `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` as repository secrets before relying on the GitHub Actions deploy job; local OAuth is suitable for an operator-run deployment only.
+
 ### If a page looks empty
 
 An empty shell is usually a browser holding an older lazy-loaded chunk after a deployment. Refresh the tab (or close and reopen it) so `index.html` and its versioned page modules come from the same build. The current source also shows an explicit “This demo page needs a refresh” panel when a chunk cannot be loaded. A role-ineligible deep link is redirected to that persona's landing page with a permission notice, and an intentionally blocked synthetic fixture may show no downstream records until its prerequisite gate is completed. The deployed `ste.quadrate.lk` site must be rebuilt and delivered before these local fixes can appear there.
@@ -59,13 +67,15 @@ Apply the isolated schema locally only when needed for a deliberately configured
 npm run db:migrate:local
 ```
 
-Remote deployment is intentionally outside the prototype implementation task. If a separately authorized release is required, review the safety boundary and Cloudflare Access configuration first, then run the deployment commands from a controlled release environment:
+For an authorized release, review the safety boundary and Cloudflare Access configuration first, then run the deployment commands from a controlled release environment:
 
 ```bash
 npx wrangler deploy --config wrangler.jsonc --minify
 npm run build
 npx wrangler pages deploy dist --project-name ste-quadrate-lk --branch main
 ```
+
+For a reproducible build, set `VITE_BUILD_COMMIT` to the commit being released before `npm run build`, pass the same commit as `DEPLOYMENT_SHA` to `wrangler deploy`, and verify with `EXPECTED_COMMIT=<sha> node scripts/live-smoke.mjs`. The smoke check confirms Pages and `/api/health` are reachable and that the Worker reports the expected deployment version.
 
 The Worker is intentionally fail-closed demo infrastructure: inputs are length- and key-validated, writes are scoped to an explicit engagement and step, public health returns no client records, and every response includes a correlation ID and `SIMULATION` evidence. Do not treat this API or its D1 tables as production identity, isolation, tamper resistance, records protection, or audit evidence.
 

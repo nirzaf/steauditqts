@@ -1,10 +1,12 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { DEMO_ENGAGEMENT_ID, loadClientProfile, saveClientProfile } from '../api'
 import { client, workflowGuides } from '../data'
+import { activeDemoSession, getActiveDemoView } from '../sharedDemo.js'
+import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 
 const form = reactive({
   engagementId: DEMO_ENGAGEMENT_ID,
@@ -23,6 +25,10 @@ const saving = ref(false)
 const source = ref('d1')
 const syncState = ref('SYNCED')
 const statusMessage = ref('')
+const scopedView = ref(getActiveDemoView())
+const activeEngagementId = computed(() => scopedView.value?.engagementId || DEMO_ENGAGEMENT_ID)
+const invitationSession = computed(() => Boolean(activeDemoSession.value?.invitationId))
+const canSubmit = computed(() => !sharedDemoEnabled || invitationSession.value)
 
 function applyProfile(profile) {
   if (!profile) return
@@ -31,8 +37,10 @@ function applyProfile(profile) {
 
 async function loadProfile() {
   loading.value = true
+  scopedView.value = getActiveDemoView() || scopedView.value
+  form.engagementId = activeEngagementId.value
   try {
-    const result = await loadClientProfile()
+    const result = await loadClientProfile(activeEngagementId.value)
     source.value = result.source
     syncState.value = result.syncState || 'LOCAL_ONLY'
     applyProfile(result.profile)
@@ -47,7 +55,8 @@ async function loadProfile() {
 }
 
 async function submitDetails() {
-  if (saving.value) return
+  if (saving.value || !canSubmit.value) return
+  form.engagementId = activeEngagementId.value
   saving.value = true
   statusMessage.value = ''
   const result = await saveClientProfile({ ...form, submittedBy: form.contactName || 'Client contact' })
@@ -81,7 +90,8 @@ onMounted(loadProfile)
           <div class="form-section-heading"><span><Icon name="briefcase" :size="16" />Service context</span><small>Confirm the period and service route</small></div>
           <div class="form-field-grid"><label>Reporting period<input v-model="form.servicePeriod" required maxlength="120" /></label><label>Requested service<input v-model="form.serviceRequested" required maxlength="160" /></label></div>
           <label>What changed or needs context?<textarea v-model="form.context" maxlength="1200" rows="4" placeholder="Ownership, systems, locations, timing, or other context"></textarea></label>
-          <div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />Never enter passwords, access tokens, or banking credentials.</span><button type="submit" class="button primary" :disabled="saving || loading">{{ saving ? 'Submitting…' : 'Submit client details' }}<Icon name="arrow-right" :size="17" /></button></div>
+          <div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />Never enter passwords, access tokens, or banking credentials.</span><button type="submit" class="button primary" :disabled="saving || loading || !canSubmit">{{ saving ? 'Submitting…' : 'Submit client details' }}<Icon name="arrow-right" :size="17" /></button></div>
+          <p v-if="sharedDemoEnabled && !invitationSession" class="portal-status neutral" role="status">This shared preview is read-only. Open a client invitation to submit details to its isolated run.</p>
           <p v-if="statusMessage" class="portal-status" role="status" aria-live="polite">{{ statusMessage }}</p>
         </form>
       </section>

@@ -87,7 +87,7 @@ function openNext() {
 
 <template>
   <section class="demo-navigator" aria-label="Demo navigator">
-    <div class="demo-nav-group">
+    <div v-if="personas.length" class="demo-nav-group">
       <label class="demo-nav-label" for="demo-persona-select">Persona</label>
       <select id="demo-persona-select" class="demo-nav-select" :value="currentUser?.id" :disabled="personaBusy" aria-label="Demo persona switcher, simulation only" @change="onPersona">
         <option v-for="persona in personas" :key="persona.id" :value="persona.id">{{ persona.roleLabel }}</option>
@@ -161,4 +161,11 @@ function openNext() {
 .demo-nav-icon-row { display: flex; gap: 8px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
 @media (max-width: 1100px) { .demo-navigator { grid-template-columns: 1fr 1fr; } .demo-nav-next { border-left: none; padding-left: 0; } }
+@media (max-width: 680px) {
+  .demo-navigator { gap: 10px; padding: 10px 15px; }
+  .demo-nav-select { width: 100%; min-height: 44px; padding: 8px 9px; }
+  .demo-nav-mini-select { min-width: 64px; min-height: 44px; padding: 5px 6px; }
+  .demo-nav-action { min-height: 44px; }
+  .demo-nav-mode { grid-column: 1 / -1; }
+}
 </style>

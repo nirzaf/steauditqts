@@ -10,7 +10,9 @@ import { loadDemoSession } from '../auth.js'
 import { pipelineStages } from '../pipelineData.js'
 import {
   SHARED_ENGAGEMENT_ID,
+  activeCommandContext,
   createDemoSession,
+  createSharedIntent,
   getDemoMe,
   getSharedArtifacts,
   getSharedOutbox,
@@ -19,6 +21,7 @@ import {
   isSharedDemoEnabled,
 } from '../sharedDemo.js'
 import { useSharedEngagement } from '../composables/useSharedEngagement.js'
+import { useDraftForms } from '../composables/useDraftForms.js'
 import { useDemoContext } from '../demoContext.js'
 
 const emit = defineEmits(['navigate'])
@@ -80,6 +83,80 @@ const artifacts = ref([])
 const outbox = ref([])
 const pbc = ref({ requests: [], receipts: [] })
 
+// M7 STATE-03 — allow-listed free-text fields only; never decision values,
+// tokens or gate state. formId is the action key so drafts never inherit
+// across actions.
+const FREE_TEXT_FIELDS = ['context', 'description', 'acceptanceCriteria', 'rationale', 'conclusion', 'detail', 'explanation', 'note', 'response', 'comment', 'attendees', 'topics', 'outcome', 'subject', 'plannedDates', 'procedureTitle', 'evidenceReference', 'summary', 'title']
+const draftForms = useDraftForms(Object.fromEntries(actionDefinitions.map((item) => [item.key, FREE_TEXT_FIELDS])))
+const draftStatus = ref(null)
+const draftPrompt = ref(null)
+const pendingIntent = ref(null)
+let draftTimer = null
+
+function draftScope(formId) {
+  return {
+    runId: 'm7-demo',
+    generationId: String(engagement.value?.generationId || ''),
+    actorId: String(serverSession.value?.actorId || currentUser.value?.id || ''),
+    engagementId: String(engagementId.value || ''),
+    formId: String(formId || ''),
+  }
+}
+
+function fieldPlaceholder(field) {
+  return activeAction.value?.fields?.find(([name]) => name === field)?.[2] ?? null
+}
+
+function restoreDraft(actionKey) {
+  if (!draftForms || !actionKey) return
+  const scope = draftScope(actionKey)
+  const revision = Number(engagement.value?.revision || 0)
+  if (!scope.generationId || !scope.actorId || revision < 1) return
+  const loaded = draftForms.restore(scope, revision)
+  if (!loaded.ok) {
+    draftStatus.value = { error: loaded.message || 'Draft storage failed.' }
+    return
+  }
+  if (loaded.outcome !== 'DRAFT_LOADED' || !loaded.draft) return
+  const definition = actionDefinitions.find((item) => item.key === actionKey)
+  const freeFields = (definition?.fields || []).filter(([field]) => FREE_TEXT_FIELDS.includes(field)).map(([field]) => field)
+  const applicable = Object.fromEntries(Object.entries(loaded.draft.values || {}).filter(([key]) => freeFields.includes(key)))
+  if (!Object.keys(applicable).length) return
+  if (loaded.stale) {
+    // Never auto-resubmit or auto-apply across revisions: the presenter
+    // decides explicitly (M7 STATE-03 reconciliation prompt).
+    draftPrompt.value = { values: applicable, baseRevision: loaded.draft.baseRevision, currentRevision: revision }
+    return
+  }
+  const next = { ...form.value }
+  let applied = false
+  for (const [key, value] of Object.entries(applicable)) {
+    if (next[key] !== fieldPlaceholder(key)) continue // the presenter already edited this field
+    next[key] = value
+    applied = true
+  }
+  if (!applied) return
+  form.value = next
+  draftStatus.value = { savedAt: loaded.draft.savedAt }
+}
+
+function keepStaleDraft() {
+  const prompt = draftPrompt.value
+  draftPrompt.value = null
+  if (!prompt || !activeAction.value) return
+  const next = { ...form.value }
+  for (const [key, value] of Object.entries(prompt.values)) next[key] = value
+  form.value = next
+  draftStatus.value = null
+}
+
+function discardStaleDraft() {
+  draftPrompt.value = null
+  if (!draftForms || !activeAction.value) return
+  const removed = draftForms.clear(draftScope(activeAction.value.key))
+  draftStatus.value = removed.ok ? null : { error: removed.message || 'Draft storage failed.' }
+}
+
 const { engagement, tasks, events, generationChanged, loading, error, lastSync, runAction, refresh } = useSharedEngagement(() => engagementId.value, { assignee: '' })
 const availableActions = computed(() => {
   // In shared mode the Worker owns the action allow-list.  The local role
@@ -107,6 +184,9 @@ function setAction(key) {
   form.value = next
   actionMessage.value = null
   lastActionResponse.value = null
+  pendingIntent.value = null
+  draftStatus.value = null
+  draftPrompt.value = null
 }
 
 function navigate(route) { emit('navigate', route) }
@@ -132,18 +212,51 @@ async function submitAction() {
   if (!activeAction.value || busy.value) return
   busy.value = true
   actionMessage.value = null
-  const payload = { ...form.value, idempotencyKey: idempotencyKey(activeAction.value.key.toLowerCase()) }
-  if (['ACCEPT_CLIENT'].includes(activeAction.value.key) && engagement.value?.revision) payload.expectedRevision = engagement.value.revision
-  const result = await runAction(activeAction.value.key, payload)
+  const actionKey = activeAction.value.key
+  const payload = { ...form.value }
+  if (['ACCEPT_CLIENT'].includes(actionKey) && engagement.value?.revision) payload.expectedRevision = engagement.value.revision
+  const signature = JSON.stringify([actionKey, ...Object.entries(form.value).map(([key, value]) => `${key}=${String(value ?? '')}`)])
+  // M7 APPROVAL-03 — one stable intent per user action: retrying the exact
+  // same action after an unconfirmed result re-sends the SAME idempotency key.
+  let intent = pendingIntent.value
+  if (!intent || intent.signature !== signature || !intent.intent.canRetry()) {
+    intent = null
+    const context = activeCommandContext(engagementId.value)
+    if (context) {
+      const targetId = String(payload.targetId || payload.candidateId || payload.workpaperId || payload.requestId || context.engagementId)
+      intent = { signature, intent: createSharedIntent(context, actionKey, targetId, payload) }
+    }
+  }
+  const result = intent
+    ? await intent.intent.send()
+    : await runAction(actionKey, { ...payload, idempotencyKey: idempotencyKey(actionKey.toLowerCase()) })
   busy.value = false
   if (result.ok) {
-    actionMessage.value = { ok: true, text: `${activeAction.value.label} committed to the shared D1 demo record.` }
+    pendingIntent.value = null
+    actionMessage.value = { ok: true, tone: 'committed', text: `${activeAction.value.label} committed to the shared D1 demo record.` }
     lastActionResponse.value = Object.fromEntries(Object.entries(result).filter(([key]) => !['ok', 'evidenceLevel'].includes(key)))
+    if (draftForms) {
+      const cleared = draftForms.clear(draftScope(actionKey))
+      draftStatus.value = cleared.ok ? null : { error: cleared.message || 'Draft storage failed.' }
+    }
+    if (intent) await refresh()
     await refreshExtras()
-  } else {
-    actionMessage.value = { ok: false, text: `${activeAction.value.label} was not committed: ${result.error?.message || result.error?.code || 'Worker rejected the request.'}` }
-    lastActionResponse.value = { error: result.error }
+    return
   }
+  const status = Number(result.error?.status || 0)
+  const uncertain = String(result.outcome || '').toUpperCase() === 'UNCERTAIN'
+    || result.error?.code === 'COMMIT_UNCONFIRMED' || result.error?.code === 'NETWORK_UNAVAILABLE'
+    || !status || status >= 500
+  if (uncertain) {
+    // Keep the intent so "Retry same request" re-sends the SAME key.
+    if (intent?.intent.canRetry()) pendingIntent.value = intent
+    actionMessage.value = { ok: false, tone: 'uncertain', text: `${activeAction.value.label} could not be confirmed — it was not committed and not rejected. ${result.guidance || 'Retry this same request; do not create a new intent.'}` }
+    lastActionResponse.value = { outcome: 'UNCERTAIN', error: result.error, guidance: result.guidance || null }
+    return
+  }
+  pendingIntent.value = null
+  actionMessage.value = { ok: false, tone: 'rejected', text: `${activeAction.value.label} was not committed: ${result.error?.message || result.error?.code || 'Worker rejected the request.'}` }
+  lastActionResponse.value = { outcome: 'REJECTED', error: result.error }
 }
 
 function formatTime(value) {
@@ -157,6 +270,37 @@ onMounted(async () => {
 })
 watch(availableActions, (items) => {
   if (!selectedAction.value && items[0]) setAction(items[0].key)
+})
+
+// Debounced local-draft save for the current action form (free-text fields only).
+watch(form, (values) => {
+  if (!draftForms || !activeAction.value || draftPrompt.value) return
+  if (draftTimer) clearTimeout(draftTimer)
+  draftTimer = setTimeout(() => {
+    const revision = Number(engagement.value?.revision || 0)
+    const scope = draftScope(activeAction.value.key)
+    if (revision < 1 || !scope.generationId || !scope.actorId) return
+    const subset = {}
+    for (const [field, value] of Object.entries(values || {})) {
+      if (!FREE_TEXT_FIELDS.includes(field) || typeof value !== 'string' || !value.trim()) continue
+      if (value === fieldPlaceholder(field)) continue
+      subset[field] = value
+    }
+    if (!Object.keys(subset).length) {
+      const removed = draftForms.clear(scope)
+      draftStatus.value = removed.ok ? null : { error: removed.message || 'Draft storage failed.' }
+      return
+    }
+    const saved = draftForms.save(scope, subset, revision)
+    draftStatus.value = saved.ok ? { savedAt: saved.savedAt } : { error: saved.message || 'Draft storage failed.' }
+  }, 500)
+}, { deep: true })
+
+// Restore a saved draft once the shared context (generation/revision) and the
+// selected action are both known — including after the first poll.
+watch(() => [selectedAction.value, engagement.value?.generationId, engagement.value?.revision], ([actionKey]) => {
+  const revision = Number(engagement.value?.revision || 0)
+  if (actionKey && revision >= 1) restoreDraft(actionKey)
 })
 </script>
 
@@ -187,8 +331,12 @@ watch(availableActions, (items) => {
           <div class="shared-action-heading"><div><span class="eyebrow">{{ activeAction.key }}</span><h3>{{ activeAction.label }}</h3><p>{{ activeAction.help }}</p></div><StatusPill label="Validated server-side" tone="blue" /></div>
           <div v-if="activeAction.fields.length" class="form-grid compact-form-grid"><label v-for="[field, label, placeholder] in activeAction.fields" :key="field" :class="{ 'span-two': field === 'context' || field === 'description' || field === 'acceptanceCriteria' || field === 'rationale' || field === 'conclusion' || field === 'detail' || field === 'explanation' || field === 'note' || field === 'response' }">{{ label }}<textarea v-if="['context', 'description', 'acceptanceCriteria', 'rationale', 'conclusion', 'detail', 'explanation', 'note', 'response', 'comment'].includes(field)" v-model="form[field]" rows="2" :placeholder="placeholder" /><input v-else v-model="form[field]" :placeholder="placeholder" /></label></div>
           <div class="shared-action-submit"><span><Icon name="shield" :size="16" />Synthetic only · no external message or binary file is sent.</span><button type="submit" class="button primary" :disabled="busy || generationChanged">{{ busy ? 'Committing…' : 'Commit shared action' }}<Icon name="arrow-right" :size="16" /></button></div>
+          <p v-if="draftStatus?.savedAt" class="muted-label">Local draft saved · SAVED_LOCAL_DRAFT</p>
+          <p v-if="draftStatus?.error" class="shared-action-result failure" role="status"><Icon name="warning" :size="15" />Local draft storage failed: {{ draftStatus.error }}</p>
+          <div v-if="draftPrompt" class="permission-notice" role="status"><Icon name="refresh" :size="17" /><span>Draft saved against revision {{ draftPrompt.baseRevision }}; the current revision is {{ draftPrompt.currentRevision }}.</span><button type="button" class="button secondary" @click="keepStaleDraft">Keep draft</button><button type="button" class="button secondary" @click="discardStaleDraft">Discard</button></div>
         </form>
         <p v-if="actionMessage" class="shared-action-result" :class="actionMessage.ok ? 'success' : 'failure'" role="status"><Icon :name="actionMessage.ok ? 'check-circle' : 'warning'" :size="17" />{{ actionMessage.text }}</p>
+        <button v-if="actionMessage?.tone === 'uncertain' && pendingIntent" type="button" class="button secondary" :disabled="busy" @click="submitAction">Retry same request<Icon name="refresh" :size="16" /></button>
         <details v-if="lastActionResponse" class="shared-action-response"><summary>Show Worker response details</summary><pre>{{ JSON.stringify(lastActionResponse, null, 2) }}</pre></details>
       </article>
 

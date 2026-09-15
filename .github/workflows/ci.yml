@@ -1,4 +1,4 @@
-name: Validate AuditFlow prototype
+name: Validate and deploy AuditFlow
 
 on:
   push:
@@ -9,16 +9,75 @@ on:
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: 22
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
 jobs:
   validate:
     name: Test and build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
       - run: npm test
       - run: npm run build
+        env:
+          VITE_BUILD_COMMIT: ${{ github.sha }}
+      - run: git diff --check
+
+  deploy:
+    name: Deploy Worker, D1 schema and Pages
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check deployment credentials
+        id: credentials
+        shell: bash
+        run: |
+          if [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare secrets are not configured; validation remains green and deployment steps are skipped."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.credentials.outputs.enabled == 'true'
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        if: steps.credentials.outputs.enabled == 'true'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+        if: steps.credentials.outputs.enabled == 'true'
+      - run: npm test
+        if: steps.credentials.outputs.enabled == 'true'
+      - run: npm run build
+        if: steps.credentials.outputs.enabled == 'true'
+        env:
+          VITE_BUILD_COMMIT: ${{ github.sha }}
+      - name: Apply client-safe D1 migration
+        if: steps.credentials.outputs.enabled == 'true'
+        run: npm run db:migrate:client-safe
+      - name: Deploy API Worker
+        if: steps.credentials.outputs.enabled == 'true'
+        run: npx wrangler deploy --config wrangler.jsonc --minify --var "DEPLOYMENT_SHA:${{ github.sha }}"
+      - name: Deploy Vue site
+        if: steps.credentials.outputs.enabled == 'true'
+        run: npx wrangler pages deploy dist --project-name ste-quadrate-lk --branch main
+      - name: Live smoke check
+        if: steps.credentials.outputs.enabled == 'true'
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: node scripts/live-smoke.mjs

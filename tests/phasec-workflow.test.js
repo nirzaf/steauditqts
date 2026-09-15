@@ -42,6 +42,8 @@ function makeFakeDb() {
     tasks: new Map(),
     outbox: [],
     events: [],
+    // M7 PIPE-F11 - injectable mid-batch failure point for rollback proofs.
+    failBatchAt: null,
   };
   function apply(sql, p) {
     if (sql.includes('INSERT INTO auditflow_assessments')) state.assessments.set(p[0], { assessment_id: p[0], engagement_id: p[1], type: p[2], template_version: p[3], revision: 1, updated_at: '2026-09-14 00:00:00' });
@@ -116,14 +118,55 @@ function makeFakeDb() {
     if (sql.includes('FROM auditflow_pbc_requests')) return { results: [...state.pbcRequests.values()].filter((r) => r.engagement_id === p[0]) };
     return { results: [] };
   }
+  function cloneRows(map) {
+    const next = new Map();
+    for (const [key, value] of map.entries()) next.set(key, typeof value === 'object' && value !== null ? { ...value } : value);
+    return next;
+  }
+  function snapshotState() {
+    return {
+      sessions: cloneRows(state.sessions),
+      engagements: cloneRows(state.engagements),
+      assessments: cloneRows(state.assessments),
+      accountingStatus: cloneRows(state.accountingStatus),
+      workpapers: cloneRows(state.workpapers),
+      reviews: cloneRows(state.reviews),
+      pbcRequests: cloneRows(state.pbcRequests),
+      pbcReceipts: cloneRows(state.pbcReceipts),
+      tasks: cloneRows(state.tasks),
+      assessmentResponses: state.assessmentResponses.map((row) => ({ ...row })),
+      decisions: state.decisions.map((row) => ({ ...row })),
+      tbSources: state.tbSources.map((row) => ({ ...row })),
+      artifacts: state.artifacts.map((row) => ({ ...row })),
+      outbox: state.outbox.map((row) => ({ ...row })),
+      events: state.events.map((row) => ({ ...row })),
+    };
+  }
   const db = {
     prepare(sql) {
       const bound = (...params) => ({
+        __sql: sql,
+        __params: params,
         async run() { apply(sql, params); return { success: true }; },
         async first() { return one(sql, params); },
         async all() { return all(sql, params); },
       });
       return { bind: (...params) => bound(...params), async run() { apply(sql, []); return { success: true }; }, async first() { return one(sql, []); }, async all() { return all(sql, []); } };
+    },
+    // M7 PIPE-F11 - D1-style all-or-nothing batch: sequential apply with an
+    // injectable failure point; on error the snapshot is fully restored.
+    async batch(statements) {
+      const snapshot = snapshotState();
+      try {
+        for (let i = 0; i < statements.length; i++) {
+          if (state.failBatchAt != null && i >= state.failBatchAt) throw new Error('Injected batch failure at statement ' + i);
+          apply(statements[i].__sql, statements[i].__params);
+        }
+        return statements.map(() => ({ success: true }));
+      } catch (error) {
+        for (const [key, value] of Object.entries(snapshot)) state[key] = value;
+        throw error;
+      }
     },
   };
   return { state, db };

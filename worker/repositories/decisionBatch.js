@@ -40,8 +40,10 @@ export function buildDecisionBatch(command = {}, decision = {}, expectedGuards =
     throw new TypeError('A valid command, view, idempotency key, digest and expected revision are required.')
   }
   if (!decision.id || !decision.type || !decision.objectVersion || !decision.value) throw new TypeError('A complete version-bound decision is required.')
+  if (decision.inputGeneration != null && (!Number.isSafeInteger(decision.inputGeneration) || decision.inputGeneration < 1)) throw new TypeError('Invalid decision input generation.')
+  if (decision.stage != null && typeof decision.stage !== 'string') throw new TypeError('Invalid decision stage.')
   const params = [commandId, generationId, engagementId, actorId, idempotencyKey, requestDigest,
-    JSON.stringify({ outcome: 'COMMITTED', commandId, decisionId: decision.id, actorId, engagementId, generationId, revision: expectedRevision + 1 }),
+    JSON.stringify({ outcome: 'COMMITTED', commandId, decisionId: decision.id, actorId, engagementId, generationId, revision: expectedRevision + 1, ...(decision.resultExtras || {}) }),
     engagementId, generationId, expectedRevision, viewId, parentSessionId, actorId, engagementId, generationId, contextVersion]
   const guardSql = (Array.isArray(expectedGuards) ? expectedGuards : []).map((guard) => {
     if (!guard?.engagementId || !guard?.generationId || !Number.isSafeInteger(guard.revision) || guard.revision < 1) throw new TypeError('Invalid server-loaded dependency guard.')
@@ -53,6 +55,14 @@ export function buildDecisionBatch(command = {}, decision = {}, expectedGuards =
     if (!statement || typeof statement.sql !== 'string' || !Array.isArray(statement.params)) throw new TypeError('Invalid prepared effect.')
     return statement
   })
+  const decisionRevision = decision.rowRevision ?? expectedRevision + 1
+  const withInputGeneration = decision.inputGeneration != null
+  const decisionRow = {
+    sql: `INSERT INTO auditflow_decisions
+      (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision${withInputGeneration ? ', input_generation' : ''})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?${withInputGeneration ? ', ?' : ''})`,
+    params: [decision.id, engagementId, decision.type, decision.objectVersion, decision.value, actorId, decision.rationale || '', decisionRevision, ...(withInputGeneration ? [decision.inputGeneration] : [])],
+  }
   return [
     {
       sql: `INSERT INTO auditflow_command_receipts
@@ -69,23 +79,18 @@ export function buildDecisionBatch(command = {}, decision = {}, expectedGuards =
       params: [...params, viewId, parentSessionId],
     },
     {
-      sql: `UPDATE auditflow_engagement_state SET revision = revision + 1,
+      sql: `UPDATE auditflow_engagement_state SET revision = revision + 1${decision.stage ? ', current_stage = ?' : ''},
         updated_at = datetime('now') WHERE engagement_id = ? AND generation_id = ? AND revision = ?`,
-      params: [engagementId, generationId, expectedRevision],
+      params: decision.stage ? [engagementId, generationId, decision.stage, expectedRevision] : [engagementId, generationId, expectedRevision],
     },
-    {
-      sql: `INSERT INTO auditflow_decisions
-        (decision_id, engagement_id, decision_type, object_version, decision, decided_by, rationale, revision)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      params: [decision.id, engagementId, decision.type, decision.objectVersion, decision.value, actorId, decision.rationale || '', expectedRevision + 1],
-    },
+    decisionRow,
     ...effects,
     {
       sql: `INSERT INTO auditflow_events
         (event_id, engagement_id, actor, action, object_type, object_id,
          previous_revision, new_revision, idempotency_key, correlation_id)
-        VALUES (?, ?, ?, ?, 'decision', ?, ?, ?, ?, ?)`,
-      params: [commandId, engagementId, actorId, decision.eventAction || decision.type, decision.id, expectedRevision, expectedRevision + 1, commandId, correlationId],
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [commandId, engagementId, actorId, decision.eventAction || decision.type, decision.eventObjectType || 'decision', decision.eventObjectId || decision.id, expectedRevision, expectedRevision + 1, idempotencyKey || commandId, correlationId],
     },
   ]
 }
@@ -110,6 +115,6 @@ export async function executeDecisionBatch(db, command, decision, guards = [], e
     if (String(error?.message || '').includes('claimed_revision') || String(error?.message || '').includes('UNIQUE')) return { outcome: 'REJECTED', code: 'REVISION_OR_GENERATION_CONFLICT', message: 'The record changed before this command could commit.' }
     throw error
   }
-  return { outcome: 'COMMITTED', commandId: command.commandId || command.commandId, decisionId: decision.id, actorId: command.actorId, engagementId: command.engagementId, generationId: command.generationId, revision: command.expectedRevision + 1, replayed: false }
+  return { outcome: 'COMMITTED', commandId: command.commandId, decisionId: decision.id, actorId: command.actorId, engagementId: command.engagementId, generationId: command.generationId, revision: command.expectedRevision + 1, replayed: false }
 }
 

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Icon from '../components/Icon.vue'
 import NextBestActionCard from '../components/NextBestActionCard.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -11,6 +11,10 @@ import { formatMoney, workflowGuides } from '../data'
 import { roleWorkspaceFor } from '../roleWorkspaces.js'
 import { activeActor, commercialRecordFor, completeSyntheticCredentialSetup, gateSummary, issueSyntheticCredential, recordRoleTaskAction, recordTerms, recordTermsDecision, scenario, selectedClient, selectedEngagement, termsFor, verifyAdvancePayment } from '../domain/scenario.js'
 import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
+import { loadDemoSession } from '../auth.js'
+import { useDemoContext } from '../demoContext.js'
+import { activeCommandContext, createSharedIntent, runSharedAction } from '../sharedDemo.js'
+import { useDraftForms } from '../composables/useDraftForms.js'
 
 const emit = defineEmits(['navigate'])
 const sharedEnabled = sharedDemoEnabled
@@ -19,6 +23,19 @@ const busyTask = ref('')
 const credentialResult = ref(null)
 const termsDecision = ref('ACCEPT')
 const termsRationale = ref('')
+
+// M7 §5 — shared mode: the workspace context provides the server-truth action
+// allow-list and engagement revision; local scenario state stays read-only.
+const {
+  allowedActions: sharedAllowedActions,
+  engagement: sharedEngagement,
+  refresh: refreshSharedContext,
+} = useDemoContext()
+const sharedActionBusy = ref('')
+const sharedActionMessage = ref('')
+const sharedAdvanceReference = ref('')
+const sharedApprovedFee = ref('')
+const sharedActionAllowed = (action) => (sharedAllowedActions.value || []).includes(action)
 
 const actor = computed(() => activeActor())
 const workspace = computed(() => roleWorkspaceFor(actor.value?.personaId))
@@ -143,6 +160,159 @@ function reissueTerms() {
   busyTask.value = ''
   show(result.outcome === 'COMMITTED' ? `Revised Engagement Letter ${nextTermsVersion.value} issued for exact client acceptance.` : `${result.outcome}: ${result.code} — ${result.message}`)
 }
+
+// M7 APPROVAL-03 / APP-F06 — one stable intent per shared command; the
+// idempotency key survives retries until commit or explicit rejection.
+const pendingIntents = new Map()
+
+function sharedIntentFor(key, action, payload) {
+  const context = activeCommandContext(engagement.value?.id)
+  if (!context) return null
+  const signature = JSON.stringify([action, payload])
+  const existing = pendingIntents.get(key)
+  if (existing && existing.signature === signature && existing.intent.canRetry()) return existing.intent
+  const intent = createSharedIntent(context, action, payload.targetId || context.engagementId, payload)
+  pendingIntents.set(key, { intent, signature })
+  return intent
+}
+
+async function sendSharedIntent(key, action, payload, fallback) {
+  const intent = sharedIntentFor(key, action, payload)
+  if (intent) return intent.send()
+  // No confirmed view context: fall back to the legacy unguarded action path.
+  return fallback()
+}
+
+function sharedActionOutcome(message, result) {
+  const outcome = String(result?.outcome || '').toUpperCase()
+  if (result?.ok) {
+    sharedActionMessage.value = message
+    refreshSharedContext()
+  } else if (outcome === 'UNCERTAIN' || result?.error?.code === 'COMMIT_UNCONFIRMED') {
+    sharedActionMessage.value = 'The server did not confirm this commit. Press the same button again to retry the identical request; do not re-enter the command.'
+  } else {
+    sharedActionMessage.value = 'Not committed (' + (result?.error?.code || 'ERROR') + '): ' + (result?.error?.message || '')
+  }
+  window.setTimeout(() => { sharedActionMessage.value = '' }, 6000)
+}
+
+async function submitSharedVerifyAdvance() {
+  if (sharedActionBusy.value) return
+  if (!String(sharedAdvanceReference.value).trim()) {
+    sharedActionMessage.value = 'Provide the synthetic payment reference (for example PAY-SIM-0018).'
+    window.setTimeout(() => { sharedActionMessage.value = '' }, 6000)
+    return
+  }
+  sharedActionBusy.value = 'advance'
+  const payload = { reference: String(sharedAdvanceReference.value).trim() }
+  const result = await sendSharedIntent('advance', 'VERIFY_ADVANCE', payload, () => runSharedAction(engagement.value?.id, 'VERIFY_ADVANCE', payload))
+  sharedActionBusy.value = ''
+  if (result?.ok) {
+    sharedAdvanceReference.value = ''
+    clearWorkspaceDraft()
+  }
+  sharedActionOutcome('Advance ' + payload.reference + ' verified once; gate G4 re-evaluates from the updated evidence.', result)
+}
+
+async function submitSharedIssueCredential() {
+  if (sharedActionBusy.value) return
+  sharedActionBusy.value = 'credential'
+  const result = await sendSharedIntent('credential', 'ISSUE_TEMP_CREDENTIAL', {}, () => runSharedAction(engagement.value?.id, 'ISSUE_TEMP_CREDENTIAL', {}))
+  sharedActionBusy.value = ''
+  sharedActionOutcome(result?.temporaryPassword
+    ? 'Temporary credential issued. One-time password (shown once): ' + result.temporaryPassword
+    : 'Temporary credential issuance recorded on the shared workspace.', result)
+}
+
+async function submitSharedApproveFee() {
+  if (sharedActionBusy.value) return
+  const fee = String(sharedApprovedFee.value).trim()
+  if (!fee) {
+    sharedActionMessage.value = 'Provide the approved fee as a base-10 money value (for example 12500.00).'
+    window.setTimeout(() => { sharedActionMessage.value = '' }, 6000)
+    return
+  }
+  sharedActionBusy.value = 'fee'
+  const payload = { approvedFee: fee }
+  const result = await sendSharedIntent('fee', 'APPROVE_FEE', payload, () => runSharedAction(engagement.value?.id, 'APPROVE_FEE', payload))
+  sharedActionBusy.value = ''
+  if (result?.ok) sharedApprovedFee.value = ''
+  sharedActionOutcome('Fee ' + fee + ' approved once; the Engagement Letter request now waits for the client.', result)
+}
+
+// M7 STATE-03 — the advance reference is the only free-text field in the
+// shared action forms; the fee amount and the credential command are decision
+// values and are never persisted locally.
+const workspaceDraftForms = useDraftForms({ 'shared-advance': ['reference'] })
+const workspaceDraftStatus = ref('')
+const workspaceDraftError = ref('')
+const workspaceStalePrompt = ref(null)
+let workspaceDraftTimer = null
+
+function workspaceDraftScope() {
+  const engagementRow = sharedEngagement.value
+  if (!engagementRow?.engagementId || !engagementRow?.generationId) return null
+  const actorId = loadDemoSession()?.id || activeCommandContext(engagementRow.engagementId)?.actorId || ''
+  if (!actorId) return null
+  return { runId: 'm7-demo', generationId: String(engagementRow.generationId), actorId: String(actorId), engagementId: String(engagementRow.engagementId), formId: 'shared-advance' }
+}
+
+function clearWorkspaceDraft() {
+  if (!workspaceDraftForms) return
+  const scope = workspaceDraftScope()
+  if (scope) workspaceDraftForms.clear(scope)
+  workspaceDraftStatus.value = ''
+}
+
+watch(sharedAdvanceReference, () => {
+  if (!workspaceDraftForms) return
+  if (workspaceDraftTimer) window.clearTimeout(workspaceDraftTimer)
+  workspaceDraftTimer = window.setTimeout(() => {
+    const scope = workspaceDraftScope()
+    if (!scope) return
+    if (!String(sharedAdvanceReference.value).trim()) {
+      workspaceDraftForms.clear(scope)
+      workspaceDraftStatus.value = ''
+      return
+    }
+    const saved = workspaceDraftForms.save(scope, { reference: sharedAdvanceReference.value }, Number(sharedEngagement.value?.revision || 0))
+    if (saved.ok && saved.outcome === 'SAVED_LOCAL_DRAFT') {
+      workspaceDraftStatus.value = 'SAVED_LOCAL_DRAFT'
+      workspaceDraftError.value = ''
+    } else if (saved.code !== 'DRAFT_SCOPE_INVALID') {
+      workspaceDraftError.value = saved.message || 'The local draft could not be saved.'
+    }
+  }, 500)
+})
+
+function restoreWorkspaceDraft() {
+  if (!workspaceDraftForms) return
+  const scope = workspaceDraftScope()
+  if (!scope) return
+  const loaded = workspaceDraftForms.restore(scope, Number(sharedEngagement.value?.revision || 0))
+  if (!loaded.ok || loaded.outcome !== 'DRAFT_LOADED' || !loaded.draft) return
+  const value = String(loaded.draft.values?.reference || '')
+  if (loaded.stale) {
+    workspaceStalePrompt.value = { value, baseRevision: loaded.draft.baseRevision, currentRevision: Number(sharedEngagement.value?.revision || 0) }
+    return
+  }
+  if (!sharedAdvanceReference.value) sharedAdvanceReference.value = value
+}
+
+function keepWorkspaceDraft() {
+  const prompt = workspaceStalePrompt.value
+  workspaceStalePrompt.value = null
+  if (prompt && !sharedAdvanceReference.value) sharedAdvanceReference.value = prompt.value
+}
+
+function discardWorkspaceDraft() {
+  const prompt = workspaceStalePrompt.value
+  workspaceStalePrompt.value = null
+  const scope = prompt && workspaceDraftScope()
+  if (scope && workspaceDraftForms) workspaceDraftForms.clear(scope)
+}
+
+watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
 </script>
 
 <template>
@@ -154,17 +324,17 @@ function reissueTerms() {
 
     <LocalFixtureNotice v-if="sharedEnabled"
       title="Local role workspace is read-only"
-      description="The shared queue below is authoritative for this persona. Metrics, credentials, engagement terms and task controls in this page are browser-local reference fixtures." />
+      description="The shared queue and shared commands below are authoritative for this persona. Local gate metrics, task controls, credentials and engagement terms are hidden or read-only fixtures here." />
 
     <section class="role-scope-banner panel">
       <div class="role-scope-icon" :class="`tone-${workspace.tone}`"><Icon :name="workspace.icon" :size="22" /></div>
       <div><span class="eyebrow">Current scope</span><h2>{{ workspace.scope }}</h2><p>Signed in as <strong>{{ actor?.name }}</strong> · {{ actor?.roles?.map((role) => role.replaceAll('_', ' ')).join(' · ') }}</p></div>
-      <StatusPill :label="`${blockers.length} blocker${blockers.length === 1 ? '' : 's'}`" :tone="blockers.length ? 'danger' : 'good'" />
+      <StatusPill v-if="!sharedEnabled" :label="`${blockers.length} blocker${blockers.length === 1 ? '' : 's'}`" :tone="blockers.length ? 'danger' : 'good'" />
     </section>
 
     <section class="metric-grid role-metrics" aria-label="Role workspace metrics">
-      <article class="metric-card accent-navy"><div class="metric-card-top"><span>Current gate progress</span><span class="metric-icon"><Icon name="workflow" :size="17" /></span></div><strong>{{ gates.currentReady }}/{{ gates.currentDenominator }}</strong><small>{{ client?.name }} · current period</small></article>
-      <article class="metric-card accent-amber"><div class="metric-card-top"><span>Open blockers</span><span class="metric-icon"><Icon name="warning" :size="17" /></span></div><strong>{{ blockers.length }}</strong><small>Each blocker names its next owner</small></article>
+      <article v-if="!sharedEnabled" class="metric-card accent-navy"><div class="metric-card-top"><span>Current gate progress</span><span class="metric-icon"><Icon name="workflow" :size="17" /></span></div><strong>{{ gates.currentReady }}/{{ gates.currentDenominator }}</strong><small>{{ client?.name }} · current period</small></article>
+      <article v-if="!sharedEnabled" class="metric-card accent-amber"><div class="metric-card-top"><span>Open blockers</span><span class="metric-icon"><Icon name="warning" :size="17" /></span></div><strong>{{ blockers.length }}</strong><small>Each blocker names its next owner</small></article>
       <article class="metric-card accent-green"><div class="metric-card-top"><span>Tasks in this role</span><span class="metric-icon"><Icon name="list-check" :size="17" /></span></div><strong>{{ workspace.tasks.length }}</strong><small>Use the links below to open the working page</small></article>
       <article class="metric-card accent-blue"><div class="metric-card-top"><span>Evidence level</span><span class="metric-icon"><Icon name="shield" :size="17" /></span></div><strong>SIMULATION</strong><small>Browser-local synthetic values only</small></article>
     </section>
@@ -175,8 +345,8 @@ function reissueTerms() {
         <div class="role-task-list">
           <article v-for="task in workspace.tasks" :key="task.id" class="role-task-card">
             <span class="role-task-icon" :class="`task-${task.tone}`"><Icon :name="task.icon" :size="18" /></span>
-            <div class="role-task-copy"><strong>{{ task.title }}</strong><p>{{ task.detail }}</p><span class="role-task-state"><i :class="`state-${task.tone}`"></i>{{ task.command === 'ADVANCE_VERIFY' ? (commercial?.advanceState === 'VERIFIED' ? 'Verified' : 'Needs finance action') : 'Ready to inspect' }}</span></div>
-            <div class="role-task-actions"><button type="button" class="text-button" @click="navigate(task.route)">{{ task.action }} <Icon name="arrow-right" :size="15" /></button><button v-if="task.command === 'ADVANCE_VERIFY'" type="button" class="button secondary small" :disabled="busyTask === task.id || commercial?.advanceState === 'VERIFIED'" @click="verifyAdvance(task)">{{ busyTask === task.id ? 'Saving…' : commercial?.advanceState === 'VERIFIED' ? 'Verified' : 'Verify advance' }}</button><button v-else-if="task.command === 'TIME_ENTRY'" type="button" class="button secondary small" :disabled="busyTask === task.id" @click="acknowledge(task)">{{ busyTask === task.id ? 'Saving…' : 'Record task' }}</button></div>
+            <div class="role-task-copy"><strong>{{ task.title }}</strong><p>{{ task.detail }}</p><span v-if="!sharedEnabled" class="role-task-state"><i :class="`state-${task.tone}`"></i>{{ task.command === 'ADVANCE_VERIFY' ? (commercial?.advanceState === 'VERIFIED' ? 'Verified' : 'Needs finance action') : 'Ready to inspect' }}</span></div>
+            <div class="role-task-actions"><button type="button" class="text-button" @click="navigate(task.route)">{{ task.action }} <Icon name="arrow-right" :size="15" /></button><button v-if="!sharedEnabled && task.command === 'ADVANCE_VERIFY'" type="button" class="button secondary small" :disabled="busyTask === task.id || commercial?.advanceState === 'VERIFIED'" @click="verifyAdvance(task)">{{ busyTask === task.id ? 'Saving…' : commercial?.advanceState === 'VERIFIED' ? 'Verified' : 'Verify advance' }}</button><button v-else-if="!sharedEnabled && task.command === 'TIME_ENTRY'" type="button" class="button secondary small" :disabled="busyTask === task.id" @click="acknowledge(task)">{{ busyTask === task.id ? 'Saving…' : 'Record task' }}</button></div>
           </article>
         </div>
       </article>
@@ -191,10 +361,40 @@ function reissueTerms() {
 
     <SharedTasks v-if="sharedEnabled" :engagement-id="engagement?.id || ''" title="Shared queue for this persona" :assignee="sharedAssignee" @navigate="navigate" />
 
+    <section v-if="sharedEnabled" class="panel shared-actions-panel" aria-labelledby="shared-actions-title">
+      <div class="panel-heading"><div><span class="eyebrow">Shared commands · server-checked authority</span><h2 id="shared-actions-title">Registered equivalents for this persona</h2></div></div>
+      <p v-if="sharedActionMessage" class="guide-status-message" role="status">{{ sharedActionMessage }}</p>
+      <div class="shared-actions-grid">
+        <form v-if="sharedActionAllowed('VERIFY_ADVANCE')" class="shared-action-form" @submit.prevent="submitSharedVerifyAdvance">
+          <span class="eyebrow">Verify advance payment (G4 · Finance)</span>
+          <label>Payment reference<input v-model="sharedAdvanceReference" type="text" maxlength="40" placeholder="e.g. PAY-SIM-0018" /></label>
+          <small v-if="workspaceDraftStatus" class="muted-label">{{ workspaceDraftStatus }}</small>
+          <small v-else-if="workspaceDraftError" class="draft-error">{{ workspaceDraftError }}</small>
+          <button type="submit" class="button secondary" :disabled="sharedActionBusy === 'advance'">{{ sharedActionBusy === 'advance' ? 'Verifying…' : 'Verify advance' }}</button>
+        </form>
+        <form v-if="sharedActionAllowed('ISSUE_TEMP_CREDENTIAL')" class="shared-action-form" @submit.prevent="submitSharedIssueCredential">
+          <span class="eyebrow">Issue temporary credential (G4 · Partner / Admin)</span>
+          <p class="shared-action-copy">The shared command re-checks client details, acceptance, terms version and advance before issuing.</p>
+          <button type="submit" class="button secondary" :disabled="sharedActionBusy === 'credential'">{{ sharedActionBusy === 'credential' ? 'Issuing…' : 'Issue temporary credential' }}</button>
+        </form>
+        <form v-if="sharedActionAllowed('APPROVE_FEE')" class="shared-action-form" @submit.prevent="submitSharedApproveFee">
+          <span class="eyebrow">Approve fee (Finance handoff · Partner)</span>
+          <label>Approved fee (QAR)<input v-model="sharedApprovedFee" type="text" inputmode="decimal" placeholder="e.g. 12500.00" /></label>
+          <button type="submit" class="button secondary" :disabled="sharedActionBusy === 'fee'">{{ sharedActionBusy === 'fee' ? 'Recording…' : 'Approve fee' }}</button>
+        </form>
+        <p v-if="!sharedActionAllowed('VERIFY_ADVANCE') && !sharedActionAllowed('ISSUE_TEMP_CREDENTIAL') && !sharedActionAllowed('APPROVE_FEE')" class="guide-empty-state">This persona has no registered shared command; the queued tasks above name the owning page for each handoff.</p>
+      </div>
+      <div v-if="workspaceStalePrompt" class="draft-prompt" role="alert">
+        <span>Local draft saved against revision {{ workspaceStalePrompt.baseRevision }}; the shared workspace is now at revision {{ workspaceStalePrompt.currentRevision }}.</span>
+        <span class="draft-prompt-actions"><button type="button" class="row-button" @click="keepWorkspaceDraft">Keep draft</button><button type="button" class="row-button" @click="discardWorkspaceDraft">Discard draft</button></span>
+      </div>
+      <p class="panel-footnote"><Icon name="info" :size="15" /><span>First-login setup and Engagement Letter decisions have no shared equivalent in this demo; their owning pages run them when shared mode is off.</span></p>
+    </section>
+
     <section v-if="canIssueCredential || canCompleteCredential || activeCredential" class="panel credential-panel">
       <div class="panel-heading"><div><span class="eyebrow">G4 · controlled onboarding</span><h2>Synthetic temporary credential</h2></div><StatusPill :label="activeCredential ? activeCredential.credentialState : 'Not issued'" :tone="activeCredential?.credentialState === 'ACTIVE' ? 'good' : 'warn'" /></div>
-      <div v-if="!activeCredential" class="credential-empty"><Icon name="key" :size="20" /><div><strong>No credential issued for this engagement</strong><p>After acceptance, signed terms, verified advance, assignments, and workspace checks are complete, the partner or system administrator can issue one setup-only credential.</p></div><button v-if="canIssueCredential" type="button" class="button primary" :disabled="busyTask === 'credential'" @click="issueCredential">{{ busyTask === 'credential' ? 'Issuing…' : 'Issue synthetic credential' }}</button></div>
-      <div v-else class="credential-grid"><div><span>Username</span><strong>{{ activeCredential.username }}</strong><small>Issued {{ new Date(activeCredential.issuedAt).toLocaleString('en-QA') }}</small></div><div><span>State</span><strong>{{ activeCredential.credentialState }}</strong><small>{{ activeCredential.firstLoginRequired ? 'First-login password change required' : 'Setup completed' }}</small></div><div v-if="credentialResult?.temporaryPassword" class="credential-secret"><span>One-time password</span><strong>{{ credentialResult.temporaryPassword }}</strong><small>Shown once in this browser response; never written to event history.</small></div><div class="credential-actions"><button v-if="canCompleteCredential && activeCredential.firstLoginRequired" type="button" class="button primary" :disabled="busyTask === 'credential-setup'" @click="completeSetup">{{ busyTask === 'credential-setup' ? 'Saving…' : 'Complete first login' }}</button><button type="button" class="text-button" @click="show('Credential state is synthetic and is not production authentication.')">Why this matters <Icon name="info" :size="15" /></button></div></div>
+      <div v-if="!activeCredential" class="credential-empty"><Icon name="key" :size="20" /><div><strong>No credential issued for this engagement</strong><p>After acceptance, signed terms, verified advance, assignments, and workspace checks are complete, the partner or system administrator can issue one setup-only credential.</p></div><button v-if="canIssueCredential && !sharedEnabled" type="button" class="button primary" :disabled="busyTask === 'credential'" @click="issueCredential">{{ busyTask === 'credential' ? 'Issuing…' : 'Issue synthetic credential' }}</button></div>
+      <div v-else class="credential-grid"><div><span>Username</span><strong>{{ activeCredential.username }}</strong><small>Issued {{ new Date(activeCredential.issuedAt).toLocaleString('en-QA') }}</small></div><div><span>State</span><strong>{{ activeCredential.credentialState }}</strong><small>{{ activeCredential.firstLoginRequired ? 'First-login password change required' : 'Setup completed' }}</small></div><div v-if="credentialResult?.temporaryPassword" class="credential-secret"><span>One-time password</span><strong>{{ credentialResult.temporaryPassword }}</strong><small>Shown once in this browser response; never written to event history.</small></div><div class="credential-actions"><button v-if="canCompleteCredential && activeCredential.firstLoginRequired && !sharedEnabled" type="button" class="button primary" :disabled="busyTask === 'credential-setup'" @click="completeSetup">{{ busyTask === 'credential-setup' ? 'Saving…' : 'Complete first login' }}</button><button type="button" class="text-button" @click="show('Credential state is synthetic and is not production authentication.')">Why this matters <Icon name="info" :size="15" /></button></div></div>
     </section>
 
     <section v-if="canDecideTerms || terms" class="panel terms-panel">
@@ -204,7 +404,7 @@ function reissueTerms() {
         <div class="terms-decision-summary"><span>Client decision</span><strong>{{ terms?.clientDecision?.decision || 'PENDING' }}</strong><small>{{ terms?.clientDecision?.version ? `Bound to ${terms.clientDecision.version}` : 'No version decision recorded' }}</small></div>
         <div class="terms-decision-summary"><span>Recorded by</span><strong>{{ terms?.clientDecision?.actorId || terms?.signedBy || '—' }}</strong><small>{{ terms?.clientDecision?.rationale || 'Decision rationale will be retained with the exact version.' }}</small></div>
       </div>
-      <div v-if="canDecideTerms && terms" class="terms-actions">
+      <div v-if="!sharedEnabled && canDecideTerms && terms" class="terms-actions">
         <label>Decision<select v-model="termsDecision"><option value="ACCEPT">Accept exact version</option><option value="REQUEST_CHANGES">Request changes</option><option value="REJECT">Reject exact version</option></select></label>
         <label class="terms-rationale">Rationale<textarea v-model="termsRationale" rows="2" maxlength="500" :placeholder="termsDecision === 'ACCEPT' ? 'Optional approval context' : 'Explain the correction required'" /></label>
         <button type="button" class="button primary" :disabled="busyTask === 'terms-decision' || (termsDecision !== 'ACCEPT' && termsRationale.trim().length < 8)" @click="decideTerms">{{ busyTask === 'terms-decision' ? 'Recording…' : 'Record decision' }}<Icon name="check-circle" :size="16" /></button>
@@ -218,3 +418,12 @@ function reissueTerms() {
     <div class="prototype-note"><Icon name="info" :size="17" /><span><strong>Prototype boundary</strong> This workspace demonstrates role-aware handoffs with fictional QAR values. It never sends an email, creates a real account, or makes a professional decision for a user.</span></div>
   </div>
 </template>
+
+<style scoped>
+.shared-actions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 10px; }
+.shared-action-form { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border, #dbe3ef); border-radius: 10px; padding: 12px; }
+.shared-action-copy { margin: 0; color: var(--muted, #667085); font-size: 12px; }
+.draft-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border: 1px solid #f0c36d; background: #fff8e6; border-radius: 10px; padding: 10px 12px; margin-top: 10px; color: #7a4d00; font-size: 13px; }
+.draft-prompt-actions { display: flex; gap: 8px; }
+.draft-error { color: #b42318; }
+</style>

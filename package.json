@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "api:dev": "wrangler dev --config wrangler.jsonc",
     "db:migrate:local": "wrangler d1 execute quadrate-db --local --file worker/schema.sql",
-    "db:migrate:remote": "wrangler d1 execute quadrate-db --remote --file worker/schema.sql"
+    "db:migrate:remote": "wrangler d1 execute quadrate-db --remote --file worker/schema.sql",
+    "db:migrate:client-safe": "node scripts/apply-client-safe-migration.mjs"
   },
   "dependencies": {
     "canonicalize": "^5.0.0",
