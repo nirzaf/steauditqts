@@ -27,7 +27,7 @@ export const navItems = [
   { key: 'blueprint', label: 'V5 operating model', icon: 'layers', section: 'Operations', badge: '26' },
   { key: 'cycle', label: 'Complete cycle', icon: 'workflow', section: 'Operations' },
   { key: 'pipeline', label: 'Pipeline visualizer', icon: 'workflow', section: 'Operations' },
-  { key: 'shared-demo', label: 'Shared demo control room', icon: 'workflow', section: 'Operations', badge: 'LIVE' },
+  { key: 'shared-demo', label: 'Workflow control room', icon: 'workflow', section: 'Operations', badge: 'LIVE' },
   { key: 'artifacts', label: 'Document center', icon: 'file', section: 'Operations', badge: '26' },
   { key: 'readiness', label: 'Phase 0 readiness', icon: 'list-check', section: 'Operations', badge: '12' },
 ]

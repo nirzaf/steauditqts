@@ -6,7 +6,7 @@ import { useSharedEngagement } from '../composables/useSharedEngagement.js';
 const props = defineProps({
   engagementId: { type: String, required: true },
   assignee: { type: String, default: '' },
-  title: { type: String, default: 'Shared task queue' },
+  title: { type: String, default: 'Engagement task queue' },
 });
 
 const emit = defineEmits(['navigate']);
@@ -25,11 +25,11 @@ const taskMeta = (task) => [
 <template>
   <section class="panel shared-tasks-panel" aria-labelledby="shared-tasks-title">
     <div class="panel-heading">
-      <div><span class="eyebrow">Live from D1</span><h2 id="shared-tasks-title">{{ title }}</h2></div>
+      <div><span class="eyebrow">Engagement queue</span><h2 id="shared-tasks-title">{{ title }}</h2></div>
       <button type="button" class="text-button" :disabled="loading" @click="refresh">Refresh <Icon name="refresh" :size="15" /></button>
     </div>
     <p v-if="error" class="guide-status-message" role="status">Task queue unavailable ({{ error.code }}). Please try again once the workspace reconnects.</p>
-    <p v-else-if="!loading && !tasks.length" class="guide-empty-state">No shared tasks for this filter yet. Actions from other roles appear here within seconds.</p>
+    <p v-else-if="!loading && !tasks.length" class="guide-empty-state">No tasks match this view yet. New handoffs appear here as they are assigned.</p>
     <ul v-else class="shared-task-list">
       <li v-for="task in tasks" :key="task.taskId" class="shared-task-row">
         <span class="shared-task-main"><strong>{{ task.title }}</strong><small>{{ task.assigneePersona || task.assigneeRole || 'Unassigned' }}{{ task.dueDate ? ` · due ${task.dueDate}` : '' }}</small><small v-if="taskMeta(task)">{{ taskMeta(task) }}</small></span>
@@ -37,6 +37,6 @@ const taskMeta = (task) => [
         <button type="button" class="text-button" @click="emit('navigate', { routeKey: task.route || 'role-workspace', engagementId: task.engagementId || props.engagementId, recordId: task.target || task.linkedObjectId || task.taskId })">Open <Icon name="arrow-right" :size="14" /></button>
       </li>
     </ul>
-    <p class="panel-footnote"><Icon name="info" :size="16" /><span>Synced {{ lastSync ? new Date(lastSync).toLocaleTimeString('en-QA') : 'never' }} · another browser's completed action appears here.</span></p>
+    <p class="panel-footnote"><Icon name="info" :size="16" /><span>Updated {{ lastSync ? new Date(lastSync).toLocaleTimeString('en-QA') : 'never' }} · completed handoffs appear here for the right owner.</span></p>
   </section>
 </template>

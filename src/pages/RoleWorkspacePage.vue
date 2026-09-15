@@ -10,7 +10,6 @@ import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { formatMoney, workflowGuides } from '../data'
 import { roleWorkspaceFor } from '../roleWorkspaces.js'
 import { activeActor, commercialRecordFor, completeSyntheticCredentialSetup, gateSummary, issueSyntheticCredential, recordRoleTaskAction, recordTerms, recordTermsDecision, scenario, selectedClient, selectedEngagement, termsFor, verifyAdvancePayment } from '../domain/scenario.js'
-import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 import { loadDemoSession } from '../auth.js'
 import { useDemoContext } from '../demoContext.js'
 import { activeCommandContext, createSharedIntent, runSharedAction } from '../sharedDemo.js'
@@ -23,6 +22,16 @@ const busyTask = ref('')
 const credentialResult = ref(null)
 const termsDecision = ref('ACCEPT')
 const termsRationale = ref('')
+
+function presentationLabel(value) {
+  return String(value || '')
+    .replace(/\bsynthetic\s*/gi, '')
+    .replace(/\bqueued_simulation\b/gi, 'Queued')
+    .replace(/\bsimulation\b/gi, 'Guided')
+    .replace(/_/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
 
 // M7 §5 — shared mode: the workspace context provides the server-truth action
 // allow-list and engagement revision; local scenario state stays read-only.
@@ -322,10 +331,6 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
     <NextBestActionCard v-if="sharedEnabled" title="Your next shared handoff" compact @navigate="navigate" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 
-    <LocalFixtureNotice v-if="sharedEnabled"
-      title="Local role workspace is read-only"
-      description="The shared queue and shared commands below are authoritative for this persona. Local gate metrics, task controls, credentials and engagement terms are hidden or read-only fixtures here." />
-
     <section class="role-scope-banner panel">
       <div class="role-scope-icon" :class="`tone-${workspace.tone}`"><Icon :name="workspace.icon" :size="22" /></div>
       <div><span class="eyebrow">Current scope</span><h2>{{ workspace.scope }}</h2><p>Signed in as <strong>{{ actor?.name }}</strong> · {{ actor?.roles?.map((role) => role.replaceAll('_', ' ')).join(' · ') }}</p></div>
@@ -413,7 +418,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
       <p class="terms-note"><Icon name="shield" :size="15" />The portal gate checks this exact version; a rejection or change request keeps the prior decision in history and holds commencement.</p>
     </section>
 
-    <section v-if="notifications.length" class="panel notification-panel"><div class="panel-heading"><div><span class="eyebrow">Handoff updates</span><h2>Handoffs and notifications</h2></div><span class="muted-label">Track each recipient and reference</span></div><div class="notification-list"><article v-for="item in notifications" :key="item.id" class="notification-row"><span class="notification-icon"><Icon :name="item.channel === 'PORTAL' ? 'message' : 'send'" :size="17" /></span><div><strong>{{ item.reference }}</strong><p>{{ item.preview }}</p><small>{{ item.channel }} · {{ item.state }} · {{ item.correlationId }}</small></div><StatusPill :label="item.state" tone="neutral" /></article></div><div class="prototype-note inline-note"><Icon name="info" :size="15" /><span>Each handoff shows its recipient, reference, timestamp and tracking ID.</span></div></section>
+    <section v-if="notifications.length" class="panel notification-panel"><div class="panel-heading"><div><span class="eyebrow">Handoff updates</span><h2>Handoffs and notifications</h2></div><span class="muted-label">Track each recipient and reference</span></div><div class="notification-list"><article v-for="item in notifications" :key="item.id" class="notification-row"><span class="notification-icon"><Icon :name="item.channel === 'PORTAL' ? 'message' : 'send'" :size="17" /></span><div><strong>{{ item.reference }}</strong><p>{{ presentationLabel(item.preview) }}</p><small>{{ item.channel }} · {{ presentationLabel(item.state) }}</small></div><StatusPill :label="presentationLabel(item.state)" tone="neutral" /></article></div><div class="prototype-note inline-note"><Icon name="info" :size="15" /><span>Each handoff shows its recipient, reference, timestamp and current status.</span></div></section>
   </div>
 </template>
 

@@ -12,7 +12,7 @@ const props = defineProps({
 
 const { activeEngagementId, activeContext, loading, progress, progressError } = useDemoContext()
 const action = computed(() => progress.value?.nextAction || null)
-const sourceLabel = computed(() => progress.value?.derivedFrom === 'd1' ? 'Derived from D1' : 'Awaiting shared state')
+const sourceLabel = computed(() => progress.value?.derivedFrom === 'd1' ? 'Current workflow progress' : 'Preparing workflow progress')
 
 function openAction() {
   if (action.value?.route) emit('navigate', {
@@ -34,7 +34,7 @@ function openAction() {
     </div>
     <div v-if="progressError" class="next-best-error" role="status">
       <Icon name="warning" :size="16" />
-      <span>The last shared progress refresh did not complete. The last confirmed action remains visible.</span>
+      <span>The latest progress refresh did not complete. The last confirmed action remains visible.</span>
     </div>
     <div v-else-if="action" class="next-best-content">
       <span class="next-best-icon"><Icon name="arrow-right" :size="19" /></span>

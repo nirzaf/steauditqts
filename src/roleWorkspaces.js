@@ -182,17 +182,17 @@ export const roleWorkspaceByPersona = Object.freeze({
   'system-admin-only-demo': {
     key: 'system-admin',
     eyebrow: 'System administrator · technical controls only',
-    title: 'Keep the synthetic environment healthy',
-    summary: 'Manage demo actor status, session epochs, provider fault simulation, and recovery diagnostics. Technical visibility never creates professional authority.',
+    title: 'Keep the platform workspace healthy',
+    summary: 'Manage user status, session epochs, provider checks, and recovery diagnostics. Technical visibility never creates professional authority.',
     icon: 'settings',
     tone: 'navy',
-    scope: 'Quadrate Audit · synthetic technical administration',
+    scope: 'Quadrate Audit · technical administration',
     tasks: [
-      { id: 'admin-actors', title: 'Manage demo actors', detail: 'Enable/disable a scoped actor and rotate their session epoch.', route: 'admin-console', action: 'Open admin console', icon: 'users', tone: 'blue' },
+      { id: 'admin-actors', title: 'Manage workspace users', detail: 'Enable or disable a scoped user and rotate their session epoch.', route: 'admin-console', action: 'Open admin console', icon: 'users', tone: 'blue' },
       { id: 'admin-provider', title: 'Inspect integration diagnostics', detail: 'Configure bounded provider faults and observe deterministic retry state.', route: 'integration', action: 'Open diagnostics', icon: 'pulse', tone: 'warn' },
       { id: 'admin-recovery', title: 'Rehearse recovery quarantine', detail: 'Capture a backup, restore into a fenced epoch, and reconcile the external checkpoint.', route: 'integration', action: 'Open recovery', icon: 'refresh', tone: 'green' },
     ],
-    allowed: ['Manage synthetic users/session state', 'Configure simulation faults', 'Inspect recovery diagnostics'],
+    allowed: ['Manage user/session state', 'Configure provider checks', 'Inspect recovery diagnostics'],
     blocked: ['Accept a client', 'Clear a professional review point', 'Form opinion or release'],
   },
   'compliance-demo': {
@@ -213,24 +213,24 @@ export const roleWorkspaceByPersona = Object.freeze({
   },
   'admin-demo': {
     key: 'admin',
-    eyebrow: 'Presenter admin · complete synthetic control chain',
+    eyebrow: 'Practice overview · complete control chain',
     title: 'See the whole engagement at a glance',
-    summary: 'This composite presenter account can inspect every synthetic surface for demonstrations. Dedicated role accounts above preserve the real authority boundaries.',
+    summary: 'This practice overview can inspect each workspace and handoff. Dedicated role accounts preserve the right authority boundaries.',
     icon: 'grid',
     tone: 'navy',
     scope: 'Quadrate Audit · Northstar Trading W.L.L. · FY2026',
     tasks: [
       { id: 'admin-overview', title: 'Open practice control room', detail: 'Review gates, blockers, queues, and recent activity for the selected engagement.', route: 'dashboard', action: 'Open overview', icon: 'grid', tone: 'blue' },
-      { id: 'admin-cycle', title: 'Run complete synthetic cycle', detail: 'Exercise the guarded positive and negative paths and inspect the evidence register.', route: 'cycle', action: 'Open cycle', icon: 'workflow', tone: 'green' },
+      { id: 'admin-cycle', title: 'Review complete cycle', detail: 'Follow the guarded paths and inspect the evidence register.', route: 'cycle', action: 'Open cycle', icon: 'workflow', tone: 'green' },
       { id: 'admin-architecture', title: 'Explain target architecture', detail: 'Show current Vue/Vite boundaries and the future Frappe/ERPNext operating model.', route: 'architecture', action: 'Open architecture', icon: 'layers', tone: 'purple' },
     ],
-    allowed: ['Inspect all synthetic surfaces', 'Run the bounded rehearsal', 'Review technical diagnostics'],
-    blocked: ['Use the prototype as production authorization', 'Enable shared mode', 'Send live external messages'],
+    allowed: ['Inspect all workspaces', 'Review the complete cycle', 'Review technical diagnostics'],
+    blocked: ['Change a client decision', 'Override a role boundary', 'Send an external message'],
   },
 })
 
 export const roleWorkspaceFallback = roleWorkspaceByPersona['admin-demo'] || {
-  key: 'role', eyebrow: 'Role workspace', title: 'Workflow workspace', summary: 'Follow the scoped work queue.', icon: 'workflow', tone: 'blue', scope: 'Synthetic engagement', tasks: [], allowed: [], blocked: [],
+  key: 'role', eyebrow: 'Role workspace', title: 'Workflow workspace', summary: 'Follow the scoped work queue.', icon: 'workflow', tone: 'blue', scope: 'Selected engagement', tasks: [], allowed: [], blocked: [],
 }
 
 export function roleWorkspaceFor(personaId) {
