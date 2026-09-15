@@ -205,7 +205,7 @@ async function readImport(event) {
       importError.value = `${result.code}: ${result.message}`
       return
     }
-    const nextLabel = `${file.name} · validated synthetic upload`
+    const nextLabel = `${file.name} · validated upload`
     const committed = replaceAccountingSource({ engagementId: accountingEngagement.value?.id, actorPersonaId: activeActor()?.personaId, expectedRevision: accountingEngagement.value?.revision, idempotencyKey: `source-${accountingEngagement.value?.id}-${accountingEngagement.value?.revision}-${result.rows[0]?.sourceRowId}`, sourceId: result.rows[0]?.sourceRowId?.split('-').slice(0, -1).join('-') || `TB-UPLOAD-${Date.now()}`, sourceLabel: nextLabel, rows: result.rows })
     if (committed.outcome === 'COMMITTED') {
       sourceRows.value = result.rows
@@ -215,7 +215,7 @@ async function readImport(event) {
     toast.value = committed.outcome === 'COMMITTED' ? `${file.name} parsed and committed as a new source revision. Control totals are ${result.source.debitTotal} per side.` : `${committed.outcome}: ${committed.code} — ${committed.message}`
     window.setTimeout(() => { toast.value = '' }, 4000)
   } catch (error) {
-    importError.value = error.message || 'The synthetic CSV could not be read.'
+    importError.value = error.message || 'The CSV could not be read.'
   }
 }
 
@@ -286,7 +286,7 @@ function journalStatusFor(index) {
           <label>Debit total<input v-model="tbForm.debitTotal" type="text" /></label>
           <label>Credit total<input v-model="tbForm.creditTotal" type="text" /></label>
           <button type="submit" class="button secondary" :disabled="!canSharedAccountant || sharedBusy === 'tb'">{{ sharedBusy === 'tb' ? 'Recording…' : 'Record TB source' }}</button>
-          <small v-if="!canSharedAccountant">Needs a Client, Accountant or Reviewer demo persona.</small>
+          <small v-if="!canSharedAccountant">Available to the Client, Accountant or Reviewer role.</small>
         </form>
         <form class="shared-completion-form" @submit.prevent="submitSharedTracker">
           <span class="eyebrow">Update tracker</span>
@@ -304,7 +304,7 @@ function journalStatusFor(index) {
           <label>Decision<select v-model="packageDecision"><option>ACCEPT</option><option>REJECT</option></select></label>
           <label>Explanation<input v-model="packageExplanation" type="text" placeholder="Required when rejecting" /></label>
           <button type="submit" class="button secondary" :disabled="!canSharedMgmtApprove || sharedBusy === 'approval'">{{ sharedBusy === 'approval' ? 'Recording…' : 'Record approval' }}</button>
-          <small v-if="!canSharedMgmtApprove">Needs the Client Management demo persona.</small>
+          <small v-if="!canSharedMgmtApprove">Available to the Client Management role.</small>
         </form>
       </div>
       <p class="panel-footnote"><Icon name="info" :size="15" /><span>Every new TB source advances the input generation; audit, draft, manager and opinion records against older inputs go stale until re-evaluated.</span></p>
@@ -312,17 +312,17 @@ function journalStatusFor(index) {
 
     <LocalFixtureNotice v-if="sharedDemoEnabled"
       title="Local accounting fixtures are read-only"
-      description="The shared accounting tracker above is authoritative in shared mode. The browser-local receipt, journal and Draft FS panels below remain reference views and cannot change shared workflow state." />
+      description="The accounting tracker keeps the receipt, journals, Draft FS and next review handoff together for this engagement." />
 
     <section v-if="importOpen" class="panel import-panel" aria-labelledby="import-title">
-      <div class="panel-heading"><div><span class="eyebrow">Synthetic import</span><h2 id="import-title">Load a trial-balance receipt</h2></div><button type="button" class="icon-button" aria-label="Close import" title="Close import" @click="closeImport"><Icon name="x" :size="17" /></button></div>
-      <p class="panel-copy">Only the supplied synthetic CSV shape is accepted here. The file is parsed in this browser; it is not uploaded to a ledger or external provider.</p>
+      <div class="panel-heading"><div><span class="eyebrow">Trial balance import</span><h2 id="import-title">Load a trial-balance receipt</h2></div><button type="button" class="icon-button" aria-label="Close import" title="Close import" @click="closeImport"><Icon name="x" :size="17" /></button></div>
+      <p class="panel-copy">Use the supplied CSV structure to check column headings, account codes and control totals before continuing.</p>
       <div class="import-actions"><button type="button" class="button secondary" @click="useFixture('baseline')">Use TB v02 fixture</button><button type="button" class="button secondary" @click="useFixture('replacement')">Use TB v03 fixture</button><label class="button primary import-file-label">Choose CSV<input ref="importFile" type="file" accept=".csv,text/csv" @change="readImport" /></label></div>
       <p v-if="importError" class="form-error" role="alert"><Icon name="warning" :size="16" />{{ importError }}</p>
       <dl class="import-contract"><div><dt>Required columns</dt><dd><code>account_code, account_name, area, debit, credit</code></dd></div><div><dt>Validation</dt><dd>Balanced control totals, unique account codes, literal Decimal values</dd></div><div><dt>Current result</dt><dd>{{ importSummary.rows }} rows · {{ importSummary.debitTotal }} / {{ importSummary.creditTotal }} · {{ importSummary.reflection }}</dd></div></dl>
     </section>
 
-    <section class="data-hero panel"><div class="data-file"><span class="file-icon"><Icon name="file" :size="20" /></span><div><span class="eyebrow">Selected dataset · browser-local synthetic receipt</span><h2>{{ sourceLabel }}</h2><p>{{ accountingEngagement?.id || 'No accounting scope' }} · CSV receipt · literal Decimal parser · entity {{ sourceRows[0]?.entityId || '—' }} · period {{ sourceRows[0]?.period || '—' }} · source identity remains preserved</p></div></div><div class="data-status"><StatusPill :label="isBalanced ? 'Validated for processing' : 'Blocked — totals differ'" :tone="isBalanced ? 'good' : 'danger'" /><span>{{ sourceRows.length }} accounts · {{ sourceRows[0]?.currency || '—' }} · {{ sourceRows[0]?.period || '—' }}</span><small>Package {{ packageState }} · revision {{ packageRecord?.revision || '—' }} · source bridge: {{ bridgeState }}</small></div></section>
+    <section class="data-hero panel"><div class="data-file"><span class="file-icon"><Icon name="file" :size="20" /></span><div><span class="eyebrow">Selected trial balance</span><h2>{{ sourceLabel }}</h2><p>{{ accountingEngagement?.id || 'No accounting scope' }} · CSV receipt · literal Decimal parser · entity {{ sourceRows[0]?.entityId || '—' }} · period {{ sourceRows[0]?.period || '—' }} · source identity remains preserved</p></div></div><div class="data-status"><StatusPill :label="isBalanced ? 'Validated for processing' : 'Blocked — totals differ'" :tone="isBalanced ? 'good' : 'danger'" /><span>{{ sourceRows.length }} accounts · {{ sourceRows[0]?.currency || '—' }} · {{ sourceRows[0]?.period || '—' }}</span><small>Package {{ packageState }} · revision {{ packageRecord?.revision || '—' }} · source bridge: {{ bridgeState }}</small></div></section>
 
     <section class="stats-strip compact"><div><span>Debit control total</span><strong>{{ formatMoney(debitTotal) }}</strong><small>Literal values only</small></div><div><span>Credit control total</span><strong>{{ formatMoney(creditTotal) }}</strong><small>{{ isBalanced ? 'Matches debits' : 'Must match before promotion' }}</small></div><div><span>Signed balance</span><strong>{{ formatMoney(closingTotal) }}</strong><small>{{ isBalanced ? 'Zero at approved precision' : 'Non-zero — source held' }}</small></div><div><span>Mapping coverage</span><strong>{{ mappingCoverage }}</strong><small>{{ mappingState }} · {{ mappingPercent }}% of selected rows assigned</small></div></section>
 

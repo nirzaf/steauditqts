@@ -48,7 +48,7 @@ async function loadProfile() {
   } catch (error) {
     source.value = 'local'
     syncState.value = 'LOCAL_ONLY'
-    statusMessage.value = `${error?.code || 'PROFILE_UNAVAILABLE'}: ${error?.message || 'The synthetic profile could not be loaded.'}`
+    statusMessage.value = `${error?.code || 'PROFILE_UNAVAILABLE'}: ${error?.message || 'The client profile could not be loaded.'}`
   } finally {
     loading.value = false
   }
@@ -64,7 +64,7 @@ async function submitDetails() {
   syncState.value = result.syncState || 'LOCAL_ONLY'
   if (result.profile) applyProfile(result.profile)
   statusMessage.value = result.outcome === 'COMMITTED'
-    ? 'Client details submitted to the shared synthetic record.'
+    ? 'Client details submitted to the engagement record.'
     : result.outcome === 'SAVED_LOCAL_DRAFT'
       ? 'Details saved as SAVED_LOCAL_DRAFT. They are not synchronized or queued for replay.'
       : `${result.error?.code || 'SAVE_FAILED'}: ${result.error?.message || 'The details were not saved.'}`
@@ -81,7 +81,7 @@ onMounted(loadProfile)
 
     <div class="portal-form-layout">
       <section class="panel portal-form-panel">
-        <div class="panel-heading"><div><span class="eyebrow">Submission form</span><h2>Northstar Trading profile</h2></div><span class="portal-form-source" :class="{ local: source !== 'd1' }">{{ source === 'd1' ? 'Shared demo record' : syncState === 'LOCAL_ONLY_FALLBACK' ? 'Saved local draft' : 'Browser-local synthetic state' }}</span></div>
+        <div class="panel-heading"><div><span class="eyebrow">Submission form</span><h2>Northstar Trading profile</h2></div><span class="portal-form-source" :class="{ local: source !== 'd1' }">{{ source === 'd1' ? 'Engagement record' : syncState === 'LOCAL_ONLY_FALLBACK' ? 'Saved draft' : 'Current workspace view' }}</span></div>
         <form class="portal-form" @submit.prevent="submitDetails">
           <div class="form-section-heading"><span><Icon name="building" :size="16" />Registered entity</span><small>Required for matching the engagement record</small></div>
           <div class="form-field-grid"><label>Legal name<input v-model="form.legalName" required maxlength="160" /></label><label>Registration / CR number<input v-model="form.registration" required maxlength="80" /></label></div>
@@ -91,7 +91,7 @@ onMounted(loadProfile)
           <div class="form-field-grid"><label>Reporting period<input v-model="form.servicePeriod" required maxlength="120" /></label><label>Requested service<input v-model="form.serviceRequested" required maxlength="160" /></label></div>
           <label>What changed or needs context?<textarea v-model="form.context" maxlength="1200" rows="4" placeholder="Ownership, systems, locations, timing, or other context"></textarea></label>
           <div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />Never enter passwords, access tokens, or banking credentials.</span><button type="submit" class="button primary" :disabled="saving || loading || !canSubmit">{{ saving ? 'Submitting…' : 'Submit client details' }}<Icon name="arrow-right" :size="17" /></button></div>
-          <p v-if="sharedDemoEnabled && !invitationSession" class="portal-status neutral" role="status">This shared preview is read-only. Open a client invitation to submit details to its isolated run.</p>
+          <p v-if="sharedDemoEnabled && !invitationSession" class="portal-status neutral" role="status">This view is read-only. Open the client invitation to submit engagement details.</p>
           <p v-if="statusMessage" class="portal-status" role="status" aria-live="polite">{{ statusMessage }}</p>
         </form>
       </section>

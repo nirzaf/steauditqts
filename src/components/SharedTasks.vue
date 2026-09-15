@@ -28,7 +28,7 @@ const taskMeta = (task) => [
       <div><span class="eyebrow">Live from D1</span><h2 id="shared-tasks-title">{{ title }}</h2></div>
       <button type="button" class="text-button" :disabled="loading" @click="refresh">Refresh <Icon name="refresh" :size="15" /></button>
     </div>
-    <p v-if="error" class="guide-status-message" role="status">Task queue unavailable ({{ error.code }}). Actions on this page stay local until the shared demo reconnects.</p>
+    <p v-if="error" class="guide-status-message" role="status">Task queue unavailable ({{ error.code }}). Please try again once the workspace reconnects.</p>
     <p v-else-if="!loading && !tasks.length" class="guide-empty-state">No shared tasks for this filter yet. Actions from other roles appear here within seconds.</p>
     <ul v-else class="shared-task-list">
       <li v-for="task in tasks" :key="task.taskId" class="shared-task-row">

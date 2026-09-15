@@ -53,7 +53,7 @@ export const demoUsers = [
     email: 'samir@quadrate.demo',
     password: 'samir123',
     landing: 'role-workspace',
-    description: 'Manage synthetic users, session state, and technical diagnostics without making professional decisions.',
+    description: 'Manage user access, session state, and technical diagnostics without making professional decisions.',
   },
   {
     id: 'audit-senior-demo',

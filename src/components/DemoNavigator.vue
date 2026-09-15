@@ -1,7 +1,6 @@
 <script setup>
 import { computed } from 'vue'
 import Icon from './Icon.vue'
-import StatusPill from './StatusPill.vue'
 
 const props = defineProps({
   currentUser: { type: Object, default: null },
@@ -10,15 +9,12 @@ const props = defineProps({
   activeEngagementId: { type: String, default: '' },
   activeContext: { type: Object, default: null },
   stageSummary: { type: Object, default: null },
-  mode: { type: String, default: 'local' },
   loading: { type: Boolean, default: false },
-  lastSync: { type: String, default: '' },
   personaBusy: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['switch-persona', 'switch-context', 'navigate', 'open-palette', 'open-notifications'])
 
-const isShared = computed(() => props.mode === 'shared')
 const clientOptions = computed(() => {
   const seen = new Map()
   for (const context of props.contexts) {
@@ -42,14 +38,10 @@ const periodOptions = computed(() => {
   return [...seen]
 })
 const nextAction = computed(() => props.stageSummary?.nextAction || null)
-const stageText = computed(() => {
-  if (!isShared.value) return 'Local simulation'
-  return props.stageSummary?.label || 'Stage — / 8'
-})
+const stageText = computed(() => props.stageSummary?.label || 'Choose an engagement')
 const gatesText = computed(() => {
-  if (!isShared.value) return 'browser-local scope'
   const summary = props.stageSummary
-  if (!summary) return ''
+  if (!summary) return 'Select a workspace to begin'
   return `${summary.openCount} open · ${summary.blockedCount} blocked`
 })
 function onPersona(event) {
@@ -86,20 +78,20 @@ function openNext() {
 </script>
 
 <template>
-  <section class="demo-navigator" aria-label="Demo navigator">
+  <section class="demo-navigator" aria-label="Workspace navigator">
     <div v-if="personas.length" class="demo-nav-group">
-      <label class="demo-nav-label" for="demo-persona-select">Persona</label>
-      <select id="demo-persona-select" class="demo-nav-select" :value="currentUser?.id" :disabled="personaBusy" aria-label="Demo persona switcher, simulation only" @change="onPersona">
+      <label class="demo-nav-label" for="demo-persona-select">Role</label>
+      <select id="demo-persona-select" class="demo-nav-select" :value="currentUser?.id" :disabled="personaBusy" aria-label="Choose role" @change="onPersona">
         <option v-for="persona in personas" :key="persona.id" :value="persona.id">{{ persona.roleLabel }}</option>
       </select>
-      <small class="demo-nav-hint">Demo persona switcher — simulation only</small>
+      <small class="demo-nav-hint">Choose the workspace that matches the work you want to explore.</small>
     </div>
     <div class="demo-nav-group">
       <label class="demo-nav-label" for="demo-client-select">Client</label>
       <select id="demo-client-select" class="demo-nav-select" :value="activeContext?.clientId" :disabled="loading || !contexts.length" @change="onClient">
         <option v-for="client in clientOptions" :key="client.id" :value="client.id">{{ client.name }}</option>
       </select>
-      <small class="demo-nav-hint">{{ activeContext?.engagementId || 'No shared context' }}</small>
+      <small class="demo-nav-hint">{{ activeContext ? `${activeContext.serviceLabel} · ${activeContext.period}` : 'Choose a client to begin' }}</small>
     </div>
     <div class="demo-nav-group">
       <label class="demo-nav-label" for="demo-service-select">Engagement</label>
@@ -116,25 +108,23 @@ function openNext() {
     </div>
     <div class="demo-nav-group demo-nav-next">
       <span class="demo-nav-label">Next</span>
-      <button v-if="nextAction && isShared" type="button" class="button primary demo-nav-action" @click="openNext">
+      <button v-if="nextAction" type="button" class="button primary demo-nav-action" @click="openNext">
         <span>{{ nextAction.title }}</span>
         <Icon name="arrow-right" :size="15" />
       </button>
       <button v-else type="button" class="button secondary demo-nav-action" @click="emit('navigate', { routeKey: 'role-workspace', engagementId: activeEngagementId || undefined })">
-        <span>{{ isShared ? 'Open role workspace' : 'Open local workspace' }}</span>
+        <span>Open workspace</span>
         <Icon name="arrow-right" :size="15" />
       </button>
-      <small v-if="nextAction && isShared" class="demo-nav-hint">{{ nextAction.owner }}</small>
-      <small v-else class="demo-nav-hint">Local simulation scope</small>
+      <small v-if="nextAction" class="demo-nav-hint">{{ nextAction.owner }}</small>
+      <small v-else class="demo-nav-hint">Choose a role to see the next handoff.</small>
     </div>
-    <div class="demo-nav-group demo-nav-mode">
-      <StatusPill :label="isShared ? 'LIVE SHARED DEMO · D1' : 'LOCAL SIMULATION'" :tone="isShared ? 'good' : 'neutral'" />
-      <small class="demo-nav-hint" :title="isShared ? 'D1 is the displayed source of shared workflow truth.' : 'Browser-local scenario is the source.'">
-        {{ isShared ? `D1 authoritative${lastSync ? ` · synced ${new Date(lastSync).toLocaleTimeString('en-QA')}` : ''}` : 'Browser-local authoritative' }}
-      </small>
+    <div class="demo-nav-group demo-nav-tools">
+      <span class="demo-nav-label">Find</span>
       <div class="demo-nav-icon-row">
-        <button type="button" class="text-button" title="Search and commands (Ctrl/Cmd+K)" aria-label="Open command palette" @click="emit('open-palette')">⌘K Search</button>
+        <button type="button" class="text-button" title="Search workspace (Ctrl/Cmd+K)" aria-label="Search workspace" @click="emit('open-palette')">Search workspace</button>
       </div>
+      <small class="demo-nav-hint">Find a client, engagement, or task.</small>
     </div>
   </section>
 </template>
@@ -157,7 +147,7 @@ function openNext() {
 .demo-nav-next { border-left: 1px solid var(--border, #e5e7eb); padding-left: 12px; }
 .demo-nav-action { justify-content: space-between; gap: 8px; font-size: 13px; padding: 7px 10px; }
 .demo-nav-action span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.demo-nav-mode { align-items: flex-start; gap: 6px; }
+.demo-nav-tools { align-items: flex-start; gap: 6px; }
 .demo-nav-icon-row { display: flex; gap: 8px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
 @media (max-width: 1100px) { .demo-navigator { grid-template-columns: 1fr 1fr; } .demo-nav-next { border-left: none; padding-left: 0; } }
@@ -166,6 +156,6 @@ function openNext() {
   .demo-nav-select { width: 100%; min-height: 44px; padding: 8px 9px; }
   .demo-nav-mini-select { min-width: 64px; min-height: 44px; padding: 5px 6px; }
   .demo-nav-action { min-height: 44px; }
-  .demo-nav-mode { grid-column: 1 / -1; }
+  .demo-nav-tools { grid-column: 1 / -1; }
 }
 </style>

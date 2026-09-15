@@ -50,7 +50,7 @@ function toneFor(item) {
     <section class="drawer" role="dialog" aria-modal="true" aria-labelledby="notifications-title">
       <div class="drawer-header">
         <div>
-          <span class="eyebrow">{{ mode === 'shared' ? 'Live from D1 · polls every 5s' : 'Local simulation' }}</span>
+          <span class="eyebrow">Engagement updates</span>
           <h2 id="notifications-title">Notifications</h2>
         </div>
         <button ref="closeButtonRef" type="button" class="icon-button" aria-label="Close notifications" title="Close notifications" @click="emit('close')">
@@ -70,7 +70,7 @@ function toneFor(item) {
           <button type="button" class="text-button" @click="emit('navigate', { routeKey: item.route || 'role-workspace', engagementId: item.engagementId || undefined, recordId: item.recordId || undefined })">Open <Icon name="arrow-right" :size="14" /></button>
         </li>
       </ul>
-      <p class="panel-footnote"><Icon name="info" :size="15" /><span>{{ mode === 'shared' ? `Derived from D1 tasks, timeline and outbox${lastSync ? ` · synced ${new Date(lastSync).toLocaleTimeString('en-QA')}` : ''}.` : 'Shared notifications need the D1 demo session; this is the browser-local queue.' }}</span></p>
+      <p class="panel-footnote"><Icon name="info" :size="15" /><span>{{ mode === 'shared' ? `Updates reflect tasks, timelines and handoffs${lastSync ? ` · refreshed ${new Date(lastSync).toLocaleTimeString('en-QA')}` : ''}.` : 'Updates reflect the current workspace queue.' }}</span></p>
     </section>
   </div>
 </template>

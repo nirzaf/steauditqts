@@ -50,9 +50,9 @@ const routes = {
   integration: { label: 'Integration health', title: 'Integration health', roles: ['admin', 'system-admin', 'records'], component: asyncPage(() => import('./pages/IntegrationPage.vue'), 'Integration health') },
   architecture: { label: 'Architecture map', title: 'Architecture map', roles: ['admin', 'audit-senior', 'audit-manager', 'partner', 'finance', 'eqr', 'records', 'system-admin', 'compliance'], component: asyncPage(() => import('./pages/ArchitecturePage.vue'), 'Architecture map') },
   blueprint: { label: 'V5 operating model', title: 'V5 operating model', roles: ['admin', 'finance'], component: asyncPage(() => import('./pages/V5BlueprintPage.vue'), 'V5 operating model') },
-  cycle: { label: 'Complete cycle', title: 'Complete synthetic cycle', roles: ['admin'], component: asyncPage(() => import('./pages/CyclePage.vue'), 'Complete synthetic cycle') },
+  cycle: { label: 'Complete cycle', title: 'Complete cycle', roles: ['admin'], component: asyncPage(() => import('./pages/CyclePage.vue'), 'Complete cycle') },
   pipeline: { label: 'Pipeline visualizer', title: 'Audit portal pipeline', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'client', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'finance', 'eqr', 'records', 'system-admin', 'compliance'], component: asyncPage(() => import('./pages/PipelinePage.vue'), 'Audit portal pipeline') },
-  'shared-demo': { label: 'Shared demo control room', title: 'Shared demo control room', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'client', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'finance', 'eqr', 'records', 'system-admin', 'compliance'], component: asyncPage(() => import('./pages/SharedDemoPage.vue'), 'Shared demo control room') },
+  'shared-demo': { label: 'Workflow control room', title: 'Workflow control room', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer', 'client', 'client-management', 'audit-senior', 'audit-manager', 'partner', 'finance', 'eqr', 'records', 'system-admin', 'compliance'], component: asyncPage(() => import('./pages/SharedDemoPage.vue'), 'Workflow control room') },
   'accountant-architecture': { label: 'Accountant architecture', title: 'Accountant architecture', roles: ['admin', 'accountant', 'accounting-reviewer', 'preparer'], component: asyncPage(() => import('./pages/AccountantArchitecturePage.vue'), 'Accountant architecture') },
   'client-architecture': { label: 'Client architecture', title: 'Client architecture', roles: ['admin', 'client', 'client-management'], component: asyncPage(() => import('./pages/ClientArchitecturePage.vue'), 'Client architecture') },
   readiness: { label: 'Phase 0 readiness', title: 'Phase 0 readiness', roles: ['admin'], component: asyncPage(() => import('./pages/ReadinessPage.vue'), 'Phase 0 readiness') },
@@ -161,11 +161,11 @@ const isClientManagement = computed(() => currentUser.value?.role === 'client-ma
 const isAccountant = computed(() => ['accountant', 'accounting-reviewer', 'preparer'].includes(currentUser.value?.role))
 const buildCommit = computed(() => String(import.meta.env.VITE_BUILD_COMMIT || 'local').slice(0, 12))
 const workspaceName = computed(() => isClient.value || isClientManagement.value ? currentUser.value.organization : currentUser.value?.role === 'accountant' || currentUser.value?.role === 'accounting-reviewer' ? 'Quadrate Accounting' : 'Quadrate Audit')
-const workspaceSubtitle = computed(() => isClient.value ? 'Client portal' : currentUser.value?.roleLabel || 'Demo workspace')
+const workspaceSubtitle = computed(() => isClient.value ? 'Client portal' : currentUser.value?.roleLabel || 'Workspace')
 const workspaceInitials = computed(() => currentUser.value?.initials || 'Q')
-const systemLabel = computed(() => isClient.value ? 'Client portal · shared communication record' : isClientManagement.value ? 'Client management · approval access' : currentUser.value?.role === 'accountant' || currentUser.value?.role === 'accounting-reviewer' || currentUser.value?.role === 'preparer' ? 'Accounting workspace · scoped preparation access' : currentUser.value?.role === 'admin' ? 'Presenter admin · synthetic inspection access' : `${currentUser.value?.roleLabel || 'Staff'} · scoped role access`)
-const healthLabel = computed(() => isClient.value ? 'Synthetic portal projection' : 'Synthetic controls only')
-const healthDetail = computed(() => isClient.value ? 'Browser-local demo · SIMULATION' : 'No live integrations enabled')
+const systemLabel = computed(() => isClient.value ? 'Client portal · engagement workspace' : isClientManagement.value ? 'Client management · approval access' : currentUser.value?.role === 'accountant' || currentUser.value?.role === 'accounting-reviewer' || currentUser.value?.role === 'preparer' ? 'Accounting workspace · scoped preparation access' : currentUser.value?.role === 'admin' ? 'Practice overview · full workspace access' : `${currentUser.value?.roleLabel || 'Staff'} · scoped role access`)
+const healthLabel = computed(() => 'Guided workspace')
+const healthDetail = computed(() => 'Follow each step to see the handoff and owner.')
 const helpCopy = computed(() => isClient.value
   ? 'Use Client details to submit facts, Requests to see what is due, Communications for every question, and Pipeline visualizer to understand the end-to-end handoff.'
   : isClientManagement.value
@@ -233,7 +233,7 @@ function getRouteFromHash() {
 }
 
 function setDocumentTitle() {
-  if (typeof document !== 'undefined') document.title = currentUser.value ? `${current.value.title} · AuditFlow` : 'AuditFlow · Demo access'
+  if (typeof document !== 'undefined') document.title = currentUser.value ? `${current.value.title} · AuditFlow` : 'AuditFlow · Sign in'
 }
 
 function navigate(key, locationOptions = {}) {
@@ -318,7 +318,7 @@ function handleLogin(user) {
   }
   if (isSharedDemoEnabled) {
     createDemoSession(user.id).then((res) => {
-      if (!res.ok) permissionNotice.value = `Shared demo session unavailable (${res.error.code}). Continuing browser-local; shared actions will report not committed.`;
+      if (!res.ok) permissionNotice.value = `Workspace connection is unavailable (${res.error.code}). You can continue exploring while it reconnects.`;
       else if (res.view?.engagementId) switchDemoEngagement(res.view.engagementId);
       else refreshDemoContext();
     });
@@ -349,7 +349,7 @@ async function handlePersonaSwitch(personaId) {
         ? await switchDemoView(activeView.viewId, { personaId, engagementId: activeEngagementId.value, expectedContextVersion: activeView.contextVersion })
         : await createDemoSession(user.id)
       if (!session.ok) {
-        permissionNotice.value = `Shared demo session unavailable (${session.error.code}). Stayed on ${currentUser.value.roleLabel}; shared actions will report not committed.`
+        permissionNotice.value = `Workspace connection is unavailable (${session.error.code}). You remain in the ${currentUser.value.roleLabel} workspace.`
         return
       }
       if (session.view) setActiveDemoView(session.view)
@@ -450,7 +450,7 @@ onMounted(() => {
   setDocumentTitle()
   if (currentUser.value && isSharedDemoEnabled) {
     createDemoSession(currentUser.value.id).then((res) => {
-      if (!res.ok) permissionNotice.value = `Shared demo session unavailable (${res.error.code}). Shared actions will report not committed.`
+      if (!res.ok) permissionNotice.value = `Workspace connection is unavailable (${res.error.code}). Please try again once it reconnects.`
       else if (res.view?.engagementId) switchDemoEngagement(res.view.engagementId)
       else refreshDemoContext()
     })
@@ -482,7 +482,7 @@ onBeforeUnmount(() => {
     </aside>
 
     <div class="app-main">
-      <header class="topbar"><div class="topbar-left"><button type="button" class="mobile-menu" aria-label="Open navigation" title="Open navigation" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = true"><Icon name="menu" :size="19" /></button><nav class="breadcrumbs" aria-label="Context breadcrumb"><template v-for="(crumb, index) in demoCrumbs" :key="`${crumb.label}-${index}`"><button v-if="crumb.route" type="button" class="text-button breadcrumb-link" @click="navigate(crumb.route)">{{ crumb.label }}</button><strong v-else aria-current="page">{{ crumb.label }}</strong><Icon v-if="index < demoCrumbs.length - 1" name="chevron-right" :size="16" /></template></nav></div><div class="topbar-actions"><form class="top-search" role="search" @submit.prevent="submitSearch"><Icon name="search" :size="17" /><input v-model="search" type="search" aria-label="Search clients, engagements and IDs (opens command palette)" placeholder="Search anything (Ctrl/Cmd+K)" @focus="commandPaletteOpen = true" /></form><button type="button" class="top-icon-button" :aria-label="`Notifications, ${demoNotificationCount} items`" :title="`Notifications, ${demoNotificationCount} items`" @click="demoNotificationsOpen = true"><Icon name="bell" :size="18" /><span aria-hidden="true">{{ demoNotificationCount }}</span></button><div class="account-control"><button type="button" class="top-user top-user-button" aria-label="Open account menu" title="Open account menu" :aria-expanded="accountMenuOpen" @click="accountMenuOpen = !accountMenuOpen"><span class="avatar" :class="`avatar-${currentUser.tone}`">{{ currentUser.initials }}</span><span><strong>{{ currentUser.name }}</strong><small>{{ currentUser.roleLabel }}</small></span><Icon name="chevron-down" :size="15" /></button><div v-if="accountMenuOpen" class="account-menu" role="menu"><div class="account-menu-heading"><strong>{{ currentUser.name }}</strong><span>{{ currentUser.email }}</span></div><template v-if="!isClientInvitation"><span class="account-menu-label">Switch demo persona</span><button v-for="persona in demoUsers.filter((candidate) => candidate.id !== currentUser.id)" :key="persona.id" type="button" role="menuitem" :disabled="personaBusy" @click="accountMenuOpen = false; handlePersonaSwitch(persona.id)">{{ persona.roleLabel }}</button></template><p v-else class="account-menu-note">Client invitation access is fixed to this portal.</p><button type="button" role="menuitem" @click="showLogin">Sign out</button></div></div></div></header>
+      <header class="topbar"><div class="topbar-left"><button type="button" class="mobile-menu" aria-label="Open navigation" title="Open navigation" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = true"><Icon name="menu" :size="19" /></button><nav class="breadcrumbs" aria-label="Context breadcrumb"><template v-for="(crumb, index) in demoCrumbs" :key="`${crumb.label}-${index}`"><button v-if="crumb.route" type="button" class="text-button breadcrumb-link" @click="navigate(crumb.route)">{{ crumb.label }}</button><strong v-else aria-current="page">{{ crumb.label }}</strong><Icon v-if="index < demoCrumbs.length - 1" name="chevron-right" :size="16" /></template></nav></div><div class="topbar-actions"><form class="top-search" role="search" @submit.prevent="submitSearch"><Icon name="search" :size="17" /><input v-model="search" type="search" aria-label="Search clients, engagements and IDs (opens command palette)" placeholder="Search anything (Ctrl/Cmd+K)" @focus="commandPaletteOpen = true" /></form><button type="button" class="top-icon-button" :aria-label="`Notifications, ${demoNotificationCount} items`" :title="`Notifications, ${demoNotificationCount} items`" @click="demoNotificationsOpen = true"><Icon name="bell" :size="18" /><span aria-hidden="true">{{ demoNotificationCount }}</span></button><div class="account-control"><button type="button" class="top-user top-user-button" aria-label="Open account menu" title="Open account menu" :aria-expanded="accountMenuOpen" @click="accountMenuOpen = !accountMenuOpen"><span class="avatar" :class="`avatar-${currentUser.tone}`">{{ currentUser.initials }}</span><span><strong>{{ currentUser.name }}</strong><small>{{ currentUser.roleLabel }}</small></span><Icon name="chevron-down" :size="15" /></button><div v-if="accountMenuOpen" class="account-menu" role="menu"><div class="account-menu-heading"><strong>{{ currentUser.name }}</strong><span>{{ currentUser.email }}</span></div><template v-if="!isClientInvitation"><span class="account-menu-label">Switch role view</span><button v-for="persona in demoUsers.filter((candidate) => candidate.id !== currentUser.id)" :key="persona.id" type="button" role="menuitem" :disabled="personaBusy" @click="accountMenuOpen = false; handlePersonaSwitch(persona.id)">{{ persona.roleLabel }}</button></template><p v-else class="account-menu-note">This invitation opens the client portal only.</p><button type="button" role="menuitem" @click="showLogin">Sign out</button></div></div></div></header>
       <DemoNavigator
         :current-user="currentUser"
         :personas="isClientInvitation ? [] : demoUsers"
@@ -490,9 +490,7 @@ onBeforeUnmount(() => {
         :active-engagement-id="activeEngagementId"
         :active-context="demoActiveContext"
         :stage-summary="demoStageSummary"
-        :mode="demoMode"
         :loading="demoLoading"
-        :last-sync="demoLastSync"
         :persona-busy="personaBusy"
         @switch-persona="handlePersonaSwitch"
         @switch-context="handleContextSwitch"
@@ -530,11 +528,10 @@ onBeforeUnmount(() => {
     />
     <div v-if="helpOpen" class="help-backdrop" role="presentation" @click.self="closeHelp">
       <section class="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
-        <div class="help-dialog-header"><div><span class="eyebrow">Prototype orientation</span><h2 id="help-title">How to read AuditFlow</h2></div><button ref="helpCloseButton" type="button" class="icon-button" aria-label="Close help" title="Close help" @click="closeHelp"><Icon name="x" :size="17" /></button></div>
+        <div class="help-dialog-header"><div><span class="eyebrow">Getting started</span><h2 id="help-title">How to read AuditFlow</h2></div><button ref="helpCloseButton" type="button" class="icon-button" aria-label="Close help" title="Close help" @click="closeHelp"><Icon name="x" :size="17" /></button></div>
         <p>{{ helpCopy }}</p>
         <ol class="help-list"><li><strong>Orient</strong><span>Overview shows the queue, owners, and current gate pressure.</span></li><li><strong>Decide</strong><span>Clients and engagement pages separate acceptance from delivery work.</span></li><li><strong>Evidence</strong><span>PBC, Accounting, and Audit pages show the source-to-conclusion chain.</span></li><li><strong>Control</strong><span>Reviews, Release, and Integration show approvals, versions, retries, and archive evidence.</span></li></ol>
-        <div class="help-dialog-reset"><button type="button" class="button secondary" @click="handleDemoReset">Reset demo data</button><span>Clears the synthetic scenario and local drafts, keeps you signed in.</span></div>
-        <div class="help-dialog-note"><Icon name="info" :size="17" /><span><strong>Demo boundary</strong> Values are illustrative. Qualified people own professional decisions, approvals, conclusions, and records actions.</span></div>
+        <div class="help-dialog-reset"><button type="button" class="button secondary" @click="handleDemoReset">Restart walkthrough</button><span>Return this walkthrough to its starting point while keeping your sign-in open.</span></div>
       </section>
     </div>
   </div>

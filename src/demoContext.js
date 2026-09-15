@@ -260,7 +260,7 @@ export function filterPalette(query, { contexts = [], personas = [], routes = []
       push('stage', `${stage.id} · ${stage.title}`, 'Pipeline stage', { type: 'navigate', route: 'pipeline' });
     }
   }
-  if (paletteIncludes('reset demo', needle)) push('command', 'Reset demo', 'Admin / Partner only · shared generation', { type: 'command', command: 'reset-demo' });
+  if (paletteIncludes('restart walkthrough', needle)) push('command', 'Restart walkthrough', 'Admin / Partner only · return to the starting point', { type: 'command', command: 'reset-demo' });
   if (paletteIncludes('open pipeline', needle)) push('command', 'Open pipeline', 'Shared stage projection', { type: 'navigate', route: 'pipeline' });
   if (paletteIncludes('open approvals', needle)) push('command', 'Open approvals', 'Reviews & approvals queue', { type: 'navigate', route: 'reviews' });
   return results;

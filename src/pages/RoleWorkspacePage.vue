@@ -92,7 +92,7 @@ function acknowledge(task) {
   busyTask.value = task.id
   const result = recordRoleTaskAction({ taskId: task.id, action: task.command || 'TASK_ACKNOWLEDGED', actorPersonaId: actor.value?.personaId, expectedSessionEpoch: actor.value?.sessionEpoch, idempotencyKey: `role-task-${task.id}-${actor.value?.sessionEpoch || 1}` , detail: task.title })
   busyTask.value = ''
-  show(result.outcome === 'COMMITTED' ? `${task.title} recorded in the synthetic activity trail.` : `${result.outcome}: ${result.code} — ${result.message}`)
+  show(result.outcome === 'COMMITTED' ? `${task.title} recorded in the activity trail.` : `${result.outcome}: ${result.code} — ${result.message}`)
 }
 
 function verifyAdvance(task) {
@@ -120,7 +120,7 @@ function issueCredential() {
   busyTask.value = ''
   if (result.outcome === 'COMMITTED') {
     credentialResult.value = result.temporaryPassword ? { ...result.data, temporaryPassword: result.temporaryPassword } : credentialResult.value
-    show(result.temporaryPassword ? 'Synthetic credential issued. Copy the one-time password now; it is not stored in the audit trail.' : 'The existing synthetic credential is already issued.')
+    show(result.temporaryPassword ? 'Temporary credential issued. Copy the one-time password now; it is not stored in the audit trail.' : 'The existing temporary credential is already issued.')
   } else show(`${result.outcome}: ${result.code} — ${result.message}`)
 }
 
@@ -133,7 +133,7 @@ function completeSetup() {
   busyTask.value = 'credential-setup'
   const result = completeSyntheticCredentialSetup({ credentialId: activeCredential.value.id, actorPersonaId: actor.value?.personaId, expectedSessionEpoch: actor.value?.sessionEpoch, idempotencyKey: `credential-setup-${activeCredential.value.id}-${actor.value?.sessionEpoch || 1}` })
   busyTask.value = ''
-  show(result.outcome === 'COMMITTED' ? 'First-login setup complete. The synthetic client workspace is now active.' : `${result.outcome}: ${result.code} — ${result.message}`)
+  show(result.outcome === 'COMMITTED' ? 'First-login setup complete. The client workspace is now active.' : `${result.outcome}: ${result.code} — ${result.message}`)
 }
 
 function decideTerms() {
@@ -199,7 +199,7 @@ function sharedActionOutcome(message, result) {
 async function submitSharedVerifyAdvance() {
   if (sharedActionBusy.value) return
   if (!String(sharedAdvanceReference.value).trim()) {
-    sharedActionMessage.value = 'Provide the synthetic payment reference (for example PAY-SIM-0018).'
+    sharedActionMessage.value = 'Provide the payment reference (for example PAY-0018).'
     window.setTimeout(() => { sharedActionMessage.value = '' }, 6000)
     return
   }
@@ -336,7 +336,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
       <article v-if="!sharedEnabled" class="metric-card accent-navy"><div class="metric-card-top"><span>Current gate progress</span><span class="metric-icon"><Icon name="workflow" :size="17" /></span></div><strong>{{ gates.currentReady }}/{{ gates.currentDenominator }}</strong><small>{{ client?.name }} · current period</small></article>
       <article v-if="!sharedEnabled" class="metric-card accent-amber"><div class="metric-card-top"><span>Open blockers</span><span class="metric-icon"><Icon name="warning" :size="17" /></span></div><strong>{{ blockers.length }}</strong><small>Each blocker names its next owner</small></article>
       <article class="metric-card accent-green"><div class="metric-card-top"><span>Tasks in this role</span><span class="metric-icon"><Icon name="list-check" :size="17" /></span></div><strong>{{ workspace.tasks.length }}</strong><small>Use the links below to open the working page</small></article>
-      <article class="metric-card accent-blue"><div class="metric-card-top"><span>Evidence level</span><span class="metric-icon"><Icon name="shield" :size="17" /></span></div><strong>SIMULATION</strong><small>Browser-local synthetic values only</small></article>
+      <article class="metric-card accent-blue"><div class="metric-card-top"><span>Workspace status</span><span class="metric-icon"><Icon name="shield" :size="17" /></span></div><strong>GUIDED VIEW</strong><small>Follow the next handoff to continue.</small></article>
     </section>
 
     <section class="role-workspace-layout">
@@ -355,7 +355,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
         <div class="panel-heading"><div><span class="eyebrow">Authority boundary</span><h2>What this role can do</h2></div><Icon name="shield" :size="18" /></div>
         <div class="role-boundary-group"><span class="guide-label"><Icon name="check" :size="14" />Allowed actions</span><ul class="check-list compact"><li v-for="item in workspace.allowed" :key="item"><span class="list-icon good"><Icon name="check" :size="13" /></span><span>{{ item }}</span></li></ul></div>
         <div class="role-boundary-group"><span class="guide-label"><Icon name="lock" :size="14" />Blocked actions</span><ul class="check-list compact"><li v-for="item in workspace.blocked" :key="item"><span class="list-icon danger"><Icon name="lock" :size="13" /></span><span>{{ item }}</span></li></ul></div>
-        <div class="role-boundary-note"><Icon name="info" :size="16" /><span>Role membership, client assignment, and session validity are separate checks in the synthetic command layer.</span></div>
+        <div class="role-boundary-note"><Icon name="info" :size="16" /><span>Role membership, client assignment, and session validity are checked separately before each action.</span></div>
       </aside>
     </section>
 
@@ -388,13 +388,13 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
         <span>Local draft saved against revision {{ workspaceStalePrompt.baseRevision }}; the shared workspace is now at revision {{ workspaceStalePrompt.currentRevision }}.</span>
         <span class="draft-prompt-actions"><button type="button" class="row-button" @click="keepWorkspaceDraft">Keep draft</button><button type="button" class="row-button" @click="discardWorkspaceDraft">Discard draft</button></span>
       </div>
-      <p class="panel-footnote"><Icon name="info" :size="15" /><span>First-login setup and Engagement Letter decisions have no shared equivalent in this demo; their owning pages run them when shared mode is off.</span></p>
+      <p class="panel-footnote"><Icon name="info" :size="15" /><span>First-login setup and Engagement Letter decisions are handled on their owning pages.</span></p>
     </section>
 
     <section v-if="canIssueCredential || canCompleteCredential || activeCredential" class="panel credential-panel">
-      <div class="panel-heading"><div><span class="eyebrow">G4 · controlled onboarding</span><h2>Synthetic temporary credential</h2></div><StatusPill :label="activeCredential ? activeCredential.credentialState : 'Not issued'" :tone="activeCredential?.credentialState === 'ACTIVE' ? 'good' : 'warn'" /></div>
-      <div v-if="!activeCredential" class="credential-empty"><Icon name="key" :size="20" /><div><strong>No credential issued for this engagement</strong><p>After acceptance, signed terms, verified advance, assignments, and workspace checks are complete, the partner or system administrator can issue one setup-only credential.</p></div><button v-if="canIssueCredential && !sharedEnabled" type="button" class="button primary" :disabled="busyTask === 'credential'" @click="issueCredential">{{ busyTask === 'credential' ? 'Issuing…' : 'Issue synthetic credential' }}</button></div>
-      <div v-else class="credential-grid"><div><span>Username</span><strong>{{ activeCredential.username }}</strong><small>Issued {{ new Date(activeCredential.issuedAt).toLocaleString('en-QA') }}</small></div><div><span>State</span><strong>{{ activeCredential.credentialState }}</strong><small>{{ activeCredential.firstLoginRequired ? 'First-login password change required' : 'Setup completed' }}</small></div><div v-if="credentialResult?.temporaryPassword" class="credential-secret"><span>One-time password</span><strong>{{ credentialResult.temporaryPassword }}</strong><small>Shown once in this browser response; never written to event history.</small></div><div class="credential-actions"><button v-if="canCompleteCredential && activeCredential.firstLoginRequired && !sharedEnabled" type="button" class="button primary" :disabled="busyTask === 'credential-setup'" @click="completeSetup">{{ busyTask === 'credential-setup' ? 'Saving…' : 'Complete first login' }}</button><button type="button" class="text-button" @click="show('Credential state is synthetic and is not production authentication.')">Why this matters <Icon name="info" :size="15" /></button></div></div>
+      <div class="panel-heading"><div><span class="eyebrow">G4 · controlled onboarding</span><h2>Temporary credential</h2></div><StatusPill :label="activeCredential ? activeCredential.credentialState : 'Not issued'" :tone="activeCredential?.credentialState === 'ACTIVE' ? 'good' : 'warn'" /></div>
+      <div v-if="!activeCredential" class="credential-empty"><Icon name="key" :size="20" /><div><strong>No credential issued for this engagement</strong><p>After acceptance, signed terms, verified advance, assignments, and workspace checks are complete, the partner or system administrator can issue one setup-only credential.</p></div><button v-if="canIssueCredential && !sharedEnabled" type="button" class="button primary" :disabled="busyTask === 'credential'" @click="issueCredential">{{ busyTask === 'credential' ? 'Issuing…' : 'Issue access credential' }}</button></div>
+      <div v-else class="credential-grid"><div><span>Username</span><strong>{{ activeCredential.username }}</strong><small>Issued {{ new Date(activeCredential.issuedAt).toLocaleString('en-QA') }}</small></div><div><span>State</span><strong>{{ activeCredential.credentialState }}</strong><small>{{ activeCredential.firstLoginRequired ? 'First-login password change required' : 'Setup completed' }}</small></div><div v-if="credentialResult?.temporaryPassword" class="credential-secret"><span>One-time password</span><strong>{{ credentialResult.temporaryPassword }}</strong><small>Shown once in this browser response; never written to event history.</small></div><div class="credential-actions"><button v-if="canCompleteCredential && activeCredential.firstLoginRequired && !sharedEnabled" type="button" class="button primary" :disabled="busyTask === 'credential-setup'" @click="completeSetup">{{ busyTask === 'credential-setup' ? 'Saving…' : 'Complete first login' }}</button><button type="button" class="text-button" @click="show('This credential is shown to explain the secure setup flow.')">Why this matters <Icon name="info" :size="15" /></button></div></div>
     </section>
 
     <section v-if="canDecideTerms || terms" class="panel terms-panel">
@@ -413,9 +413,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
       <p class="terms-note"><Icon name="shield" :size="15" />The portal gate checks this exact version; a rejection or change request keeps the prior decision in history and holds commencement.</p>
     </section>
 
-    <section v-if="notifications.length" class="panel notification-panel"><div class="panel-heading"><div><span class="eyebrow">Synthetic outbox</span><h2>Handoffs and notifications</h2></div><span class="muted-label">No message leaves this browser</span></div><div class="notification-list"><article v-for="item in notifications" :key="item.id" class="notification-row"><span class="notification-icon"><Icon :name="item.channel === 'PORTAL' ? 'message' : 'send'" :size="17" /></span><div><strong>{{ item.reference }}</strong><p>{{ item.preview }}</p><small>{{ item.channel }} · {{ item.state }} · {{ item.correlationId }}</small></div><StatusPill :label="item.state" tone="neutral" /></article></div><div class="prototype-note inline-note"><Icon name="info" :size="15" /><span>Outbound email/WhatsApp is represented as a queued simulation with recipient persona, reference, timestamp and correlation ID.</span></div></section>
-
-    <div class="prototype-note"><Icon name="info" :size="17" /><span><strong>Prototype boundary</strong> This workspace demonstrates role-aware handoffs with fictional QAR values. It never sends an email, creates a real account, or makes a professional decision for a user.</span></div>
+    <section v-if="notifications.length" class="panel notification-panel"><div class="panel-heading"><div><span class="eyebrow">Handoff updates</span><h2>Handoffs and notifications</h2></div><span class="muted-label">Track each recipient and reference</span></div><div class="notification-list"><article v-for="item in notifications" :key="item.id" class="notification-row"><span class="notification-icon"><Icon :name="item.channel === 'PORTAL' ? 'message' : 'send'" :size="17" /></span><div><strong>{{ item.reference }}</strong><p>{{ item.preview }}</p><small>{{ item.channel }} · {{ item.state }} · {{ item.correlationId }}</small></div><StatusPill :label="item.state" tone="neutral" /></article></div><div class="prototype-note inline-note"><Icon name="info" :size="15" /><span>Each handoff shows its recipient, reference, timestamp and tracking ID.</span></div></section>
   </div>
 </template>
 

@@ -53,7 +53,7 @@ function navigate(route) {
         <span class="eyebrow"><Icon name="workflow" :size="14" /> How to read this page</span>
         <p>Follow the numbered path from your action to the platform control. Select a step to see its owner, source of record, and handoff output.</p>
         <div class="architecture-status-stack" aria-label="Implementation status">
-          <span class="architecture-status current"><strong>CURRENT IMPLEMENTATION</strong><small>Vue/Vite · browser-local synthetic state</small></span>
+          <span class="architecture-status current"><strong>CURRENT WORKSPACE</strong><small>Vue/Vite · guided workflow view</small></span>
           <span class="architecture-status target"><strong>TARGET V5 ARCHITECTURE</strong><small>Frappe/Microsoft controls remain a reference design</small></span>
         </div>
         <div class="role-architecture-legend" aria-label="Architecture legend">
@@ -63,7 +63,7 @@ function navigate(route) {
           <span><i class="role-legend-dot tone-purple"></i>Restricted control</span>
         </div>
       </div>
-      <StatusPill label="Synthetic walkthrough" tone="neutral" />
+      <StatusPill label="Guided experience" tone="neutral" />
     </section>
 
     <section class="role-architecture-layout">
@@ -106,7 +106,7 @@ function navigate(route) {
           <div><dt>Control to observe</dt><dd>{{ selectedStep.control }}</dd></div>
           <div><dt>Handoff output</dt><dd>{{ selectedStep.output }}</dd></div>
         </dl>
-        <div class="role-detail-callout"><Icon name="shield" :size="16" /><span>Keep this boundary visible when explaining the prototype: {{ architecture.audience.toLowerCase() }} sees a safe projection, while the authoritative record remains with its named owner.</span></div>
+        <div class="role-detail-callout"><Icon name="shield" :size="16" /><span>{{ architecture.audience }} sees the information and actions needed for this step, while the named owner retains responsibility for the record.</span></div>
       </aside>
     </section>
 
@@ -142,6 +142,6 @@ function navigate(route) {
       </div>
     </section>
 
-    <div class="prototype-note"><Icon name="info" :size="17" /><span><strong>Prototype boundary</strong> This role lens uses fictional values to explain ownership and flow. It does not expose live client data, create a professional approval, or prove a tenant capability.</span></div>
+    <div class="prototype-note"><Icon name="info" :size="17" /><span><strong>Role view</strong> Use this lens to understand which records, responsibilities and handoffs belong to this workspace.</span></div>
   </div>
 </template>

@@ -69,12 +69,13 @@ function formatQar(value) {
 function destinationLabel(route) {
   return destinationLabels[route] || route
 }
+
 </script>
 
 <template>
   <div class="page v5-blueprint-page">
     <PageHeader
-      eyebrow="Specification v5.0 · synthetic only"
+      eyebrow="Specification v5.0 · operating model"
       title="Audit Practice Platform — v5 operating model"
       description="A stakeholder-friendly map of the v5 architecture, independent gates, 26 named outputs, commercial controls, role boundaries and notification handoffs for one Northstar Trading engagement."
       action-label="Open complete cycle"
@@ -89,16 +90,16 @@ function destinationLabel(route) {
         <div>
           <span class="eyebrow">How to read this page</span>
           <h2 id="v5-contract-title">One connected practice, two deployment layers</h2>
-          <p>V5 describes the production target as a Frappe-first modular monolith. This prototype keeps the Vue/Vite client static and uses the existing Cloudflare Worker only for narrow, fail-closed server functions when explicitly enabled.</p>
+          <p>V5 describes the production target as a Frappe-first modular monolith. This workspace shows how the Vue/Vite client and Cloudflare Worker support the key workflow handoffs.</p>
         </div>
-        <StatusPill label="Simulation · not production proof" tone="neutral" />
+        <StatusPill label="Guided platform view" tone="neutral" />
       </div>
       <div class="v5-deployment-grid">
         <article class="v5-deployment-card current">
-          <div class="v5-deployment-top"><span class="v5-deployment-icon"><Icon name="pulse" :size="17" /></span><span class="eyebrow">Current demo</span></div>
+          <div class="v5-deployment-top"><span class="v5-deployment-icon"><Icon name="pulse" :size="17" /></span><span class="eyebrow">Current workspace</span></div>
           <h3>Vue/Vite + Cloudflare Worker</h3>
-          <p>Browser-local synthetic state is the default. The <code>steaudit-api</code> Worker exposes only scoped comments, preferences and profile commands through the configured API route.</p>
-          <small><Icon name="lock" :size="14" />No live Frappe, Microsoft or records access</small>
+          <p>The workspace presents scoped client details, messages, evidence receipts and workflow handoffs through the configured API route.</p>
+          <small><Icon name="lock" :size="14" />Each role sees only its own tasks and decisions</small>
         </article>
         <div class="v5-deployment-arrow" aria-hidden="true"><Icon name="arrow-right" :size="20" /><span>bounded edge boundary</span></div>
         <article class="v5-deployment-card target">
@@ -123,7 +124,7 @@ function destinationLabel(route) {
         <aside class="panel v5-gate-detail" aria-live="polite">
           <div class="v5-detail-head"><span class="v5-detail-number">{{ selectedGate.id }}</span><div><span class="eyebrow">Selected gate</span><h3>{{ selectedGate.title }}</h3></div><StatusPill :label="selectedGate.status" :tone="statusTone(selectedGate.tone)" /></div>
           <p>{{ selectedGate.detail }}</p>
-          <dl class="v5-detail-list"><div><dt>Owner</dt><dd>{{ selectedGate.owner }}</dd></div><div><dt>Demonstration route</dt><dd>{{ destinationLabel(selectedGate.route) }}</dd></div><div><dt>Current fixture</dt><dd>{{ selectedGate.status === 'READY' ? 'Evidence captured in the synthetic route' : selectedGate.status === 'BLOCKED' ? 'AR-019, EQR or exact release evidence still holds the path' : 'Next action is visible in the complete-cycle walkthrough' }}</dd></div></dl>
+          <dl class="v5-detail-list"><div><dt>Owner</dt><dd>{{ selectedGate.owner }}</dd></div><div><dt>Workspace</dt><dd>{{ destinationLabel(selectedGate.route) }}</dd></div><div><dt>Current status</dt><dd>{{ selectedGate.status === 'READY' ? 'Evidence is recorded for this step' : selectedGate.status === 'BLOCKED' ? 'AR-019, EQR or exact release evidence still holds the path' : 'The next action is visible in the complete cycle' }}</dd></div></dl>
           <button type="button" class="button secondary full-width" @click="navigate(selectedGate.route)">Open {{ destinationLabel(selectedGate.route) }} <Icon name="arrow-right" :size="16" /></button>
         </aside>
       </div>
@@ -138,7 +139,7 @@ function destinationLabel(route) {
             <span class="v5-doc-id">{{ document.id }}</span><span class="v5-doc-copy"><strong>{{ document.title }}</strong><small>{{ document.trigger }}</small></span><StatusPill :label="document.status" :tone="statusTone(document.tone)" /><Icon name="chevron-right" :size="15" />
           </button>
         </div>
-        <aside class="panel v5-doc-detail" aria-live="polite"><div class="v5-detail-head"><span class="v5-doc-detail-icon" :class="`tone-${selectedDocument.tone === 'danger' ? 'amber' : selectedDocument.tone}`"><Icon name="file" :size="19" /></span><div><span class="eyebrow">{{ selectedDocument.id }}</span><h3>{{ selectedDocument.title }}</h3></div><StatusPill :label="selectedDocument.status" :tone="statusTone(selectedDocument.tone)" /></div><dl class="v5-detail-list"><div><dt>Creation trigger</dt><dd>{{ selectedDocument.trigger }}</dd></div><div><dt>Owner / approval</dt><dd>{{ selectedDocument.owner }}</dd></div><div><dt>Prototype destination</dt><dd>{{ destinationLabel(selectedDocument.route) }}</dd></div></dl><button type="button" class="button secondary full-width" @click="navigate(selectedDocument.route)">Open {{ destinationLabel(selectedDocument.route) }} <Icon name="arrow-right" :size="16" /></button></aside>
+        <aside class="panel v5-doc-detail" aria-live="polite"><div class="v5-detail-head"><span class="v5-doc-detail-icon" :class="`tone-${selectedDocument.tone === 'danger' ? 'amber' : selectedDocument.tone}`"><Icon name="file" :size="19" /></span><div><span class="eyebrow">{{ selectedDocument.id }}</span><h3>{{ selectedDocument.title }}</h3></div><StatusPill :label="selectedDocument.status" :tone="statusTone(selectedDocument.tone)" /></div><dl class="v5-detail-list"><div><dt>Creation trigger</dt><dd>{{ selectedDocument.trigger }}</dd></div><div><dt>Owner / approval</dt><dd>{{ selectedDocument.owner }}</dd></div><div><dt>Workspace</dt><dd>{{ destinationLabel(selectedDocument.route) }}</dd></div></dl><button type="button" class="button secondary full-width" @click="navigate(selectedDocument.route)">Open {{ destinationLabel(selectedDocument.route) }} <Icon name="arrow-right" :size="16" /></button></aside>
       </div>
     </section>
 
@@ -159,6 +160,6 @@ function destinationLabel(route) {
 
     <section class="panel v5-system-panel" aria-labelledby="v5-system-title"><div class="panel-heading"><div><span class="eyebrow">§4 + §27–29 · architecture path</span><h2 id="v5-system-title">From a named user to a recoverable release</h2><p>Follow the system boundary left to right. Each handoff has a source of record and a testable failure mode.</p></div><span class="muted-label">{{ v5SystemLayers.length }} layers</span></div><div class="v5-system-flow" role="list" aria-label="V5 architecture layers"><template v-for="(layer, index) in v5SystemLayers" :key="layer.id"><article class="v5-system-layer" :class="`tone-${layer.tone}`" role="listitem"><span class="v5-system-number">{{ layer.number }}</span><span class="v5-system-icon"><Icon :name="layer.icon" :size="18" /></span><span class="v5-system-copy"><strong>{{ layer.label }}</strong><small>{{ layer.kind }}</small><p>{{ layer.detail }}</p><em>{{ layer.handoff }}</em></span></article><span v-if="index < v5SystemLayers.length - 1" class="v5-system-connector" aria-hidden="true"><Icon name="arrow-right" :size="16" /></span></template></div></section>
 
-    <div class="prototype-note v5-boundary-note"><Icon name="info" :size="17" /><span><strong>V5 validation boundary:</strong> this page translates the specification into a synthetic, navigable prototype. Actual firm templates, rates, deadlines, identities, Microsoft grants, records policy, provider behavior and recovery objectives remain required inputs and test evidence.</span></div>
+    <div class="prototype-note v5-boundary-note"><Icon name="info" :size="17" /><span><strong>How to use this model:</strong> select a gate, review its owner and evidence, then open the linked workspace to see the handoff in context.</span></div>
   </div>
 </template>

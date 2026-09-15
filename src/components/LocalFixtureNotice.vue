@@ -3,7 +3,7 @@ import Icon from './Icon.vue'
 
 defineProps({
   title: { type: String, default: 'Local fixture reference' },
-  description: { type: String, default: 'This reference view is browser-local and does not change the shared workflow record.' },
+  description: { type: String, default: 'This reference view does not change the engagement workflow record.' },
 })
 </script>
 

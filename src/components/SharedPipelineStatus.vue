@@ -74,7 +74,7 @@ function formatSync(value) {
       <div><span class="eyebrow">Live shared state · D1</span><h2 id="shared-live-title">Pipeline status</h2></div>
       <button type="button" class="text-button" :disabled="loading" @click="refresh">Refresh <Icon name="refresh" :size="15" /></button>
     </div>
-    <p v-if="generationChanged" class="permission-notice" role="status">The shared demo was reset from another browser. <button type="button" class="text-button" @click="$emit('navigate', 'readiness')">Open readiness</button> or refresh to continue.</p>
+    <p v-if="generationChanged" class="permission-notice" role="status">The walkthrough was restarted from another browser. <button type="button" class="text-button" @click="$emit('navigate', 'readiness')">Open readiness</button> or refresh to continue.</p>
     <p v-else-if="error" class="guide-status-message" role="status">Shared state unavailable ({{ error.code }}). Showing the explanatory walkthrough below.</p>
     <div class="shared-indicators" aria-label="Shared workflow indicators">
       <div v-for="indicator in indicators" :key="indicator.label" class="shared-indicator">

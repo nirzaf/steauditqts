@@ -174,9 +174,9 @@ onBeforeUnmount(() => {
 <template>
   <div ref="rootEl" class="page pipeline-page">
     <PageHeader
-      eyebrow="High-level process visualizer · synthetic only"
+      eyebrow="High-level process visualizer"
       title="Audit portal pipeline"
-      description="Play the client-to-portal-to-audit handoff from first intake through final report, invoice, and archive. Select a stage to see the real documents, owner, visibility boundary, and detailed prototype page behind it."
+      description="Play the client-to-portal-to-audit handoff from first intake through final report, invoice, and archive. Select a stage to see the documents, owner, visibility boundary, and detailed workspace behind it."
       action-label="Open complete cycle"
       action-icon="arrow-right"
       @action="emit('navigate', 'cycle')"
@@ -190,7 +190,7 @@ onBeforeUnmount(() => {
       <div class="pipeline-intro-copy">
         <span class="eyebrow">PDF-derived handoff map</span>
         <h2 id="pipeline-intro-title">One record, four lanes, eight accountable stages</h2>
-        <p>The moving packet is a teaching aid: it shows where a document or decision travels, while the detailed pages demonstrate the guarded synthetic controls. Nothing here sends email, WhatsApp, files, or professional conclusions.</p>
+        <p>The moving packet shows where a document or decision travels. Open a detailed page to see the owner, the task and the next handoff behind each stage.</p>
       </div>
       <div class="pipeline-intro-facts" aria-label="Pipeline facts">
         <div><strong>8</strong><span>handoff stages</span></div>
@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
       <article class="panel pipeline-lane-panel" aria-labelledby="pipeline-lane-title">
         <div class="panel-heading"><div><span class="eyebrow">Who sees what</span><h2 id="pipeline-lane-title">Swimlane handoff</h2></div><span class="muted-label">Stage {{ activeStage.number }} highlighted</span></div>
         <p class="pipeline-lane-intro">Read down a column to see the shared handoff. Read across a row to see each role’s responsibility and visibility boundary.</p>
-        <div class="pipeline-lane-legend" aria-label="Swimlane legend"><span><i class="pipeline-legend-dot active"></i>Active responsibility</span><span><i class="pipeline-legend-dot complete"></i>Passed in this demo</span><span><i class="pipeline-legend-dot upcoming"></i>Upcoming</span></div>
+        <div class="pipeline-lane-legend" aria-label="Swimlane legend"><span><i class="pipeline-legend-dot active"></i>Active responsibility</span><span><i class="pipeline-legend-dot complete"></i>Complete</span><span><i class="pipeline-legend-dot upcoming"></i>Upcoming</span></div>
         <div class="pipeline-lane-scroller">
           <div class="pipeline-lane-grid">
             <div class="pipeline-lane-corner">Role / handoff</div>
@@ -274,7 +274,7 @@ onBeforeUnmount(() => {
 
     <section class="panel pipeline-boundary" aria-labelledby="pipeline-boundary-title">
       <div class="pipeline-boundary-icon" aria-hidden="true"><Icon name="shield" :size="21" /></div>
-      <div><span class="eyebrow">Prototype boundary</span><h2 id="pipeline-boundary-title">What the animation does — and does not — prove</h2><p>It explains the sequence and ownership using bounded QAR demo values and named outputs from the v5 operating model. It does not send a report, create a credential, email an invoice, call Microsoft Graph, or replace a partner, reviewer, finance, or records decision.</p></div>
+      <div><span class="eyebrow">Explore the operating model</span><h2 id="pipeline-boundary-title">See the systems behind each handoff</h2><p>Review the architecture map for the records, access boundaries, document storage and system responsibilities that support this workflow.</p></div>
       <button type="button" class="button ghost" @click="emit('navigate', 'architecture')"><span>View architecture map</span><Icon name="arrow-right" :size="16" /></button>
     </section>
   </div>
