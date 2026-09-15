@@ -4260,6 +4260,26 @@ async function requirePortalEngagementScope(request, env, engagementId, requeste
   const runId = String(requestedRunId || '').trim();
   if (runId && !SAFE_RUN_ID.test(runId)) return { response: error(request, 'A valid invitation run id is required.', 400, 'RUN_ID_INVALID') };
   let effective = checked.session;
+  // Portal reads and writes must honor the active tab view just like the
+  // engagement/workspace routes do. A presenter and an invited client can
+  // share a browser profile, so the parent session cookie may currently hold
+  // the client's actor even while a sibling presenter tab still owns an
+  // admin view. Resolve that tab-scoped view before applying run/role checks.
+  const viewId = readViewId(request);
+  if (viewId) {
+    const view = await readDemoView(env, checked.session, viewId);
+    if (!view) return { response: error(request, 'The workspace view is not active for this session.', 409, 'VIEW_CONTEXT_INVALID') };
+    if (view.engagement_id !== id) return { response: error(request, 'The workspace view is scoped to another engagement.', 409, 'VIEW_SCOPE_CONFLICT') };
+    const expectedVersion = request.headers.get('X-AuditFlow-Context-Version');
+    if (expectedVersion && Number(expectedVersion) !== Number(view.context_version)) return { response: error(request, 'The workspace context changed; reload before acting.', 409, 'CONTEXT_VERSION_CONFLICT') };
+    effective = effectiveSessionForView(view, checked.session);
+    // A presenter view may intentionally address a run selected in the
+    // invitation inbox. Keep that explicit run id while preserving the
+    // view's presenter actor/roles; client views remain fixed to their run.
+    if (!isClientOnlySession(effective) && runId) {
+      effective = { ...effective, runId, invitationId: '', clientMode: 0 };
+    }
+  }
   if (scopedRunContexts(effective)) {
     if (runId && runId !== effective.runId) {
       return { response: error(request, 'This client session is fixed to its invitation run.', 403, 'INVITATION_SCOPE_CONFLICT') };

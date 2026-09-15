@@ -109,6 +109,55 @@ test('presenter login clears stale client invitation scope in the same browser',
   assert.deepEqual(scopeWrite.params.slice(-3), ['run-preview1234', '', 0]);
 });
 
+test('portal presenter view preserves staff identity when an invitation tab shares the cookie', async () => {
+  const viewId = 'view-admin-tab-0001';
+  const runId = 'run-invite1234';
+  const engagementId = 'run-invite1234-0018-AUD-26';
+  const rows = [
+    {
+      message_id: 'msg-client-00000001', run_id: runId, engagement_id: engagementId,
+      request_id: '', thread_id: 'thread-1', reply_to: '', sender_persona_id: 'client-demo',
+      sender_actor_id: 'ACT-NADIA', sender_role: 'client_contributor', body: 'Client question',
+      client_visible: 1, state: 'UNREAD', created_at: '2026-09-15 12:00:00', read_at: '',
+    },
+    {
+      message_id: 'msg-staff-00000001', run_id: runId, engagement_id: engagementId,
+      request_id: '', thread_id: 'thread-1', reply_to: 'msg-client-00000001', sender_persona_id: 'admin-demo',
+      sender_actor_id: 'ACT-MAYA', sender_role: 'system_admin', body: 'Staff reply',
+      client_visible: 1, state: 'UNREAD', created_at: '2026-09-15 12:01:00', read_at: '',
+    },
+  ];
+  const db = {
+    prepare(sql) {
+      return {
+        bind(...params) {
+          return {
+            async run() { return { success: true, meta: { changes: 1 }, params }; },
+            async first() {
+              if (sql.includes('FROM auditflow_demo_sessions')) return { session_id: 'sess-shared-cookie-0001', persona_id: 'client-demo', actor_id: 'ACT-NADIA', expires_at: '2099-01-01 00:00:00', last_activity: '2099-01-01 00:00:00' };
+              if (sql.includes('FROM auditflow_demo_session_scopes')) return { session_id: 'sess-shared-cookie-0001', run_id: runId, invitation_id: 'inv-shared-0001', client_mode: 1 };
+              if (sql.includes('FROM auditflow_demo_views')) return { view_id: viewId, parent_session_id: 'sess-shared-cookie-0001', run_id: 'run-presenter0001', persona_id: 'admin-demo', actor_id: 'ACT-MAYA', engagement_id: engagementId, generation_id: 'gen-presenter1', context_version: 1, state: 'ACTIVE', expires_at: '2099-01-01 00:00:00' };
+              if (sql.includes('FROM auditflow_demo_run_contexts')) return { run_id: runId, logical_engagement_id: 'ENG-0018-AUD-2026', engagement_id: engagementId };
+              return null;
+            },
+            async all() {
+              if (sql.includes('FROM auditflow_portal_messages')) return { results: rows };
+              return { results: [] };
+            },
+          };
+        },
+      };
+    },
+  };
+  const response = await worker.fetch(new Request(`https://ste.quadrate.lk/api/portal/messages?engagementId=${engagementId}&runId=${runId}`, {
+    headers: { ...trustedHeaders, Cookie: 'auditflow_demo_session=sess-shared-cookie-0001', 'X-AuditFlow-View': viewId, 'X-AuditFlow-Context-Version': '1' },
+  }), enabledEnv({ db }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.counts.total, 2);
+  assert.deepEqual(body.messages.map((message) => message.senderRole), ['client_contributor', 'system_admin']);
+});
+
 test('workflow actions never fake success: session required, then role/precondition denial', async () => {
   const store = makeStore();
   const noSession = await worker.fetch(
