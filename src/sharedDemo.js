@@ -17,12 +17,19 @@ const testOverrides = { baseUrl: null, enabled: null };
 let activeViewDescriptor = null;
 const activeSessionRef = ref(null);
 export const activeDemoSession = readonly(activeSessionRef);
+// Reactive view projection for presentational components that need the
+// server-confirmed run-scoped engagement (for example workflow comments).
+// Keep the plain descriptor below for request headers without forcing every
+// consumer to create another polling loop.
+const activeViewRef = ref(null);
+export const activeDemoView = readonly(activeViewRef);
 /** Test-only hook: force the client on/off with a mock fetch base. */
 export function __setSharedDemoConfigForTests(config = {}) {
   testOverrides.baseUrl = config.baseUrl ?? null;
   testOverrides.enabled = config.enabled ?? null;
   if (config.resetView === true || config.enabled === false) {
     activeViewDescriptor = null;
+    activeViewRef.value = null;
     activeSessionRef.value = null;
   }
 }
@@ -40,6 +47,7 @@ function apiBase() {
 
 export function setActiveDemoView(view) {
   activeViewDescriptor = view && view.viewId ? { ...view } : null;
+  activeViewRef.value = activeViewDescriptor;
   return activeViewDescriptor;
 }
 
@@ -54,6 +62,7 @@ export function getActiveDemoSession() {
 export function clearActiveDemoSession() {
   activeSessionRef.value = null;
   activeViewDescriptor = null;
+  activeViewRef.value = null;
 }
 
 function invitationTokenFromLocation() {

@@ -1,11 +1,12 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { addWorkflowComment, DEMO_ENGAGEMENT_ID, loadWorkflowState, saveWorkflowPreference } from '../api'
+import { activeDemoView } from '../sharedDemo.js'
 import Icon from './Icon.vue'
 
 const props = defineProps({
   guide: { type: Object, required: true },
-  engagementId: { type: String, default: DEMO_ENGAGEMENT_ID },
+  engagementId: { type: String, default: '' },
 })
 
 const expanded = ref(true)
@@ -58,6 +59,7 @@ const sourceHint = computed(() => source.value === 'd1'
     ? 'The shared API was unavailable. This is a local-only draft with no automatic replay or professional effect.'
     : 'This normal prototype build stores synthetic state in this browser only; it is not synchronized.')
 const commentCountLabel = computed(() => `${comments.value.length} ${comments.value.length === 1 ? 'comment' : 'comments'}`)
+const resolvedEngagementId = computed(() => props.engagementId || activeDemoView.value?.engagementId || DEMO_ENGAGEMENT_ID)
 
 function toggle() {
   expanded.value = !expanded.value
@@ -73,7 +75,7 @@ async function loadState() {
   loadingState.value = true
   statusMessage.value = ''
   try {
-    const state = await loadWorkflowState({ engagementId: props.engagementId, pageKey: props.guide.id })
+    const state = await loadWorkflowState({ engagementId: resolvedEngagementId.value, pageKey: props.guide.id })
     comments.value = state.comments || []
     source.value = state.source
     syncState.value = state.syncState || 'LOCAL_ONLY'
@@ -140,6 +142,7 @@ async function updateOptional(event) {
 
 onMounted(loadState)
 watch(() => props.guide.id, loadState)
+watch(resolvedEngagementId, loadState)
 </script>
 
 <template>
