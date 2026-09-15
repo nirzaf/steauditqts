@@ -18,9 +18,11 @@ const trustedHeaders = {
 function makeStore() {
   const runs = [];
   let sessionRow = null;
+  let scopeRow = null;
   return {
     runs,
     setSession(row) { sessionRow = row; },
+    setScope(row) { scopeRow = row; },
     db: {
       prepare(sql) {
         const direct = {
@@ -35,6 +37,7 @@ function makeStore() {
               async run() { runs.push({ sql, params }); return { success: true }; },
               async first() {
                 if (sql.includes('FROM auditflow_demo_sessions')) return sessionRow;
+                if (sql.includes('FROM auditflow_demo_session_scopes')) return scopeRow;
                 if (sql.includes('FROM auditflow_engagement_state')) {
                   return { engagement_id: 'ENG-0018-AUD-2026', client_id: 'CLI-0018', service: 'AUDIT', period: 'FY2026', revision: 1, current_stage: 'STAGE-01', g_status: '{}', generation_id: 'gen-seed-01', updated_at: '2026-09-14 00:00:00' };
                 }
@@ -86,6 +89,24 @@ test('demo session rejects unknown persona and accepts allowlisted persona', asy
   assert.equal(payload.session.actorId, 'ACT-MAYA');
   assert.ok(good.headers.get('Set-Cookie')?.includes('auditflow_demo_session'));
   assert.ok(good.headers.get('Set-Cookie')?.includes('HttpOnly'));
+});
+
+test('presenter login clears stale client invitation scope in the same browser', async () => {
+  const store = makeStore();
+  store.setSession({ session_id: 'sess-client-preview-0001', persona_id: 'client-demo', actor_id: 'ACT-NADIA', expires_at: '2099-01-01 00:00:00' });
+  store.setScope({ session_id: 'sess-client-preview-0001', run_id: 'run-preview1234', invitation_id: 'inv-stale-0001', client_mode: 1 });
+  const response = await worker.fetch(new Request('https://ste.quadrate.lk/api/demo/session', {
+    method: 'POST',
+    headers: { ...trustedHeaders, Cookie: 'auditflow_demo_session=sess-client-preview-0001' },
+    body: JSON.stringify({ personaId: 'admin-demo' }),
+  }), enabledEnv(store));
+  assert.equal(response.status, 201);
+  const payload = await response.json();
+  assert.equal(payload.session.clientMode, 0);
+  assert.equal(payload.session.invitationId, '');
+  const scopeWrite = store.runs.find((entry) => entry.sql.includes('INSERT INTO auditflow_demo_session_scopes'));
+  assert.ok(scopeWrite, 'presenter handoff should rewrite the existing scope');
+  assert.deepEqual(scopeWrite.params.slice(-3), ['run-preview1234', '', 0]);
 });
 
 test('workflow actions never fake success: session required, then role/precondition denial', async () => {

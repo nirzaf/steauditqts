@@ -587,6 +587,10 @@ async function createDemoSession(request, env) {
   // remain bound to their own persona and cannot be changed by that tab.
   const existing = await resolveDemoSession(request, env);
   const sessionId = existing?.sessionId || (crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '').slice(0, 8));
+  // Preserve the run context for a same-browser persona handoff, but rewrite
+  // the session scope below when the new persona is a presenter. This keeps
+  // the selected run useful without carrying a stale client-mode or
+  // invitation flag into the presenter session.
   let runId = invitation?.run_id || existing?.runId || ''
   let generationId = ''
   let clientMode = invitation || isClientPersona(persona) ? 1 : 0
@@ -619,7 +623,11 @@ async function createDemoSession(request, env) {
        VALUES (?1, ?2, ?3, datetime('now', '+1 day'))`,
     ).bind(sessionId, personaId, persona.actorId).run();
   }
-  if (clientMode && runId) await writeSessionScope(env, sessionId, { runId, invitationId: invitation?.invitation_id || '', clientMode: 1 })
+  if (clientMode && runId) {
+    await writeSessionScope(env, sessionId, { runId, invitationId: invitation?.invitation_id || '', clientMode: 1 })
+  } else if (!clientMode && existing?.runId) {
+    await writeSessionScope(env, sessionId, { runId: existing.runId, invitationId: '', clientMode: 0 })
+  }
   const correlationId = requestCorrelationId(request);
   const headers = baseHeaders(request, correlationId);
   headers['Set-Cookie'] = sessionCookie(sessionId);

@@ -74,7 +74,11 @@ const invitationEntry = typeof window !== 'undefined' && Boolean(new URL(window.
 const currentUser = ref(invitationEntry ? null : loadDemoSession())
 if (invitationEntry) clearDemoSession()
 if (currentUser.value) setActivePersona(currentUser.value.id)
-const isClientInvitation = computed(() => Boolean(activeDemoSession.value?.clientMode))
+// Only an invitation-bound client session is fixed to the client portal.
+// Browser-local client previews remain useful for presenter walkthroughs,
+// and a stale session response must never hide presenter controls after
+// switching personas.
+const isClientInvitation = computed(() => Boolean(activeDemoSession.value?.clientMode && activeDemoSession.value?.invitationId))
 const currentRoute = ref(getRouteFromHash())
 const mobileNavOpen = ref(false)
 const search = ref('')
