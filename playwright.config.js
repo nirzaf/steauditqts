@@ -8,8 +8,13 @@ export default defineConfig({
   timeout: 30_000,
   retries: 0,
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:4173',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:4174',
     trace: 'retain-on-failure',
   },
-  webServer: undefined,
+  webServer: process.env.PLAYWRIGHT_BASE_URL ? undefined : {
+    command: 'npm run preview -- --port 4174 --strictPort',
+    url: 'http://localhost:4174',
+    reuseExistingServer: true,
+    timeout: 60_000,
+  },
 })

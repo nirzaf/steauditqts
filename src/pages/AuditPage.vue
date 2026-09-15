@@ -11,6 +11,7 @@ import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { useDemoContext } from '../demoContext.js'
 import { evaluateAccountingInput, idempotencyKey } from '../sharedDemo.js'
 import { useRecordSelection } from '../composables/useRecordSelection.js'
+const emit = defineEmits(['navigate', 'action-outcome'])
 
 const activeTab = ref('Planning')
 // P0.1 — ?record= may be a risk, workpaper, sample or finding; select + reveal it.
@@ -127,6 +128,7 @@ async function submitSnapshot(workpaper) {
   }
   const result = await submitWorkpaper({ workpaperId: workpaper.id, actorPersonaId: activeActor()?.personaId, expectedRevision: workpaper.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `workpaper-${workpaper.id}-${workpaper.revision}`, content: `${workpaper.id}|${selectedClient.value?.id}|${selectedEngagement.value?.period}|synthetic-snapshot` })
   toast.value = result.outcome === 'COMMITTED' ? `${workpaper.id} submitted as an exact snapshot ${result.data.snapshot.id}. Reviewer sees this snapshot, not a mutable “latest” file.` : `${result.outcome}: ${result.code} — ${result.message}`
+  if (result.outcome === 'COMMITTED') emit('action-outcome', { title: `${workpaper.id} submitted`, result: `${result.data.snapshot.id} moved to Manager Review.`, owner: 'Audit Manager', nextAction: `Review ${workpaper.id}`, nextRoute: 'reviews' })
   window.setTimeout(() => { toast.value = '' }, 4000)
 }
 

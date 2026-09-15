@@ -14,7 +14,7 @@ import { useDraftForms } from '../composables/useDraftForms.js'
 import { useRecordSelection } from '../composables/useRecordSelection.js'
 import { activeActor, actorById, clearReviewPoint as clearReviewPointCommand, createReviewPoint as createReviewPointCommand, recordCompletionRecommendation, scenario, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
 
-const emit = defineEmits(['navigate'])
+const emit = defineEmits(['navigate', 'action-outcome'])
 
 const selectedEngagement = computed(() => scenarioEngagement())
 const points = computed(() => scenario.reviews.filter((point) => point.engagementId === selectedEngagement.value?.id).map((point) => ({
@@ -58,6 +58,7 @@ function clearPoint(point) {
   if (point.status === 'Cleared') return
   const result = clearReviewPointCommand({ pointId: point.id, actorPersonaId: activeActor()?.personaId, expectedRevision: point.revision, expectedSessionEpoch: activeActor()?.sessionEpoch, idempotencyKey: `review-clear-${point.id}-${point.revision}`, response: 'Reviewed exact response and alternative-work reference.' })
   toast.value = result.outcome === 'COMMITTED' ? `${point.id} cleared with an appended reviewer decision.` : `${result.outcome}: ${result.code} — ${result.message}`
+  if (result.outcome === 'COMMITTED') emit('action-outcome', { title: `${point.id} cleared`, result: 'Reviewer decision appended; suitability reopened if a replacement arrives.', owner: 'Audit manager', nextAction: 'Check release blockers', nextRoute: 'release' })
   window.setTimeout(() => { toast.value = '' }, 3500)
 }
 

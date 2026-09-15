@@ -812,6 +812,7 @@ onBeforeUnmount(() => {
         @open-palette="commandPaletteOpen = true"
         @open-notifications="demoNotificationsOpen = true"
       />
+      <details v-if="presentationMode" class="presentation-more"><summary>More… ({{ visibleNavItems.length }} shown)</summary><div class="presentation-more-list"><button v-for="item in navGroups.flatMap((g) => g.items).filter((i) => !PRESENTATION_ROUTE_KEYS.includes(i.key))" :key="item.key" type="button" @click="navigate(item.key)">{{ item.label }}</button><span v-if="!navGroups.flatMap((g) => g.items).filter((i) => !PRESENTATION_ROUTE_KEYS.includes(i.key)).length" class="muted-label">All pages are already in the story.</span></div></details>
       <div v-if="presentationMode" class="presentation-journey" role="status" aria-label="Demo journey"><span class="eyebrow">Demo journey</span><ol><li v-for="step in presentationJourney" :key="step.label" :class="step.state"><span aria-hidden="true">{{ step.state === 'done' ? '✓' : step.state === 'current' ? '●' : '○' }}</span> {{ step.label }}</li></ol><button type="button" class="text-button" @click="togglePresentationMode">Show all pages</button></div>
       <div class="system-strip preflight-strip"><span><i></i> {{ systemLabel }}</span><span>{{ demoActiveContext ? `${demoActiveContext.clientName} · ${demoActiveContext.serviceLabel} ${demoActiveContext.period}` : (isClient ? currentUser.organization : `${client.name} · ${client.period}`) }}</span><span class="build-version">Build {{ buildCommit }}</span><span class="preflight-wrap"><button type="button" class="text-button preflight-dot" :aria-expanded="preflightOpen" aria-label="Open demo readiness preflight" @click="preflightOpen = !preflightOpen">Demo status <i :class="{ ok: !demoSyncError, bad: !!demoSyncError }">●</i></button><DemoPreflight v-if="preflightOpen" :mode="demoMode" :build="buildCommit" :checks="preflightChecks" :can-restore="canRestartWalkthrough" :restore-busy="restartBusy" @close="preflightOpen = false" @restore="preflightOpen = false; requestRestart()" /></span></div>
       <div v-if="permissionNotice" class="permission-notice" role="status" aria-live="polite"><Icon name="warning" :size="17" />{{ permissionNotice }}</div>
@@ -827,7 +828,7 @@ onBeforeUnmount(() => {
         @open-next="lastOutcome?.nextRoute ? navigate({ routeKey: lastOutcome.nextRoute, engagementId: activeEngagementId }) : clearOutcome()"
         @dismiss="clearOutcome"
       />
-      <main id="main-content" class="main-content" tabindex="-1"><component :is="current.component" @navigate="navigate" @request-restart="requestRestart" /></main>
+      <main id="main-content" class="main-content" tabindex="-1"><component :is="current.component" @navigate="navigate" @request-restart="requestRestart" @action-outcome="showOutcome" /></main>
     </div>
 
     <NotificationDrawer

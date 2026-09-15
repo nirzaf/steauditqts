@@ -12,7 +12,9 @@ import { loadDemoSession } from '../auth.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { useDemoContext } from '../demoContext.js'
 import { approveAccountingFs, idempotencyKey, runSharedAction } from '../sharedDemo.js'
+import { useRecordSelection } from '../composables/useRecordSelection.js'
 
+const accountingSelection = useRecordSelection({ getIds: () => ['TB-BASELINE-001', 'TB-REPLACEMENT-001', 'FS-DRAFT', 'PKG-0018-ACC-2026'], initial: null })
 const activeTab = ref('Data intake')
 const tabs = ['Data intake', 'Mappings & reconciliations', 'Financial statements']
 const showAllRows = ref(false)

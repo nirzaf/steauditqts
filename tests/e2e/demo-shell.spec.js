@@ -4,19 +4,18 @@
 import { test, expect } from '@playwright/test'
 
 async function signInAsAdmin(page) {
-  await page.goto('/#/dashboard')
-  const email = page.getByLabel(/email/i).first()
-  if (await email.count()) {
-    await email.fill('maya@quadrate.demo')
-    await page.getByLabel(/password/i).first().fill('admin123')
-    await page.getByRole('button', { name: /sign in/i }).first().click()
-  }
+  await page.goto('/')
+  // LoginPage shows persona cards; open the Admin portal directly.
+  const adminCard = page.locator('.persona-card', { hasText: 'Admin portal' }).first()
+  await expect(adminCard).toBeVisible()
+  await adminCard.getByRole('button', { name: /open workspace/i }).click()
   await expect(page.locator('#main-content')).toBeVisible()
 }
 
 test('1. admin signs in → dashboard renders', async ({ page }) => {
   await signInAsAdmin(page)
-  await expect(page.getByRole('heading', { name: /overview|dashboard/i }).first()).toBeVisible()
+  await expect(page.locator('.system-strip')).toBeVisible()
+  await expect(page.locator('.demo-navigator')).toBeVisible()
 })
 
 test('2. admin switches to partner → same engagement retained', async ({ page }) => {
@@ -32,9 +31,19 @@ test('2. admin switches to partner → same engagement retained', async ({ page 
 
 test('3. engagement switch → context changes everywhere', async ({ page }) => {
   await signInAsAdmin(page)
-  const selects = page.locator('select')
-  if (await selects.count()) {
-    await page.locator('#demo-client-select').selectOption({ index: 0 }).catch(() => {})
+  const before = await page.locator('.system-strip').innerText()
+  await expect(page.locator('.demo-navigator')).toBeVisible()
+  // Switching the service (audit ↔ accounting) must change the context strip.
+  const service = page.locator('#demo-service-select')
+  if (await service.count()) {
+    const options = await service.locator('option').all()
+    if (options.length > 1) {
+      const current = await service.inputValue()
+      const next = await options[0].getAttribute('value')
+      const target = next === current ? await options[1].getAttribute('value') : next
+      await service.selectOption(target)
+      await expect.poll(async () => page.locator('.system-strip').innerText(), { timeout: 8000 }).not.toBe(before)
+    }
   }
   await expect(page.locator('.system-strip')).toBeVisible()
 })

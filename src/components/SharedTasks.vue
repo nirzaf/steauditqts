@@ -1,6 +1,13 @@
 <script setup>
 import Icon from './Icon.vue';
 import StatusPill from './StatusPill.vue';
+import { getRecordIdFromHash } from '../composables/useRecordSelection.js';
+import { ref, onMounted, onUnmounted } from 'vue';
+const targetedTaskId = ref(null);
+function syncTarget() { targetedTaskId.value = getRecordIdFromHash(); }
+let _off = null;
+onMounted(() => { syncTarget(); window.addEventListener('hashchange', syncTarget); });
+onUnmounted(() => window.removeEventListener('hashchange', syncTarget));
 import { useSharedEngagement } from '../composables/useSharedEngagement.js';
 
 const props = defineProps({
@@ -31,7 +38,7 @@ const taskMeta = (task) => [
     <p v-if="error" class="guide-status-message" role="status">Task queue unavailable ({{ error.code }}). Please try again once the workspace reconnects.</p>
     <p v-else-if="!loading && !tasks.length" class="guide-empty-state">No tasks match this view yet. New handoffs appear here as they are assigned.</p>
     <ul v-else class="shared-task-list">
-      <li v-for="task in tasks" :key="task.taskId" class="shared-task-row">
+      <li v-for="task in tasks" :key="task.taskId" class="shared-task-row" :data-record-id="task.target || task.linkedObjectId || task.taskId" :class="{ 'record-target': targetedTaskId && [task.taskId, task.target, task.linkedObjectId].filter(Boolean).map(String).includes(String(targetedTaskId)) }">
         <span class="shared-task-main"><strong>{{ task.title }}</strong><small>{{ task.assigneePersona || task.assigneeRole || 'Unassigned' }}{{ task.dueDate ? ` · due ${task.dueDate}` : '' }}</small><small v-if="taskMeta(task)">{{ taskMeta(task) }}</small></span>
         <StatusPill :label="task.state" :tone="toneFor(task.state)" />
         <button type="button" class="text-button" @click="emit('navigate', { routeKey: task.route || 'role-workspace', engagementId: task.engagementId || props.engagementId, recordId: task.target || task.linkedObjectId || task.taskId })">Open <Icon name="arrow-right" :size="14" /></button>

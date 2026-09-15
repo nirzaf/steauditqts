@@ -8,6 +8,7 @@ import { client, formatMoney, workflowGuides } from '../data'
 import { activeActor, actorById, createPbcRequest, recordHardCopyReadiness, recordPbcUpload, requestPbcClarification, reviewPbcReceipt, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { useRecordSelection } from '../composables/useRecordSelection.js'
+const emit = defineEmits(['action-outcome'])
 
 const recordSelection = useRecordSelection({ getIds: () => requests.value.map((r) => r.id), initial: 'PBC-019' })
 const selectedId = recordSelection.selectedId
@@ -52,6 +53,7 @@ async function markReceived() {
   const result = await recordPbcUpload({ requestId: request.id, actorPersonaId: activeActor()?.personaId, expectedRevision: request.revision, period: request.period, idempotencyKey: `pbc-${request.id}-${request.revision}`, content: `${request.id}|${selectedClient.value.id}|${selectedEngagement.value.period}|synthetic-fixture` })
   working.value = false
   toast.value = result.outcome === 'COMMITTED' ? `${request.id} receipt ${result.data.receiptId} preserved with ${result.data.snapshotHash}. It is RECEIVED, not accepted.` : `${result.outcome}: ${result.code} — ${result.message}`
+  if (result.outcome === 'COMMITTED') emit('action-outcome', { title: `${request.id} receipt logged`, result: `Receipt ${result.data.receiptId} is RECEIVED; reviewer still assesses suitability.`, owner: 'Audit senior', nextAction: `Review ${request.id} suitability`, nextRoute: 'pbc' })
   window.setTimeout(() => { toast.value = '' }, 3500)
 }
 
@@ -71,6 +73,7 @@ async function reviewReceipt(decision = 'ACCEPT') {
   const result = reviewPbcReceipt({ requestId: request.id, receiptId: request.receipts.at(-1), actorPersonaId: activeActor()?.personaId, expectedRevision: request.revision, idempotencyKey: `pbc-review-${request.id}-${request.revision}-${decision}`, decision, response: decision === 'ACCEPT' ? 'Synthetic reviewer matched entity, period, completeness, and stored snapshot.' : 'Synthetic clarification requested for the current receipt.' })
   working.value = false
   toast.value = result.outcome === 'COMMITTED' ? `${request.id} suitability is ${decision === 'ACCEPT' ? 'ACCEPTED' : 'CLARIFICATION_REQUIRED'} for receipt ${request.receipts.at(-1)}.` : `${result.outcome}: ${result.code} — ${result.message}`
+  if (result.outcome === 'COMMITTED') emit('action-outcome', { title: `${request.id} ${decision === 'ACCEPT' ? 'accepted' : 'needs clarification'}`, result: `Receipt ${request.receipts.at(-1)} suitability recorded.`, owner: 'Audit manager', nextAction: 'Continue audit fieldwork', nextRoute: 'audit' })
   window.setTimeout(() => { toast.value = '' }, 4000)
 }
 

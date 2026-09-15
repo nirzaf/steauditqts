@@ -2584,6 +2584,9 @@ tfoot th { color: var(--primary); background: #f7faff; }
 .preflight-dot i.bad { color: var(--danger, #b42318); }
 /* P1.2 — presentation mode journey strip + toggle. Filter only; routes unchanged. */
 .presentation-toggle.active { background: #1e3a5f; color: #fff; border-color: #1e3a5f; }
+.presentation-more { padding: 6px 16px; border-bottom: 1px solid var(--border, #e5e7eb); background: #fff; font-size: 12px; }
+.presentation-more-list { display: flex; gap: 8px; flex-wrap: wrap; padding: 8px 0 4px; }
+.presentation-more-list button { padding: 5px 10px; border: 1px solid var(--border, #d1d5db); border-radius: 999px; background: #f9fafb; font-size: 12px; }
 .presentation-journey { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 16px; border-bottom: 1px solid var(--border, #e5e7eb); background: #f8fafc; font-size: 12px; }
 .presentation-journey ol { display: flex; gap: 10px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
 .presentation-journey li { color: var(--muted, #64748b); }
