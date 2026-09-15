@@ -6,7 +6,6 @@ import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import SharedTimeline from '../components/SharedTimeline.vue'
-import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { client, timeline, workflowGuides } from '../data'
 import { activateEngagement, activationBlockers, activationFor, activeActor, createContinuanceShell, gateSummary, renewalCaseFor, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, selectEngagement, termsFor } from '../domain/scenario.js'
@@ -80,7 +79,6 @@ function createShell() {
     <PageHeader :eyebrow="`Engagement workspace · ${selectedEngagement.id}`" :title="selectedClient.name" :description="`${selectedEngagement.serviceLabel} · ${selectedEngagement.periodLabel} · ${selectedEngagement.currency}. Planning and PBC work can continue only within this selected scope.`" action-label="Open PBC workspace" @action="navigate('pbc')" />
     <WorkflowGuide :guide="workflowGuides.engagements" />
     <NextBestActionCard v-if="sharedEnabled" title="Next best action for the shared engagement" @navigate="navigate" />
-    <LocalFixtureNotice v-if="sharedEnabled" title="Engagement details below are a local reference" description="The shared context bar, progress projection and task queue are authoritative. Local gates and controls are inspection-only while shared mode is active." />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 
     <section class="panel engagement-selector"><div><span class="eyebrow">Selected service-period scope</span><strong>Every command is revision-bound to one engagement</strong><small>{{ sharedEnabled ? 'Use the global shared context selector to change the authoritative engagement.' : 'Use the selector to demonstrate how accounting-only and audit routes keep separate gates and authorities.' }}</small></div><label>Engagement<select :value="selectedEngagement.id" :disabled="sharedEnabled" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>

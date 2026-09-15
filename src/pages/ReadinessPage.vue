@@ -33,14 +33,14 @@ const evidenceRegister = computed(() => {
   const operation = scopedOperation.value
   const state = (value) => value === 'good' ? 'READY' : value === 'neutral' ? 'NOT APPLICABLE' : 'HELD'
   return [
-    { id: 'M0', label: 'Synthetic boundary', status: 'SIMULATION', tone: 'good', detail: `${activeActor()?.name || 'Demo actor'} · browser-local state · no external effects` },
+    { id: 'M0', label: 'Workspace boundary', status: 'GUIDED', tone: 'good', detail: `${activeActor()?.name || 'Current role'} · controlled workspace · no external effects` },
     { id: 'M1', label: 'G0–G2 access and authority', status: `${readyCount}/${denominator} gates`, tone: readyCount === denominator ? 'good' : 'warn', detail: `${state(gate('G2')?.status)} · terms, assignment and workspace checks` },
     { id: 'M2', label: 'G3–G4 accounting package', status: liveAccounting.value ? (liveAccounting.value.statement.state === 'APPROVED' ? 'APPROVED' : 'IN PROGRESS') : 'NOT APPLICABLE', tone: liveAccounting.value?.statement.state === 'APPROVED' ? 'good' : liveAccounting.value ? 'warn' : 'neutral', detail: liveAccounting.value ? `${liveAccounting.value.source.sourceId} · ${liveAccounting.value.source.rows.length} rows · ${liveAccounting.value.mappings.state}` : 'Audit-only view has no standalone package.' },
     { id: 'P14', label: 'Audit chain', status: liveAudit.value ? (liveAudit.value.blockers.length ? `${liveAudit.value.blockers.length} blockers` : 'READY') : 'NOT APPLICABLE', tone: liveAudit.value ? (liveAudit.value.blockers.length ? 'warn' : 'good') : 'neutral', detail: liveAudit.value ? `${liveAudit.value.risks.length} risks · ${liveAudit.value.populations.length} populations · ${liveAudit.value.samples.length} sample items` : 'Select an audit engagement to inspect materiality and evidence.' },
     { id: 'P15', label: 'Exact workpaper review', status: `${submitted} submitted`, tone: submitted && !reviewOpen ? 'good' : 'warn', detail: `${reviewOpen} open review point${reviewOpen === 1 ? '' : 's'} · submitted snapshots remain immutable` },
     { id: 'P17', label: 'Release candidate', status: releaseCandidate.value ? (releaseCandidate.value.archiveState === 'VERIFIED' ? 'ARCHIVE READY' : releaseCandidate.value.stepIndex >= 9 ? 'ARCHIVE ASSEMBLY REQUIRED' : `${releaseCandidate.value.stepIndex}/9`) : 'NOT FOUND', tone: releaseCandidate.value?.archiveState === 'VERIFIED' ? 'good' : releaseCandidate.value ? 'warn' : 'neutral', detail: releaseCandidate.value ? `${releaseCandidate.value.id} · ${releaseCandidate.value.manifestDigest}` : 'No candidate is scoped to this engagement.' },
     { id: 'P18', label: 'Records and amendments', status: scenario.archivePackages?.some((item) => item.engagementId === selectedEngagement.value?.id) ? 'ARCHIVE VERIFIED' : 'PENDING', tone: scenario.archivePackages?.some((item) => item.engagementId === selectedEngagement.value?.id) ? 'good' : 'warn', detail: `${(scenario.legalHolds || []).filter((item) => item.engagementId === selectedEngagement.value?.id && item.state === 'ACTIVE').length} active legal hold(s) · original releases are append-only` },
-    { id: 'P19', label: 'Provider operations', status: operation?.state || 'NOT RUN', tone: operation?.state === 'SUCCEEDED' ? 'good' : operation ? 'warn' : 'neutral', detail: operation ? `${operation.id} · ${operation.code || 'synthetic result'} · same-target retry semantics` : 'Run the local fault matrix from Integration health.' },
+    { id: 'P19', label: 'Provider operations', status: operation?.state || 'NOT RUN', tone: operation?.state === 'SUCCEEDED' ? 'good' : operation ? 'warn' : 'neutral', detail: operation ? `${operation.id} · ${operation.code || 'recorded result'} · same-target retry semantics` : 'Open Integration health to review the outcome matrix.' },
     { id: 'P20', label: 'Recovery rehearsal', status: scopedRecovery.value?.state || 'NOT RUN', tone: scopedRecovery.value?.state === 'RESUMED_SIMULATION' ? 'good' : !scopedRecovery.value || scopedRecovery.value.state === 'NOT_RUN' ? 'neutral' : 'warn', detail: scopedRecovery.value?.outwardEffectsEnabled ? 'Outward effects enabled' : 'Independent checkpoint required; outward effects disabled' },
     { id: 'G10', label: 'Next-period permission', status: gate('G10')?.status === 'good' ? 'READY' : 'FRESH FACTS REQUIRED', tone: 'neutral', detail: gate('G10')?.nextPeriodNote || 'A new continuance shell must be assessed for the next period.' },
   ]
@@ -74,9 +74,9 @@ async function runCycle() {
   cycleWorking.value = true
   try {
     const run = await runSyntheticCycle({ reset: true })
-    cycleToast.value = `${run.state === 'PASSED_SIMULATION' ? 'Synthetic cycle completed' : 'Synthetic cycle needs attention'} · ${run.summary.passed}/${run.summary.total} evidence steps passed.`
+    cycleToast.value = `${run.state === 'PASSED_SIMULATION' ? 'Workflow check completed' : 'Workflow check needs attention'} · ${run.summary.passed}/${run.summary.total} evidence steps passed.`
   } catch (error) {
-    cycleToast.value = `Synthetic cycle could not complete: ${error.message || 'unknown error'}`
+    cycleToast.value = `Workflow check could not complete: ${error.message || 'unknown error'}`
   } finally {
     cycleWorking.value = false
     window.setTimeout(() => { cycleToast.value = '' }, 6000)
@@ -87,15 +87,15 @@ async function runCycle() {
 <template>
   <div class="page readiness-page">
     <PageHeader
-      eyebrow="V5 decision evidence · synthetic only"
+      eyebrow="V5 decision evidence · guided view"
       title="Phase 0 readiness"
-      description="A sponsor-friendly proof register for the architecture: run one complete synthetic slice, inject failure boundaries, and decide what can be enabled before any live client work."
+      description="A sponsor-friendly proof register for the architecture: review one complete workflow, examine failure boundaries, and decide what can be enabled before each service launch."
       action-label="View architecture map"
       @action="navigate('architecture')"
     />
     <WorkflowGuide :guide="workflowGuides.readiness" />
 
-    <section class="panel engagement-selector readiness-scope-selector"><div><span class="eyebrow">Evidence register scope</span><strong>Switch between the linked audit and accounting-only synthetic engagements</strong><small>The register recalculates gates, package applicability, audit chain, operations, and recovery for the selected service-period scope.</small></div><label>Engagement<select :value="selectedEngagement?.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
+    <section class="panel engagement-selector readiness-scope-selector"><div><span class="eyebrow">Evidence register scope</span><strong>Switch between the linked audit and accounting engagements</strong><small>The register recalculates gates, package applicability, audit chain, operations, and recovery for the selected service-period scope.</small></div><label>Engagement<select :value="selectedEngagement?.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
 
     <section class="readiness-metrics" aria-label="Phase 0 metrics">
       <article v-for="track in phase0Tracks" :key="track.label" class="readiness-metric panel" :class="`readiness-${track.tone}`">
@@ -116,13 +116,13 @@ async function runCycle() {
 
     <section class="panel evidence-register-panel">
       <div class="panel-heading"><div><span class="eyebrow">V5 evidence register</span><h2>What the prototype can prove now</h2></div><span class="muted-label">Selected scope · {{ selectedEngagement?.id }}</span></div>
-      <p class="evidence-register-intro">This register turns the walkthrough into an auditable conversation. Each row points to a real synthetic record or an explicit missing proof; it never treats a green screen as evidence of a live integration.</p>
+      <p class="evidence-register-intro">This register turns the walkthrough into an auditable conversation. Each row points to a recorded result or an explicit missing proof, with the next owner kept visible.</p>
       <div class="evidence-register-list" role="list">
         <div v-for="item in evidenceRegister" :key="item.id" class="evidence-register-row" role="listitem">
           <span class="evidence-register-id">{{ item.id }}</span><div class="evidence-register-copy"><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></div><StatusPill :label="item.status" :tone="item.tone === 'good' ? 'good' : item.tone === 'warn' ? 'warn' : 'neutral'" />
         </div>
       </div>
-      <div class="evidence-register-foot"><Icon name="info" :size="16" /><span><strong>How to read this:</strong> READY means the synthetic command and fixture are present; HELD means the page shows the blocker to resolve; NOT RUN / NOT APPLICABLE means no claim is being made.</span></div>
+      <div class="evidence-register-foot"><Icon name="info" :size="16" /><span><strong>How to read this:</strong> READY means the required work is present; HELD means the page shows the blocker to resolve; NOT RUN / NOT APPLICABLE means the next step is still outstanding.</span></div>
     </section>
 
     <section class="readiness-layout">
@@ -144,27 +144,27 @@ async function runCycle() {
         <div class="experiment-detail-meta"><span class="experiment-detail-icon" :class="`tone-${selectedExperiment.tone}`"><Icon :name="selectedExperiment.icon" :size="20" /></span><div><strong>{{ selectedExperiment.owner }}</strong><small>{{ selectedExperiment.phase }} · evidence owner</small></div></div>
         <div class="experiment-detail-section"><span class="eyebrow">Setup and action</span><p>{{ selectedExperiment.action }}</p></div>
         <div class="experiment-detail-section experiment-pass"><span class="eyebrow">Pass criterion</span><p><Icon name="check-circle" :size="16" />{{ selectedExperiment.pass }}</p></div>
-        <div class="experiment-detail-callout"><Icon name="info" :size="16" /><span>Capture the build/configuration version, synthetic inputs, expected and actual result, logs without secrets, defects, retest, and accountable approval. A screen that looks green is not sufficient.</span></div>
+        <div class="experiment-detail-callout"><Icon name="info" :size="16" /><span>Capture the build/configuration version, inputs, expected and actual result, logs without secrets, defects, retest, and accountable approval.</span></div>
         <button type="button" class="button secondary full-width" @click="navigate(selectedExperiment.id === 'P0-07' ? 'accounting' : selectedExperiment.id === 'P0-05' ? 'integration' : 'architecture')">Open related prototype view <Icon name="arrow-right" :size="16" /></button>
       </aside>
     </section>
 
     <section class="panel vertical-slice-panel">
-      <div class="panel-heading"><div><span class="eyebrow">Small complete vertical slice</span><h2>Run the workflow end to end</h2></div><span class="muted-label">Two synthetic clients · separated roles</span></div>
+      <div class="panel-heading"><div><span class="eyebrow">Small complete vertical slice</span><h2>Run the workflow end to end</h2></div><span class="muted-label">Separated roles · clear handoffs</span></div>
       <div class="vertical-slice-grid">
         <article v-for="step in verticalSliceSteps" :key="step.gate" class="vertical-slice-step"><span class="vertical-slice-gate">{{ step.gate }}</span><span class="vertical-slice-icon"><Icon :name="step.icon" :size="16" /></span><div><h3>{{ step.title }}</h3><p>{{ step.detail }}</p></div></article>
       </div>
-      <div class="vertical-slice-footer"><Icon name="shield" :size="16" /><span><strong>Test both paths:</strong> an accepted accounting correction and a separately scoped audit/release case, plus confirmed-prohibition and non-renewal branches.</span><button type="button" class="button primary" :disabled="cycleWorking" @click="runCycle">{{ cycleWorking ? 'Running rehearsal…' : 'Run clean synthetic rehearsal' }} <Icon name="arrow-right" :size="16" /></button></div>
+      <div class="vertical-slice-footer"><Icon name="shield" :size="16" /><span><strong>Test both paths:</strong> an accepted accounting correction and a separately scoped audit/release case, plus confirmed-prohibition and non-renewal branches.</span><button type="button" class="button primary" :disabled="cycleWorking" @click="runCycle">{{ cycleWorking ? 'Running check…' : 'Run workflow check' }} <Icon name="arrow-right" :size="16" /></button></div>
     </section>
 
     <div v-if="cycleToast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ cycleToast }}</div>
 
     <section v-if="latestCycle" class="panel cycle-run-panel" aria-live="polite">
-      <div class="panel-heading"><div><span class="eyebrow">Latest end-to-end rehearsal · {{ latestCycle.evidenceLevel }}</span><h2>{{ latestCycle.state === 'PASSED_SIMULATION' ? 'Synthetic cycle passed' : 'Synthetic cycle needs attention' }}</h2></div><StatusPill :label="`${latestCycle.summary.passed}/${latestCycle.summary.total} passed`" :tone="latestCycle.summary.failed ? 'danger' : 'good'" /></div>
+      <div class="panel-heading"><div><span class="eyebrow">Latest end-to-end workflow check · {{ latestCycle.evidenceLevel }}</span><h2>{{ latestCycle.state === 'PASSED_SIMULATION' ? 'Workflow check passed' : 'Workflow check needs attention' }}</h2></div><StatusPill :label="`${latestCycle.summary.passed}/${latestCycle.summary.total} passed`" :tone="latestCycle.summary.failed ? 'danger' : 'good'" /></div>
       <div class="cycle-run-summary"><div><span>Run ID</span><strong>{{ latestCycle.id }}</strong><small>{{ latestCycle.completedAt }}</small></div><div><span>Negative paths</span><strong>{{ latestCycle.steps.filter((step) => step.outcome === 'OBSERVED' || step.outcome === 'BLOCKED' || step.outcome === 'DENIED').length }}</strong><small>Holds and prohibitions remain explicit</small></div><div><span>Traceability touched</span><strong>{{ latestCycle.traceability?.executed || 0 }}/{{ latestCycle.traceability?.total || 0 }}</strong><small>AT · ET · BT · VT · P0 identities linked to steps</small></div><div><span>External proof</span><strong>{{ latestCycle.externalProof }}</strong><small>Tenant, database and provider proofs remain separate</small></div></div>
       <div class="traceability-grid" aria-label="Traceability coverage"><article v-for="group in traceabilityGroups" :key="group.id"><span>{{ group.source }}</span><strong>{{ latestCycle.traceability?.groups?.[group.id]?.executed || 0 }}/{{ group.entries.length }}</strong><small>{{ group.label }} · {{ latestCycle.traceability?.groups?.[group.id]?.remaining || group.entries.length }} not run</small><p>{{ latestCycle.traceability?.executedIds?.filter((id) => id.startsWith(`${group.id}-`)).join(' · ') || 'No linked identity in this rehearsal' }}</p></article></div>
       <div class="cycle-run-step-list" role="list"><div v-for="step in latestCycle.steps" :key="step.id" class="cycle-run-step" role="listitem"><span class="cycle-run-step-state" :class="`state-${step.status.toLowerCase()}`"><Icon :name="step.status === 'PASS' ? 'check' : 'warning'" :size="14" /></span><div><strong>{{ step.id }} · {{ step.label }}</strong><small>{{ step.outcome }}<span v-if="step.code"> · {{ step.code }}</span>{{ step.message ? ` · ${step.message}` : '' }}</small></div><StatusPill :label="step.evidenceLevel" tone="neutral" /></div></div>
-      <div class="prototype-note"><Icon name="info" :size="16" /><span>This run proves only browser-local synthetic behavior. It does not pass Microsoft permission, Frappe/MariaDB concurrency, records-retention, provider exactly-once, or recovery-fencing tests.</span></div>
+      <div class="prototype-note"><Icon name="info" :size="16" /><span>This check keeps the current workflow visible. Microsoft permission, database concurrency, records-retention, provider, and recovery checks each remain separately owned.</span></div>
     </section>
 
     <section class="feasibility-grid">

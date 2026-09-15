@@ -4,7 +4,6 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
-import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 import { client, formatMoney, workflowGuides } from '../data'
 import { activeActor, actorById, createPbcRequest, recordHardCopyReadiness, recordPbcUpload, requestPbcClarification, reviewPbcReceipt, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
@@ -125,9 +124,6 @@ function saveRequestDraft() {
   <div class="page">
     <PageHeader eyebrow="Restricted client surface" title="PBC portal" description="Track requests, bounded uploads, clarifications and accepted evidence without exposing internal review notes or unrestricted SharePoint access." :action-label="canCreateRequest ? 'New request' : ''" @action="createRequest" />
     <WorkflowGuide :guide="workflowGuides.pbc" />
-    <LocalFixtureNotice v-if="sharedDemoEnabled"
-      title="Local PBC fixture is read-only"
-      description="Use the shared workspace for evidence requests, receipts and review decisions. This page keeps the request, owner and next step clear." />
 
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 

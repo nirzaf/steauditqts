@@ -3,7 +3,6 @@ import { computed, ref, watch } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
-import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 import Icon from '../components/Icon.vue'
 import { client, formatMoney, practiceJournals, reconciliationAreas, workflowGuides } from '../data'
 import { baselineFixture, fixtureRows, mappingSummary, parseCsv, replacementFixture, sourceReflection, summarizeRows } from '../domain/accounting.js'
@@ -310,9 +309,6 @@ function journalStatusFor(index) {
       <p class="panel-footnote"><Icon name="info" :size="15" /><span>Every new TB source advances the input generation; audit, draft, manager and opinion records against older inputs go stale until re-evaluated.</span></p>
     </section>
 
-    <LocalFixtureNotice v-if="sharedDemoEnabled"
-      title="Local accounting fixtures are read-only"
-      description="The accounting tracker keeps the receipt, journals, Draft FS and next review handoff together for this engagement." />
 
     <section v-if="importOpen" class="panel import-panel" aria-labelledby="import-title">
       <div class="panel-heading"><div><span class="eyebrow">Trial balance import</span><h2 id="import-title">Load a trial-balance receipt</h2></div><button type="button" class="icon-button" aria-label="Close import" title="Close import" @click="closeImport"><Icon name="x" :size="17" /></button></div>

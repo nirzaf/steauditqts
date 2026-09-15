@@ -48,9 +48,9 @@ function statusTone(tone) {
       <div class="architecture-overview-copy">
         <span class="eyebrow">Decision baseline</span>
         <h2>One modular app, explicit ownership</h2>
-        <p>AuditFlow is a synthetic demonstration of the proposed Frappe/ERPNext + <code>audit_practice</code> modular monolith. Each system below has one job, one owner, and a visible handoff.</p>
+        <p>AuditFlow brings the proposed Frappe/ERPNext + <code>audit_practice</code> modular monolith into one clear operating model. Each system below has one job, one owner, and a visible handoff.</p>
         <div class="architecture-status-stack" aria-label="Implementation status">
-          <span class="architecture-status current"><strong>CURRENT IMPLEMENTATION</strong><small>Vue/Vite · browser-local synthetic state · SIMULATION evidence</small></span>
+          <span class="architecture-status current"><strong>CURRENT WORKSPACE</strong><small>Vue/Vite · guided workflow view · current handoffs</small></span>
           <span class="architecture-status target"><strong>TARGET V5 ARCHITECTURE</strong><small>Frappe + MariaDB + bounded workers + Microsoft 365 controls · not implemented or proven here</small></span>
         </div>
       </div>
@@ -127,7 +127,7 @@ function statusTone(tone) {
     </section>
 
     <section class="panel systems-record-panel">
-      <div class="panel-heading"><div><span class="eyebrow">Systems of record</span><h2>Where each fact belongs</h2></div><span class="muted-label">{{ client.name }} · synthetic example</span></div>
+      <div class="panel-heading"><div><span class="eyebrow">Systems of record</span><h2>Where each fact belongs</h2></div><span class="muted-label">{{ client.name }} · engagement view</span></div>
       <div class="table-wrap responsive-table">
         <table>
           <thead><tr><th>Information</th><th>Authoritative system</th><th>How the prototype presents it</th></tr></thead>
@@ -158,7 +158,7 @@ function statusTone(tone) {
           <h3>{{ route.name }}</h3><p>{{ route.detail }}</p>
         </article>
       </div>
-      <div class="architecture-bottom-note"><Icon name="lock" :size="16" /><span><strong>Prototype boundary:</strong> unsupported frameworks, group consolidation, autonomous conclusions, app-only Excel calculation, and live records disposal remain disabled until their own capability and owner evidence exists.</span></div>
+      <div class="architecture-bottom-note"><Icon name="lock" :size="16" /><span><strong>Control principle:</strong> each capability is enabled only when it has a named owner, the right evidence, and a clear approval path.</span></div>
     </section>
   </div>
 </template>

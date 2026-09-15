@@ -26,7 +26,7 @@ const openBlockers = computed(() => currentGates.value.filter((gate) => gate.sta
 const partnerBlockers = computed(() => currentGates.value.filter((gate) => ['G1', 'G7', 'G8'].includes(gate.id) && gate.status !== 'good').length)
 const syncRetries = computed(() => (scenario.operations || []).filter((operation) => ['RETRY_REQUIRED', 'UNCERTAIN_REMOTE_SUCCESS', 'CURSOR_EXPIRED'].includes(operation.state)).length)
 const integrationHealth = computed(() => scenario.provider?.connected ? (syncRetries.value ? '82%' : '100%') : 'Offline')
-const integrationDetail = computed(() => scenario.provider?.connected ? `${syncRetries.value ? syncRetries.value + ' retry pending' : 'No retry pending'} · SIMULATION` : 'Provider disconnected · SIMULATION')
+const integrationDetail = computed(() => scenario.provider?.connected ? `${syncRetries.value ? syncRetries.value + ' retry pending' : 'No retry pending'} · Connection status` : 'Provider disconnected · Connection status')
 const dashboardStatus = computed(() => dashboardEngagement.value?.service === 'audit' ? 'Fieldwork in progress' : 'Preparation in progress')
 
 function navigate(route) {

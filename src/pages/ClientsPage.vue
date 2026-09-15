@@ -4,7 +4,6 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import SharedAssessmentPanel from '../components/SharedAssessmentPanel.vue'
-import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 import Icon from '../components/Icon.vue'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { client, formatMoney, portfolioClients, workflowGuides } from '../data'
@@ -219,7 +218,6 @@ function importSampleLeads() {
     <PageHeader eyebrow="Relationships and decisions" title="Clients & acceptance" description="Keep the commercial relationship separate from the professional acceptance decision. Every service and reporting period gets its own assessment." action-label="New lead" @action="addClient" />
     <WorkflowGuide :guide="workflowGuides.clients" />
     <SharedAssessmentPanel v-if="sharedDemoEnabled" />
-    <LocalFixtureNotice v-if="sharedDemoEnabled" title="Client and lead registers are local reference data" description="The shared evaluation above is authoritative in shared mode. The CRM and portfolio tables below remain browser-local and are read-only references." />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 
     <section class="stats-strip">

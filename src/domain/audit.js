@@ -49,7 +49,7 @@ export const materialityFixture = {
   selectedRate: '0.05',
   performanceRate: '0.70',
   trivialRate: '0.05',
-  rationale: 'Synthetic normalization removes a one-off transaction before applying the approved 5% rate.',
+  rationale: 'The approved normalization removes a one-off transaction before applying the 5% rate.',
   selectedBy: 'ACT-MAYA',
   reviewedBy: 'ACT-YUSUF',
   reviewedAt: '2026-09-05T09:00:00.000Z',

@@ -12,7 +12,6 @@ import { useDemoContext } from '../demoContext.js'
 import { activeCommandContext, createSharedIntent, getApprovalCenter, getSharedDecisions, idempotencyKey, recordManagerCompletion, recordPartnerReview, runSharedAction } from '../sharedDemo.js'
 import { useDraftForms } from '../composables/useDraftForms.js'
 import { activeActor, actorById, clearReviewPoint as clearReviewPointCommand, createReviewPoint as createReviewPointCommand, recordCompletionRecommendation, scenario, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
-import LocalFixtureNotice from '../components/LocalFixtureNotice.vue'
 
 const emit = defineEmits(['navigate'])
 
@@ -413,7 +412,7 @@ function recordCompletion() {
     <WorkflowGuide :guide="workflowGuides.reviews" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
 
-    <section class="stats-strip compact"><div><span>Open review points</span><strong>{{ openCount }}</strong><small>{{ openCount }} current synthetic points in this scope</small></div><div><span>Stale approvals</span><strong>3</strong><small>Created after a dependency changed</small></div><div><span>Reviewer queue</span><strong>6</strong><small>Across synthetic engagements</small></div><div><span>Dependency health</span><strong>SIMULATION</strong><small>Live provider evidence is not connected</small></div></section>
+    <section class="stats-strip compact"><div><span>Open review points</span><strong>{{ openCount }}</strong><small>{{ openCount }} current points in this scope</small></div><div><span>Stale approvals</span><strong>3</strong><small>Created after a dependency changed</small></div><div><span>Reviewer queue</span><strong>6</strong><small>Across active engagements</small></div><div><span>Dependency health</span><strong>TRACKED</strong><small>Dependencies remain visible for review</small></div></section>
 
     <ApprovalChain v-if="sharedDemoEnabled" :decisions="sharedDecisions" :progress="sharedProgress" :loading="sharedLoading || sharedDecisionsLoading" :error="sharedProgressError" :mode="sharedMode" @navigate="emit('navigate', $event)" />
 
@@ -454,7 +453,7 @@ function recordCompletion() {
           <button type="submit" class="button secondary" :disabled="!canSharedManager || sharedBusy === 'manager'">{{ sharedBusy === 'manager' ? 'Recording…' : 'Record manager decision' }}</button>
           <small v-if="draftStatus['shared-manager']" class="muted-label">{{ draftStatus['shared-manager'] }}</small>
           <small v-else-if="draftErrors['shared-manager']" class="draft-error">{{ draftErrors['shared-manager'] }}</small>
-          <small v-if="!canSharedManager">Needs the Audit Manager demo persona.</small>
+          <small v-if="!canSharedManager">Available to the Audit Manager role.</small>
         </form>
         <form class="shared-completion-form" @submit.prevent="submitSharedPartner">
           <span class="eyebrow">Partner completion review ({{ sharedGate('partner-review')?.state || '—' }})</span>
@@ -463,7 +462,7 @@ function recordCompletion() {
           <button type="submit" class="button secondary" :disabled="!canSharedPartner || sharedBusy === 'partner'">{{ sharedBusy === 'partner' ? 'Recording…' : 'Record partner review' }}</button>
           <small v-if="draftStatus['shared-partner']" class="muted-label">{{ draftStatus['shared-partner'] }}</small>
           <small v-else-if="draftErrors['shared-partner']" class="draft-error">{{ draftErrors['shared-partner'] }}</small>
-          <small v-if="!canSharedPartner">Needs the Partner demo persona.</small>
+          <small v-if="!canSharedPartner">Available to the Partner role.</small>
         </form>
         <form class="shared-completion-form" @submit.prevent="submitSharedEqr">
           <span class="eyebrow">Independent EQR ({{ sharedGate('eqr')?.state || '—' }})</span>
@@ -474,7 +473,7 @@ function recordCompletion() {
           <button type="submit" class="button secondary" :disabled="!canSharedEqr || sharedBusy === 'eqr' || !eqrCandidate">{{ sharedBusy === 'eqr' ? 'Recording…' : 'Record EQR' }}</button>
           <small v-if="draftStatus['shared-eqr']" class="muted-label">{{ draftStatus['shared-eqr'] }}</small>
           <small v-else-if="draftErrors['shared-eqr']" class="draft-error">{{ draftErrors['shared-eqr'] }}</small>
-          <small v-if="!canSharedEqr">Needs the EQR demo persona.</small>
+          <small v-if="!canSharedEqr">Available to the EQR role.</small>
         </form>
       </div>
       <p class="panel-footnote"><Icon name="info" :size="15" /><span>Each record carries the accounting input generation it evaluated; a later TB visibly stales it.</span></p>
@@ -482,9 +481,6 @@ function recordCompletion() {
 
     <section v-if="!sharedDemoEnabled" class="review-layout"><article class="panel review-queue-panel"><div class="panel-heading"><div><span class="eyebrow">Review queue</span><h2>Items needing a response</h2></div><div class="filter-row"><button v-for="filter in filters" :key="filter" type="button" :class="{ active: activeFilter === filter }" @click="activeFilter = filter">{{ filter }}</button></div></div><div class="review-list"><div v-for="point in filteredPoints" :key="point.id" class="review-row"><span class="review-severity" :class="`tone-${point.tone}`"><Icon :name="point.severity === 'Significant' ? 'warning' : 'info'" :size="15" /></span><div><div class="review-title"><strong>{{ point.title }}</strong><span>{{ point.id }}</span></div><p>{{ point.detail }}</p><small>{{ point.area }} · {{ point.assignee }} · due {{ point.due }}</small></div><div class="review-actions"><StatusPill :label="point.status" :tone="point.tone" /><button type="button" class="row-button" :disabled="point.status === 'Cleared'" @click="clearPoint(point)">{{ point.status === 'Cleared' ? 'Cleared' : 'Clear' }}</button></div></div></div></article><aside class="panel applicability-panel"><div class="panel-heading"><div><span class="eyebrow">Applicability check</span><h2>FS v05 impact map</h2></div><StatusPill label="Re-review required" tone="warn" /></div><p class="panel-copy">AJ-002 changes the accounting package. Historical approvals remain preserved, but their applicability to the release candidate is re-evaluated.</p><div class="dependency-graph"><div class="dependency-node good"><span>TB v03</span><small>Validated source</small></div><span class="dependency-line"></span><div class="dependency-node good"><span>FS v05</span><small>New package</small></div><span class="dependency-line"></span><div class="dependency-node warn"><span>Approvals</span><small>3 stale</small></div><span class="dependency-line"></span><div class="dependency-node danger"><span>Release</span><small>Blocked</small></div></div><button type="button" class="button secondary full-width" @click="dependencyLogOpen = !dependencyLogOpen">{{ dependencyLogOpen ? 'Hide dependency log' : 'Open dependency log' }} <Icon name="arrow-right" :size="16" /></button><div v-if="dependencyLogOpen" class="dependency-log"><div><code>TB-REPLACEMENT-001</code><span>Source revision changed</span><StatusPill label="Current" tone="good" /></div><div><code>AJ-002-R1</code><span>Proposed journal is management-authorized</span><StatusPill label="Re-review" tone="warn" /></div><div><code>FS-0018-ACC-2026-V05</code><span>Historical approval kept; current applicability must be recorded</span><StatusPill label="Stale" tone="danger" /></div></div></aside></section>
 
-    <LocalFixtureNotice v-if="sharedDemoEnabled"
-      title="Local review fixtures are hidden in shared mode"
-      description="The shared approval center and completion chain above are authoritative in shared mode, so the local review queue and the static approval ledger are hidden here. They remain available when shared mode is off." />
 
     <section class="panel completion-recommendation-panel">
       <div class="panel-heading"><div><span class="eyebrow">G7 · manager handoff</span><h2>Completion recommendation</h2></div><StatusPill :label="completionRecommendation?.status || 'Not recorded'" :tone="completionRecommendation?.status === 'READY' ? 'good' : completionRecommendation ? 'warn' : 'neutral'" /></div>

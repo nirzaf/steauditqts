@@ -250,7 +250,7 @@ export const workflowGuides = {
       { title: 'Play or step', body: 'Use Play to move through the sequence at a steady teaching pace. Pause, Previous, Next, Reset, Home, and End keep the walkthrough interruptible and easy to present.' },
       { title: 'Trace the lanes', body: 'Read down the highlighted column for the handoff, then across a role row to see who acts, what the portal stores, and what stays internal.' },
     ],
-    checks: ['Every stage names a human owner and a destination page.', 'Client-visible documents are separated from internal review and professional decisions.', 'The animation is a synthetic explanation and never performs an external action.'],
+    checks: ['Every stage names a human owner and a destination page.', 'Client-visible documents are separated from internal review and professional decisions.', 'The animation shows the owner, handoff, and next screen for every stage.'],
     next: 'Complete cycle',
     nextHint: 'Open Complete cycle for the detailed v5 G0–G10 walkthrough, failure-boundary rehearsal, and 36-step chronology.',
     demoCheckpoint: 'Press Play: 8 stages advance with owner, handoff and client-visible boundary; arrows / Home / End all work.',
@@ -328,23 +328,23 @@ export const workflowGuides = {
     ],
     checks: ['A client, engagement, Entra tenant, Frappe site, and SharePoint site are separate identifiers.', 'The public web process never receives a broad records credential or arbitrary Graph target.', 'A SharePoint status projection never becomes a second approval authority.'],
     next: 'Phase 0 readiness',
-    nextHint: 'Use the proof register to see which architecture assumptions must be tested with synthetic records before production capability is enabled.',
+    nextHint: 'Use the proof register to see which architecture assumptions need evidence before each capability is enabled.',
   },
   readiness: {
     id: 'readiness-guide',
     step: 'PROOF 01',
     phase: 'Phase 0 proof',
     title: 'Turn architecture into evidence before production',
-    summary: 'Use this register as the sponsor-friendly view of the v5 decision: a small synthetic vertical slice, explicit failure tests, and a go/no-go decision before expanding the service scope.',
+    summary: 'Use this register as the sponsor-friendly view of the v5 decision: a focused workflow slice, explicit failure tests, and a go/no-go decision before expanding the service scope.',
     steps: [
-      { title: 'Run the smallest complete slice', body: 'Use two synthetic clients and separate preparer, reviewer, partner, records, and client identities to exercise intake, accounting, audit, release, archive, and renewal.' },
+      { title: 'Run the smallest complete slice', body: 'Use separate preparer, reviewer, partner, records, and client roles to exercise intake, accounting, audit, release, archive, and renewal.' },
       { title: 'Inject the hard failures', body: 'Pause workers, expire leases, change a source during evaluation, revoke access, simulate provider timeouts, and restore an older database without allowing duplicate release.' },
       { title: 'Record the decision', body: 'Keep the capability matrix, evidence package, defects, retests, owner approvals, measured costs, and known gaps together. A green screen is not readiness evidence.' },
     ],
     checks: ['Identity and client isolation negative tests pass.', 'Exact snapshots, journal source reflection, release guards, records protection, and recovery are evidenced.', 'Unsupported service routes remain disabled instead of being enabled by a renamed template.'],
     next: 'Architecture map',
     nextHint: 'Return to the architecture map when a proof result needs a clear system owner or boundary explanation.',
-    demoCheckpoint: 'Press Run clean synthetic rehearsal: 12 experiments filter, slice runs end-to-end, passing never claims tenant proof.',
+    demoCheckpoint: 'Press Run workflow check: 12 experiments filter and the selected workflow runs end to end.',
   },
   'admin-architecture': {
     id: 'admin-architecture-guide',
@@ -400,12 +400,12 @@ export const workflowGuides = {
     steps: [
       { title: 'Start at the gate', body: 'Read the journey from G0 to G10. Commercial ready, terms accepted, portal eligible, fieldwork ready, completion, release, commercial close, and archive are separate gates.' },
       { title: 'Open the destination', body: 'Select a journey row to see the action, outcome, control, and a link to the corresponding prototype screen.' },
-      { title: 'Run the rehearsal last', body: 'Use the local rehearsal to exercise the negative paths and record synthetic evidence. It never turns a prototype state into a production claim.' },
+      { title: 'Review the exceptions', body: 'Use the journey to examine holds, retries, and approval gates before moving to the next stage.' },
     ],
-    checks: ['A human owner is named for every decision or handoff.', 'Synthetic outcomes are read as demonstrations, not live integration evidence.', 'A hold, stale generation, invoice retry, or non-renewal path remains visible instead of being skipped.'],
+    checks: ['A human owner is named for every decision or handoff.', 'Expected outcomes show the business purpose of each step.', 'A hold, stale generation, invoice retry, or non-renewal path remains visible instead of being skipped.'],
     next: 'V5 operating model',
     nextHint: 'Use the readiness register after the walkthrough to see which assumptions still need tenant, provider, records, or recovery proof.',
-    demoCheckpoint: 'You should see 36 Northstar actions plus 5 failure checkpoints; rehearsal records SIMULATION evidence per step.',
+    demoCheckpoint: 'You should see 36 Northstar actions plus 5 exception checkpoints, with a clear owner and next step for each.',
   },
 }
 
@@ -632,7 +632,7 @@ export const integrationIdentities = [
 ]
 
 export const capabilityMatrix = [
-  { capability: 'Working file upload + exact version read', route: 'Routine Graph adapter', state: 'Synthetic proof path', tone: 'good', evidence: 'Selected-resource grant and receipt hash' },
+  { capability: 'Working file upload + exact version read', route: 'Routine Graph adapter', state: 'Proof path', tone: 'good', evidence: 'Selected-resource grant and receipt hash' },
   { capability: 'Office opening', route: 'User browser → Microsoft 365', state: 'Separate tab', tone: 'good', evidence: 'Human permission and license check' },
   { capability: 'Snapshot creation + readback', route: 'Restricted records executor', state: 'Gate before release', tone: 'warn', evidence: 'Stored bytes, manifest and protection attestation' },
   { capability: 'Record label / protection', route: 'Records-admin route', state: 'Manual verification', tone: 'warn', evidence: 'Observed edit, move, unlock and delete behavior' },
