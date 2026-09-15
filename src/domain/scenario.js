@@ -310,7 +310,7 @@ function initialScenario() {
     },
     archivePackages: [],
     legalHolds: [
-      { id: 'LH-0018-AR', engagementId: 'ENG-0018-AUD-2026', type: 'LITIGATION', state: 'ACTIVE', blocksDisposal: true, blocksActions: ['DISPOSAL', 'ARCHIVE_CLOSE'], reason: 'Synthetic receivables dispute preservation', createdBy: 'ACT-SARA', createdAt: '2026-09-01T08:30:00.000Z', revision: 1, releasedBy: null, releasedAt: null },
+      { id: 'LH-0018-AR', engagementId: 'ENG-0018-AUD-2026', type: 'LITIGATION', state: 'ACTIVE', blocksDisposal: true, blocksActions: ['DISPOSAL', 'ARCHIVE_CLOSE'], reason: 'Receivables dispute preservation', createdBy: 'ACT-SARA', createdAt: '2026-09-01T08:30:00.000Z', revision: 1, releasedBy: null, releasedAt: null },
     ],
     amendments: [],
     safety: {

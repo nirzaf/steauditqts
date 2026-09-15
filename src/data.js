@@ -732,27 +732,27 @@ export const phase0Experiments = [
   { id: 'P0-06', title: 'Local release race', phase: 'Release safety', icon: 'lock', tone: 'neutral', state: 'Planned', owner: 'Technical + QA', action: 'Pause impact evaluation, change an input and authorize concurrently.', pass: 'Generation guard blocks stale release deterministically.' },
   { id: 'P0-07', title: 'Accounting bridge', phase: 'Accounting', icon: 'calculator', tone: 'good', state: 'Fixture ready', owner: 'Accounting lead', action: 'Run Appendix D, apply AJ-001, then re-upload a source where AJ-001 is already reflected.', pass: 'Profit remains QAR 175,000; no double application.' },
   { id: 'P0-08', title: 'Privileged execution', phase: 'Security', icon: 'shield', tone: 'neutral', state: 'Planned', owner: 'Security + records', action: 'Submit forged Graph paths, labels, targets and stale operations to the records executor.', pass: 'Typed operation and trusted binding deny the request.' },
-  { id: 'P0-09', title: 'Records enforcement', phase: 'Records', icon: 'folder', tone: 'danger', state: 'Blocked until tenant proof', owner: 'Records owner', action: 'Test edit, delete, move, unlock, label removal and role access on synthetic records.', pass: 'Protection meets the approved profile; no unsupported claim.' },
+  { id: 'P0-09', title: 'Records enforcement', phase: 'Records', icon: 'folder', tone: 'danger', state: 'Blocked until tenant proof', owner: 'Records owner', action: 'Test edit, delete, move, unlock, label removal and role access on controlled records.', pass: 'Protection meets the approved profile; no unsupported claim.' },
   { id: 'P0-10', title: 'Retry and revocation', phase: 'Reliability', icon: 'refresh', tone: 'neutral', state: 'Planned', owner: 'Technical + QA', action: 'Fail after remote success, expire a lease and revoke the requester while an export is queued.', pass: 'Same artifact reconciles; stale attempt cannot publish or deliver.' },
   { id: 'P0-11', title: 'Release and recovery', phase: 'Recovery', icon: 'archive', tone: 'danger', state: 'Blocked until checkpoint proof', owner: 'Operations', action: 'Restore an older database while the protected release checkpoint remains external.', pass: 'Quarantine holds outward effects; one release identity is reconstructed.' },
-  { id: 'P0-12', title: 'Scope and economics', phase: 'Decision', icon: 'chart', tone: 'neutral', state: 'Owner workshop', owner: 'Sponsor + product', action: 'Run the synthetic slice with professional leads and replace planning assumptions with measured values.', pass: 'Supported service profile, backlog and feasibility decision are signed.' },
+  { id: 'P0-12', title: 'Scope and economics', phase: 'Decision', icon: 'chart', tone: 'neutral', state: 'Owner workshop', owner: 'Sponsor + product', action: 'Run the focused workflow with professional leads and replace planning assumptions with measured values.', pass: 'Supported service profile, backlog and feasibility decision are signed.' },
 ]
 
 export const phase0Tracks = [
   { label: 'Experiments', value: '12', note: 'Named proof scenarios', icon: 'list-check', tone: 'blue' },
   { label: 'Critical blockers', value: '3', note: 'Identity, isolation, records/recovery', icon: 'warning', tone: 'amber' },
-  { label: 'Live data', value: '0', note: 'Synthetic fixtures only', icon: 'shield', tone: 'green' },
+  { label: 'Live data', value: '0', note: 'Controlled workspace data', icon: 'shield', tone: 'green' },
   { label: 'Effort range', value: '8–12', note: 'Focused person-weeks for Phase 0', icon: 'calendar', tone: 'navy' },
 ]
 
 export const phase0Stages = [
-  { label: 'Proof setup', icon: 'settings', detail: 'Pin versions, identities, repositories and synthetic fixtures.', state: 'Current', tone: 'blue' },
+  { label: 'Proof setup', icon: 'settings', detail: 'Pin versions, identities, repositories and controlled fixtures.', state: 'Current', tone: 'blue' },
   { label: 'Complete vertical slice', icon: 'workflow', detail: 'Run intake → accounting → audit → release → archive → renewal.', state: 'Next', tone: 'amber' },
   { label: 'Sponsor decision', icon: 'check-circle', detail: 'Proceed, narrow, rework or stop using evidence—not screen count.', state: 'Pending', tone: 'neutral' },
 ]
 
 export const verticalSliceSteps = [
-  { gate: 'G0', title: 'Firm and method ready', detail: 'Synthetic users, capability profile, pinned build and repository bindings.', icon: 'settings' },
+  { gate: 'G0', title: 'Firm and method ready', detail: 'Named users, capability profile, pinned build and repository bindings.', icon: 'settings' },
   { gate: 'G1', title: 'Accept or hold relationship', detail: '62-question assessment, specialist clearance and partner decision.', icon: 'users' },
   { gate: 'G2', title: 'Commercial ready', detail: 'Staff-level estimate, fee approvals, quotation and approved scope.', icon: 'calculator' },
   { gate: 'G3', title: 'Terms accepted', detail: 'Exact EL review, delivery and electronic or wet-sign verification.', icon: 'file' },
@@ -810,7 +810,7 @@ export const cycleFailureCheckpoints = [
 ]
 
 export const feasibilityCards = [
-  { label: 'Technical feasibility', value: 'Conditional positive', detail: 'Proceed with a bounded Phase 0 and synthetic vertical slice.', icon: 'workflow', tone: 'green' },
+  { label: 'Technical feasibility', value: 'Conditional positive', detail: 'Proceed with a bounded Phase 0 and focused vertical slice.', icon: 'workflow', tone: 'green' },
   { label: 'Operational / professional', value: 'Owner validation required', detail: 'Methodology, records, access and reviewer evidence are still decision gates.', icon: 'users', tone: 'amber' },
   { label: 'Financial feasibility', value: 'Not established', detail: 'Replace illustrative costs and benefits with measured firm inputs before funding.', icon: 'chart', tone: 'blue' },
 ]
