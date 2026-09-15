@@ -319,6 +319,7 @@ function handleLogin(user) {
   if (isSharedDemoEnabled) {
     createDemoSession(user.id).then((res) => {
       if (!res.ok) permissionNotice.value = `Shared demo session unavailable (${res.error.code}). Continuing browser-local; shared actions will report not committed.`;
+      else if (res.view?.engagementId) switchDemoEngagement(res.view.engagementId);
       else refreshDemoContext();
     });
   }
@@ -450,6 +451,7 @@ onMounted(() => {
   if (currentUser.value && isSharedDemoEnabled) {
     createDemoSession(currentUser.value.id).then((res) => {
       if (!res.ok) permissionNotice.value = `Shared demo session unavailable (${res.error.code}). Shared actions will report not committed.`
+      else if (res.view?.engagementId) switchDemoEngagement(res.view.engagementId)
       else refreshDemoContext()
     })
   }
