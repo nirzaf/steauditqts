@@ -59,3 +59,46 @@ test('mobile shell has no horizontal overflow', async ({ page }) => {
   expect(overflow).toBe(false)
   await expect(page.getByRole('button', { name: 'Open navigation' })).toBeVisible()
 })
+
+test('context details keep advanced controls discoverable without crowding the shell', async ({ page }) => {
+  await openRole(page, 'Admin portal')
+  const details = page.locator('.demo-nav-details')
+  await expect(details).toBeVisible()
+  await details.locator('summary').click()
+  await expect(page.locator('#demo-persona-select')).toBeVisible()
+  await details.locator('summary').click()
+  await expect(page.locator('#demo-persona-select')).toBeHidden()
+})
+
+test('client workspace hides presenter-only context controls', async ({ page }) => {
+  await openRole(page, 'Client portal')
+  await page.getByRole('button', { name: 'Portal overview' }).click()
+  await expect(page.locator('.client-surface')).toBeVisible()
+  await expect(page.locator('.demo-nav-details')).toHaveCount(0)
+  await expect(page.getByText('Presentation mode')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Restart walkthrough' })).toHaveCount(0)
+})
+
+test('mobile navigation closes with Escape and returns focus', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await openRole(page, 'Admin portal')
+  const menu = page.getByRole('button', { name: 'Open navigation' })
+  await menu.click()
+  await expect(page.locator('.sidebar.open')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.sidebar.open')).toHaveCount(0)
+  await expect(menu).toBeFocused()
+})
+
+test('desktop sidebar collapse is persistent and reversible', async ({ page }) => {
+  await openRole(page, 'Admin portal')
+  const shell = page.locator('.app-shell')
+  const collapse = page.getByRole('button', { name: 'Collapse navigation' })
+  await collapse.click()
+  await expect(shell).toHaveClass(/sidebar-collapsed/)
+  await expect(page.getByRole('button', { name: 'Expand navigation' })).toBeVisible()
+  await page.reload()
+  await expect(page.locator('.app-shell')).toHaveClass(/sidebar-collapsed/)
+  await page.getByRole('button', { name: 'Expand navigation' }).click()
+  await expect(page.locator('.app-shell')).not.toHaveClass(/sidebar-collapsed/)
+})

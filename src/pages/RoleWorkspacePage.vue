@@ -368,7 +368,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
 
 <template>
   <div class="page role-workspace-page">
-    <PageHeader :eyebrow="workspace.eyebrow" :title="workspace.title" :description="workspace.summary" />
+    <PageHeader density="compact" :eyebrow="workspace.eyebrow" :title="workspace.title" :description="workspace.summary" />
     <WorkflowGuide :guide="workflowGuides['role-workspace']" />
     <NextBestActionCard v-if="sharedEnabled" title="Your next shared handoff" compact @navigate="navigate" />
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>

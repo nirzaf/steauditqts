@@ -120,8 +120,8 @@ onMounted(loadSharedPortal)
 </script>
 
 <template>
-  <div class="page client-portal-page">
-    <PageHeader eyebrow="Client portal" title="Welcome back, Nadia" description="One clear place to submit your business details, respond to requests, and keep every question with the engagement team." />
+  <div class="page client-portal-page client-surface">
+    <PageHeader density="compact" eyebrow="Client portal" title="Welcome back, Nadia" description="One clear place to submit your business details, respond to requests, and keep every question with the engagement team." />
     <WorkflowGuide :guide="workflowGuides['client-home']" />
     <section class="portal-banner panel"><span class="portal-avatar avatar avatar-blue">NF</span><div><span class="eyebrow">Your engagement</span><h2>{{ portalClient.name }}</h2><p>{{ portalEngagement?.periodLabel || portalClient.period }} · {{ portalEngagement?.serviceLabel || portalClient.services?.[0] }}</p></div><StatusPill label="Portal connected" tone="good" /><span class="portal-banner-note">Last team reply <strong>{{ lastTeamReply }}</strong></span></section>
     <div class="portal-kpi-grid"><article class="portal-kpi"><span class="portal-kpi-icon tone-blue"><Icon name="file" :size="17" /></span><span><small>Details</small><strong>Submitted</strong><em>Client profile</em></span></article><article class="portal-kpi"><span class="portal-kpi-icon tone-amber"><Icon name="inbox" :size="17" /></span><span><small>Open requests</small><strong>{{ openRequests.length }}</strong><em>Need your attention</em></span></article><article class="portal-kpi"><span class="portal-kpi-icon tone-green"><Icon name="message" :size="17" /></span><span><small>Messages</small><strong>{{ messageCount }}</strong><em>{{ isSharedInvitation ? 'Team conversation' : 'Open invitation to message' }}</em></span></article><article class="portal-kpi"><span class="portal-kpi-icon tone-navy"><Icon name="calendar" :size="17" /></span><span><small>Next due</small><strong>{{ openRequests[0]?.due || '—' }}</strong><em>{{ openRequests[0]?.title || 'No open request' }}</em></span></article></div>

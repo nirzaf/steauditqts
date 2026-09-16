@@ -2586,3 +2586,147 @@ tfoot th { color: var(--primary); background: #f7faff; }
   .invitation-form, .invitation-result { align-items: stretch; flex-direction: column; }
   .invitation-form .button, .invitation-result .button, .invitation-result a { width: 100%; justify-content: center; }
 }
+
+/* M8 Perfex-inspired consolidation: compact admin rhythm with AuditFlow identity. */
+:root {
+  --canvas: #f4f7fb;
+  --line: #d8e2ed;
+  --line-strong: #c4d2e1;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 8px 22px rgba(15, 23, 42, .065);
+  --shadow-sm: 0 1px 5px rgba(15, 23, 42, .055);
+  --page-max: 1440px;
+  --page-gutter: 28px;
+}
+
+body { background: var(--canvas); }
+.app-shell { grid-template-columns: 240px minmax(0, 1fr); }
+.app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
+.sidebar { padding: 16px 12px 14px; }
+.sidebar-brand { position: relative; min-height: 48px; padding: 0 8px 16px; }
+.sidebar-brand > span:nth-child(2) { min-width: 0; display: grid; gap: 1px; }
+.sidebar-collapse-toggle { width: 32px; height: 32px; position: absolute; top: 0; right: 0; display: grid; place-items: center; color: #a9bfd8; border: 1px solid rgba(197, 218, 239, .2); border-radius: 8px; background: rgba(255,255,255,.06); }
+.sidebar-collapse-toggle:hover { color: #fff; border-color: rgba(197, 218, 239, .38); background: rgba(255,255,255,.13); }
+.sidebar-collapse-toggle svg { width: 16px; height: 16px; }
+.workspace-switcher { min-height: 52px; padding: 8px 9px; }
+.sidebar-nav { gap: 14px; margin-top: 20px; }
+.nav-group { gap: 3px; }
+.nav-item { min-height: 42px; padding: 8px 10px; border-radius: 8px; }
+.nav-item span { font-size: .84rem; }
+.nav-group-label { padding-right: 10px; padding-left: 10px; font-size: .66rem; }
+.more-workspace-nav { margin-right: 8px; margin-left: 8px; }
+.topbar { min-height: 64px; padding: 10px var(--page-gutter); }
+.workspace-tools, .system-strip { padding-right: var(--page-gutter); padding-left: var(--page-gutter); }
+.system-strip { min-height: 31px; padding-top: 5px; padding-bottom: 5px; font-size: .72rem; }
+.workspace-tools { padding-top: 4px; padding-bottom: 4px; }
+.page { max-width: var(--page-max); padding: 24px var(--page-gutter) 56px; }
+.page-header { gap: 20px; margin-bottom: 18px; }
+.page-header.compact { margin-bottom: 14px; }
+.page-header.compact h1 { margin-bottom: 5px; font-size: clamp(1.65rem, 2.1vw, 2.2rem); }
+.page-header.compact p { font-size: .9rem; }
+.page-header-actions { display: flex; align-items: center; gap: 8px; }
+.panel { border-radius: 12px; box-shadow: var(--shadow-sm); }
+.panel-heading { padding: 16px 18px 12px; }
+.metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.metric-card { min-height: 112px; padding: 14px 16px; border-radius: 11px; }
+.metric-card > strong { font-size: 1.6rem; }
+.dashboard-grid { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px; grid-template-areas: 'queue portfolio' 'activity gate'; }
+.dashboard-grid > .action-panel { grid-area: queue; }
+.dashboard-grid > .panel-wide { grid-area: portfolio; }
+.dashboard-grid > .timeline-panel { grid-area: activity; }
+.dashboard-grid > .gate-panel { grid-area: gate; }
+.dashboard-page .workflow-guide { margin-bottom: 14px; }
+.workflow-guide { margin-bottom: 16px; box-shadow: 0 5px 16px rgba(30,58,95,.055); }
+.guide-header { gap: 12px; padding: 14px 18px; }
+.guide-icon { width: 38px; height: 38px; border-radius: 9px; }
+.guide-icon svg { width: 20px; height: 20px; }
+.guide-intro h2 { font-size: 1.02rem; }
+.guide-intro p { font-size: .8rem; }
+.guide-content { padding-right: 18px; padding-left: 18px; }
+.guide-step-grid { padding-top: 12px; }
+.client-surface { max-width: 1180px; }
+.client-surface .page-header h1 { font-size: clamp(1.7rem, 2.15vw, 2.3rem); }
+.client-surface .panel { box-shadow: 0 2px 10px rgba(30,58,95,.055); }
+.client-surface .workflow-guide { margin-bottom: 14px; }
+.client-portal-page .workflow-guide, .client-details-page .workflow-guide, .client-communications-page .workflow-guide { display: none; }
+.accountant-surface .panel { box-shadow: 0 2px 10px rgba(30,58,95,.055); }
+.dashboard-grid > *, .metric-grid > *, .portal-content-grid > *, .portal-form-layout > *, .role-architecture-layout > *, .read-only-grid > * { min-width: 0; }
+.table-wrap, .responsive-table { max-width: 100%; overflow-x: auto; }
+details > summary:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; border-radius: 6px; }
+
+@media (min-width: 981px) {
+  .app-shell.sidebar-collapsed .sidebar-brand { justify-content: center; padding-right: 0; padding-left: 0; }
+  .app-shell.sidebar-collapsed .sidebar-brand > span:nth-child(2),
+  .app-shell.sidebar-collapsed .workspace-switcher > span:not(.workspace-avatar),
+  .app-shell.sidebar-collapsed .workspace-switcher > svg,
+  .app-shell.sidebar-collapsed .nav-group-label,
+  .app-shell.sidebar-collapsed .nav-item span,
+  .app-shell.sidebar-collapsed .nav-item em,
+  .app-shell.sidebar-collapsed .sidebar-health > span:last-child,
+  .app-shell.sidebar-collapsed .sidebar-foot > span,
+  .app-shell.sidebar-collapsed .more-workspace-nav summary { display: none; }
+  .app-shell.sidebar-collapsed .sidebar-collapse-toggle { position: static; margin-top: 8px; }
+  .app-shell.sidebar-collapsed .workspace-switcher { justify-content: center; padding-right: 5px; padding-left: 5px; }
+  .app-shell.sidebar-collapsed .nav-item { justify-content: center; padding-right: 8px; padding-left: 8px; }
+  .app-shell.sidebar-collapsed .sidebar-health { justify-content: center; padding-right: 8px; padding-left: 8px; }
+  .app-shell.sidebar-collapsed .sidebar-foot { justify-content: center; }
+}
+
+@media (max-width: 1200px) {
+  .app-shell { grid-template-columns: 224px minmax(0, 1fr); }
+  .app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
+  .page { --page-gutter: 22px; }
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-grid { grid-template-columns: minmax(0, 1fr) minmax(280px, .85fr); }
+  .demo-navigator { padding-right: 22px; padding-left: 22px; }
+}
+
+@media (max-width: 980px) {
+  .app-shell, .app-shell.sidebar-collapsed { display: block; }
+  .sidebar { width: 270px; padding: 18px 14px; }
+  .sidebar-collapse-toggle { display: none; }
+  .sidebar.collapsed { width: 270px; }
+  .sidebar.collapsed .sidebar-brand > span:nth-child(2),
+  .sidebar.collapsed .workspace-switcher > span:not(.workspace-avatar),
+  .sidebar.collapsed .workspace-switcher > svg,
+  .sidebar.collapsed .nav-group-label,
+  .sidebar.collapsed .nav-item span,
+  .sidebar.collapsed .nav-item em,
+  .sidebar.collapsed .sidebar-health > span:last-child,
+  .sidebar.collapsed .sidebar-foot > span,
+  .sidebar.collapsed .more-workspace-nav summary { display: initial; }
+  .sidebar.collapsed .sidebar-brand { justify-content: flex-start; padding-right: 8px; padding-left: 8px; }
+  .sidebar.collapsed .workspace-switcher { justify-content: flex-start; padding-right: 9px; padding-left: 9px; }
+  .sidebar.collapsed .nav-item { justify-content: flex-start; padding-right: 10px; padding-left: 10px; }
+  .dashboard-grid { grid-template-columns: 1fr; grid-template-areas: 'queue' 'portfolio' 'activity' 'gate'; }
+  .page { padding-top: 20px; }
+  .topbar { padding-right: 18px; padding-left: 18px; }
+  .workspace-tools, .system-strip { padding-right: 18px; padding-left: 18px; }
+}
+
+@media (max-width: 680px) {
+  .page { --page-gutter: 15px; padding: 18px var(--page-gutter) 44px; }
+  .topbar { min-height: 60px; padding: 8px 15px; }
+  .breadcrumbs { font-size: .78rem; }
+  .topbar-actions { gap: 7px; }
+  .top-search { width: 42px; padding: 0 11px; }
+  .top-search input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .page-header { align-items: stretch; flex-direction: column; gap: 12px; }
+  .page-header .button, .page-header-actions { width: 100%; }
+  .page-header .button { justify-content: center; }
+  .metric-grid { grid-template-columns: 1fr; }
+  .dashboard-grid { gap: 11px; }
+  .panel-heading { gap: 10px; padding: 14px 15px 11px; }
+  .panel-heading .text-button { min-height: 40px; }
+  .client-surface .page-header p { font-size: .86rem; }
+  .system-strip { display: none; }
+}
+
+@media (max-width: 480px) {
+  .page { padding-right: 12px; padding-left: 12px; }
+  .topbar { padding-right: 12px; padding-left: 12px; }
+  .workspace-tools { padding-right: 12px; padding-left: 12px; }
+  .top-user > span:nth-child(2), .top-user > svg { display: none; }
+  .top-icon-button, .mobile-menu, .icon-button { width: 44px; height: 44px; }
+}

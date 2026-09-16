@@ -29,7 +29,7 @@ function navigate(route) {
 </script>
 
 <template>
-  <div class="page role-architecture-page">
+  <div class="page role-architecture-page" :class="{ 'client-surface': persona === 'client', 'accountant-surface': persona === 'accountant' }">
     <PageHeader
       :eyebrow="architecture.eyebrow"
       :title="architecture.title"

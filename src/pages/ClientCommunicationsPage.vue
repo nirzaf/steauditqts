@@ -98,8 +98,8 @@ onMounted(loadMessages)
 </script>
 
 <template>
-  <div class="page client-communications-page">
-    <PageHeader eyebrow="Client portal · communication" title="Portal communications" description="Keep questions, clarifications, and delivery updates in one shared thread with the engagement team." />
+  <div class="page client-communications-page client-surface">
+    <PageHeader density="compact" eyebrow="Client portal · communication" title="Portal communications" description="Keep questions, clarifications, and delivery updates in one shared thread with the engagement team." />
     <WorkflowGuide :guide="workflowGuides['client-communications']" />
     <div v-if="targetNotice" class="guide-status-message" role="status"><Icon name="warning" :size="16" />{{ targetNotice }}</div>
     <section class="panel portal-thread-banner"><span class="thread-icon"><Icon name="message" :size="20" /></span><div><span class="eyebrow">{{ isSharedInvitation ? 'Engagement portal thread' : 'Engagement portal' }}</span><h2>{{ scopedClient.name }} · Engagement team</h2><p>{{ messagePolicy }} General questions, evidence clarifications, and handoff confirmations stay together.</p></div><span class="thread-policy"><strong>One conversation</strong><small>Keep updates with the engagement team.</small></span></section>

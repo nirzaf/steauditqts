@@ -97,6 +97,7 @@ const CLIENT_NAVIGATION_KEYS = Object.freeze([
   'role-workspace', 'client-home', 'client-details', 'client-communications', 'artifacts',
   'pipeline', 'client-architecture',
 ])
+const CLIENT_CORE_NAVIGATION_KEYS = new Set(['role-workspace', 'client-home', 'client-details', 'client-communications', 'artifacts'])
 
 // An invitation is an explicit client entry point. Do not let a stale
 // presenter persona from localStorage silently win when the same browser
@@ -114,11 +115,13 @@ const isClientInvitation = computed(() => Boolean(activeDemoSession.value?.clien
 const currentRoute = ref(getRouteFromHash())
 const routeLocation = ref(typeof window !== 'undefined' ? decodeLocation(window.location.hash) : { routeKey: currentRoute.value, engagementId: null, recordId: null, tab: null })
 const mobileNavOpen = ref(false)
+const sidebarCollapsed = ref(false)
 const search = ref('')
 const helpOpen = ref(false)
 const accountMenuOpen = ref(false)
 const permissionNotice = ref('')
 const pendingDeepLink = ref('')
+const mobileNavButton = ref(null)
 const helpButton = ref(null)
 const helpCloseButton = ref(null)
 const restartCancelButton = ref(null)
@@ -206,7 +209,7 @@ const demoCrumbs = computed(() => buildBreadcrumbs({
   clientRoute: isClient.value ? 'client-home' : 'clients',
   engagementRoute: isClient.value ? 'client-home' : 'engagements',
 }))
-const paletteRoutes = computed(() => visibleNavItems.value.map((item) => ({ key: item.key, label: item.label, title: item.label })))
+const paletteRoutes = computed(() => shellNavItems.value.map((item) => ({ key: item.key, label: item.label, title: item.label })))
 const routeRolesMap = computed(() => Object.fromEntries(Object.entries(ROUTE_REGISTRY).map(([key, entry]) => [key, entry.roles])))
 
 function canAccessRoute(key, role) {
@@ -218,7 +221,7 @@ const current = computed(() => {
   const key = routeComponents[currentRoute.value] ? currentRoute.value : 'dashboard'
   return { ...(ROUTE_REGISTRY[key] || ROUTE_REGISTRY.dashboard), component: routeComponents[key] || routeComponents.dashboard }
 })
-const activeNav = computed(() => visibleNavItems.value.find((item) => item.key === currentRoute.value) || visibleNavItems.value[0] || { label: 'Sign in' })
+const activeNav = computed(() => shellNavItems.value.find((item) => item.key === currentRoute.value) || visibleNavItems.value[0] || { label: 'Sign in' })
 const isClient = computed(() => currentUser.value?.role === 'client')
 const isClientManagement = computed(() => currentUser.value?.role === 'client-management')
 const isAccountant = computed(() => ['accountant', 'accounting-reviewer', 'preparer'].includes(currentUser.value?.role))
@@ -263,11 +266,15 @@ const allNavItems = computed(() => {
   return navigationItemsFor(keys)
 })
 const visibleNavItems = computed(() => presentationMode.value && canUsePresentationMode.value
-  ? allNavItems.value.filter((item) => ROUTE_REGISTRY[item.key]?.presentation)
-  : allNavItems.value)
-const moreNavItems = computed(() => presentationMode.value && canUsePresentationMode.value
-  ? allNavItems.value.filter((item) => !ROUTE_REGISTRY[item.key]?.presentation)
-  : [])
+  ? coreNavItems.value.filter((item) => ROUTE_REGISTRY[item.key]?.presentation)
+  : coreNavItems.value)
+const coreNavItems = computed(() => allNavItems.value.filter((item) => currentUser.value?.role === 'client'
+  ? CLIENT_CORE_NAVIGATION_KEYS.has(item.key)
+  : ROUTE_REGISTRY[item.key]?.presentation))
+const moreNavItems = computed(() => isClientInvitation.value || currentUser.value?.role === 'client'
+  ? []
+  : allNavItems.value.filter((item) => !ROUTE_REGISTRY[item.key]?.presentation))
+const shellNavItems = computed(() => [...visibleNavItems.value, ...moreNavItems.value])
 const navGroups = computed(() => {
   const groups = []
   for (const item of visibleNavItems.value) {
@@ -288,6 +295,25 @@ function readHashKey() {
 
 function loadPresentationPreference() {
   try { presentationMode.value = window.localStorage.getItem('auditflow-presentation-mode-v1') === 'on' } catch { presentationMode.value = false }
+}
+
+function loadSidebarPreference() {
+  try { sidebarCollapsed.value = window.localStorage.getItem('auditflow-sidebar-collapsed-v1') === 'on' } catch { sidebarCollapsed.value = false }
+}
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  try { window.localStorage.setItem('auditflow-sidebar-collapsed-v1', sidebarCollapsed.value ? 'on' : 'off') } catch { /* best effort */ }
+}
+
+function openMobileNav() {
+  mobileNavOpen.value = true
+  nextTick(() => document.querySelector('#primary-navigation .nav-item')?.focus())
+}
+
+function closeMobileNav() {
+  mobileNavOpen.value = false
+  nextTick(() => mobileNavButton.value?.focus())
 }
 
 function togglePresentationMode() {
@@ -347,6 +373,7 @@ function navigate(key, locationOptions = {}) {
   }
   setDocumentTitle()
   if (typeof document !== 'undefined') window.requestAnimationFrame(() => document.querySelector('#main-content')?.focus())
+  if (moreNavItems.value.some((item) => item.key === next)) nextTick(openMoreWorkspace)
 }
 
 function syncRoute() {
@@ -636,6 +663,7 @@ function closeHelp() {
 function onShellEscape() {
   if (restartConfirmOpen.value) closeRestartConfirm()
   else if (helpOpen.value) closeHelp()
+  else if (mobileNavOpen.value) closeMobileNav()
 }
 
 watch([currentUser, activeEngagementId], () => loadNotificationReads())
@@ -645,6 +673,8 @@ onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
   syncRoute()
   loadPresentationPreference()
+  loadSidebarPreference()
+  if (moreNavItems.value.some((item) => item.key === currentRoute.value)) nextTick(openMoreWorkspace)
   loadNotificationReads()
   setDocumentTitle()
   if (currentUser.value && isSharedDemoEnabled) {
@@ -671,12 +701,12 @@ onBeforeUnmount(() => {
 <template>
   <LoginPage v-if="!currentUser" @login="handleLogin" />
 
-  <div v-else class="app-shell" @keydown.esc.window="onShellEscape">
+  <div v-else class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }" @keydown.esc.window="onShellEscape">
     <a class="skip-link" href="#main-content">Skip to main content</a>
-    <button v-if="mobileNavOpen" type="button" class="mobile-scrim" aria-label="Close navigation" @click="mobileNavOpen = false"></button>
+    <button v-if="mobileNavOpen" type="button" class="mobile-scrim" aria-label="Close navigation" @click="closeMobileNav"></button>
 
-    <aside id="primary-navigation" class="sidebar" :class="{ open: mobileNavOpen }" aria-label="Primary navigation">
-      <div class="sidebar-brand"><span class="brand-mark" aria-hidden="true"><Icon name="workflow" :size="21" /></span><span><strong>AuditFlow</strong><small>Practice platform</small></span></div>
+    <aside id="primary-navigation" class="sidebar" :class="{ open: mobileNavOpen, collapsed: sidebarCollapsed }" aria-label="Primary navigation">
+      <div class="sidebar-brand"><span class="brand-mark" aria-hidden="true"><Icon name="workflow" :size="21" /></span><span><strong>AuditFlow</strong><small>Practice platform</small></span><button type="button" class="sidebar-collapse-toggle" :aria-label="sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'" :title="sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'" @click="toggleSidebar"><Icon :name="sidebarCollapsed ? 'chevron-right' : 'chevron-left'" :size="16" /></button></div>
       <div class="workspace-switcher"><span class="workspace-avatar">{{ workspaceInitials }}</span><span><strong>{{ workspaceName }}</strong><small>{{ workspaceSubtitle }}</small></span><Icon name="chevron-down" :size="16" /></div>
 
       <nav class="sidebar-nav">
@@ -689,7 +719,7 @@ onBeforeUnmount(() => {
 
     <div class="app-main">
       <header class="topbar">
-        <div class="topbar-left"><button type="button" class="mobile-menu" aria-label="Open navigation" title="Open navigation" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = true"><Icon name="menu" :size="19" /></button><nav class="breadcrumbs" aria-label="Context breadcrumb"><template v-for="(crumb, index) in demoCrumbs" :key="`${crumb.label}-${index}`"><button v-if="crumb.route" type="button" class="text-button breadcrumb-link" @click="navigate(crumb.route)">{{ crumb.label }}</button><strong v-else aria-current="page">{{ crumb.label }}</strong><Icon v-if="index < demoCrumbs.length - 1" name="chevron-right" :size="16" /></template></nav></div>
+        <div class="topbar-left"><button ref="mobileNavButton" type="button" class="mobile-menu" aria-label="Open navigation" title="Open navigation" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="openMobileNav"><Icon name="menu" :size="19" /></button><nav class="breadcrumbs" aria-label="Context breadcrumb"><template v-for="(crumb, index) in demoCrumbs" :key="`${crumb.label}-${index}`"><button v-if="crumb.route" type="button" class="text-button breadcrumb-link" @click="navigate(crumb.route)">{{ crumb.label }}</button><strong v-else aria-current="page">{{ crumb.label }}</strong><Icon v-if="index < demoCrumbs.length - 1" name="chevron-right" :size="16" /></template></nav></div>
         <div class="topbar-actions">
           <form class="top-search" role="search" @submit.prevent="submitSearch"><Icon name="search" :size="17" /><input v-model="search" type="search" aria-label="Search clients, engagements and IDs (opens command palette)" placeholder="Search anything (Ctrl/Cmd+K)" @focus="commandPaletteOpen = true" /></form>
           <button type="button" class="top-icon-button" :aria-label="`Notifications, ${demoNotificationCount} items`" :title="`Notifications, ${demoNotificationCount} items`" @click="demoNotificationsOpen = true"><Icon name="bell" :size="18" /><span aria-hidden="true">{{ demoNotificationCount }}</span></button>
@@ -718,6 +748,9 @@ onBeforeUnmount(() => {
         :scenario-busy="scenarioBusy"
         :can-restart="canRestartWalkthrough"
         :restart-busy="restartBusy"
+        :is-client-invitation="isClientInvitation"
+        :show-advanced="!presentationMode || !canUsePresentationMode"
+        :presentation-mode="presentationMode"
         @switch-persona="handlePersonaSwitch"
         @switch-context="handleContextSwitch"
         @select-scenario="handleScenarioSelect"

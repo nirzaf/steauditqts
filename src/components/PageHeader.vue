@@ -7,13 +7,14 @@ defineProps({
   description: { type: String, default: '' },
   actionLabel: { type: String, default: '' },
   actionIcon: { type: String, default: 'plus' },
+  density: { type: String, default: 'standard', validator: (value) => ['standard', 'compact'].includes(value) },
 })
 
 const emit = defineEmits(['action'])
 </script>
 
 <template>
-  <div class="page-header">
+  <div class="page-header" :class="{ compact: density === 'compact' }">
     <div>
       <span v-if="eyebrow" class="eyebrow">{{ eyebrow }}</span>
       <h1>{{ title }}</h1>
@@ -23,5 +24,6 @@ const emit = defineEmits(['action'])
       <span>{{ actionLabel }}</span>
       <Icon :name="actionIcon" :size="16" />
     </button>
+    <div v-if="$slots.actions" class="page-header-actions"><slot name="actions" /></div>
   </div>
 </template>

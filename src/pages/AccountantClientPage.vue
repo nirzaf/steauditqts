@@ -32,7 +32,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="page accountant-client-page">
+  <div class="page accountant-client-page accountant-surface">
     <PageHeader eyebrow="Accountant portal · client context" title="View client details" description="Use this read-only context panel before preparing evidence or updating the accounting package." />
     <WorkflowGuide :guide="workflowGuides['accountant-client']" />
 

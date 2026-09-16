@@ -126,7 +126,7 @@ function toggleActor(actor) {
 
 <template>
   <div class="page admin-console-page">
-    <PageHeader eyebrow="Admin portal" title="Admin console" description="Supervise the workspace, see every role boundary, and open any workflow page without changing the owner of a professional decision." />
+    <PageHeader density="compact" eyebrow="Admin portal" title="Admin console" description="Supervise the workspace, see every role boundary, and open any workflow page without changing the owner of a professional decision." />
     <WorkflowGuide :guide="workflowGuides['admin-console']" />
 
     <section class="admin-banner panel"><span class="admin-banner-icon"><Icon name="shield" :size="20" /></span><div><span class="eyebrow">Full workspace access</span><h2>Every workflow boundary is visible</h2><p>Use this view to explain access, accountability, and operational health to stakeholders.</p></div><StatusPill label="Admin access" tone="good" /></section>

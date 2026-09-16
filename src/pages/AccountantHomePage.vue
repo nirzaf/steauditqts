@@ -14,7 +14,7 @@ function navigate(route) {
 
 <template>
   <div class="page accountant-page">
-    <PageHeader eyebrow="Accountant portal" title="Good morning, Leila" description="Prepare the accounting package with the client context, evidence, and controlled handoffs you need—without crossing acceptance or approval boundaries." />
+    <PageHeader density="compact" eyebrow="Accountant portal" title="Good morning, Leila" description="Prepare the accounting package with the client context, evidence, and controlled handoffs you need—without crossing acceptance or approval boundaries." />
     <WorkflowGuide :guide="workflowGuides['accountant-home']" />
 
     <section class="portal-banner panel accountant-banner"><span class="portal-avatar avatar avatar-green">LN</span><div><span class="eyebrow">Assigned engagement</span><h2>{{ client.name }}</h2><p>{{ client.period }} · Accounting package handoff</p></div><StatusPill label="Preparation in progress" tone="warn" /><span class="portal-banner-note">Your scope <strong>View + prepare</strong></span></section>

@@ -81,14 +81,15 @@ function openPortfolioItem(item) {
 <template>
   <div class="page dashboard-page">
     <PageHeader
+      density="compact"
       eyebrow="Practice control room"
-      title="Good morning, Maya"
-      description="A clear view of the firm’s active client work, approval gates, and the next action that keeps each engagement moving."
+      title="See the whole engagement at a glance"
+      description="Start with the queue, resolve blockers, and follow the next owner through every handoff."
       action-label="New engagement"
       @action="navigate('clients')"
     />
-    <WorkflowGuide :guide="workflowGuides.dashboard" />
     <NextBestActionCard title="Next best action from the shared workflow" @navigate="navigate" />
+    <WorkflowGuide :guide="workflowGuides.dashboard" />
 
     <div class="page-context-row">
       <div class="context-chip"><span class="context-dot"></span><strong>Demo workspace</strong><span>{{ dashboardClient?.name || 'No selected engagement' }}</span></div>

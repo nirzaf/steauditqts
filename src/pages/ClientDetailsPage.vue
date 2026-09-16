@@ -89,8 +89,8 @@ onMounted(loadProfile)
 </script>
 
 <template>
-  <div class="page client-details-page">
-    <PageHeader eyebrow="Client portal · details" title="Client details" description="Submit the facts the engagement team needs to scope requests. You can return here when something changes." />
+  <div class="page client-details-page client-surface">
+    <PageHeader density="compact" eyebrow="Client portal · details" title="Client details" description="Submit the facts the engagement team needs to scope requests. You can return here when something changes." />
     <WorkflowGuide :guide="workflowGuides['client-details']" />
     <p v-if="targetNotice" class="guide-status-message" role="status"><Icon name="info" :size="16" />{{ targetNotice }}</p>
 

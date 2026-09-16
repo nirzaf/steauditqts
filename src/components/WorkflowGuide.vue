@@ -4,9 +4,10 @@ import Icon from './Icon.vue'
 
 const props = defineProps({
   guide: { type: Object, required: true },
+  collapsible: { type: Boolean, default: true },
 })
 
-const expanded = ref(true)
+const expanded = ref(!props.collapsible)
 const guideId = computed(() => `workflow-guide-${props.guide.id}`)
 
 const guideIcon = computed(() => ({
@@ -55,7 +56,7 @@ function toggle() {
         <h2 :id="`${guideId}-title`">{{ guide.title }}</h2>
         <p>{{ guide.summary }}</p>
       </div>
-      <button type="button" class="guide-toggle" :aria-expanded="expanded" :aria-controls="guideId" @click="toggle">
+      <button v-if="collapsible" type="button" class="guide-toggle" :aria-expanded="expanded" :aria-controls="guideId" @click="toggle">
         <span>{{ expanded ? 'Hide details' : 'Show details' }}</span>
         <Icon name="chevron-down" :size="17" :class="{ rotated: expanded }" />
       </button>
