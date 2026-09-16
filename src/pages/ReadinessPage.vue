@@ -95,7 +95,7 @@ async function runCycle() {
     />
     <WorkflowGuide :guide="workflowGuides.readiness" />
 
-    <section class="panel engagement-selector readiness-scope-selector"><div><span class="eyebrow">Evidence register scope</span><strong>Switch between the linked audit and accounting engagements</strong><small>The register recalculates gates, package applicability, audit chain, operations, and recovery for the selected service-period scope.</small></div><label>Engagement<select :value="selectedEngagement?.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
+    <section class="panel engagement-selector readiness-scope-selector"><div><span class="eyebrow">Evidence register scope</span><strong>Switch between the linked audit and accounting engagements</strong><small>The register recalculates gates, package applicability, audit chain, operations, and recovery for the selected service-period scope.</small></div><label>Engagement<select name="readiness-engagement" :value="selectedEngagement?.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
 
     <section class="readiness-metrics" aria-label="Phase 0 metrics">
       <article v-for="track in phase0Tracks" :key="track.label" class="readiness-metric panel" :class="`readiness-${track.tone}`">

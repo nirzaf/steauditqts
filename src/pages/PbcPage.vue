@@ -54,7 +54,7 @@ watch([() => props.navigationTarget?.recordId, () => requests.value.map((item) =
 function selectRequest(id) { selectedId.value = id }
 async function markReceived() {
   if (sharedDemoEnabled) {
-    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    toast.value = 'This action is not available from this view. Open the owning page or ask the assigned team member to continue.'
     return
   }
   if (working.value) return
@@ -70,7 +70,7 @@ async function markReceived() {
 
 async function reviewReceipt(decision = 'ACCEPT') {
   if (sharedDemoEnabled) {
-    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    toast.value = 'This action is not available from this view. Open the owning page or ask the assigned team member to continue.'
     return
   }
   if (working.value) return
@@ -89,7 +89,7 @@ async function reviewReceipt(decision = 'ACCEPT') {
 
 function askClarification() {
   if (sharedDemoEnabled) {
-    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    toast.value = 'This action is not available from this view. Open the owning page or ask the assigned team member to continue.'
     return
   }
   if (working.value) return
@@ -101,7 +101,7 @@ function askClarification() {
 
 function markHardCopyReady() {
   if (sharedDemoEnabled) {
-    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    toast.value = 'This action is not available from this view. Open the owning page or ask the assigned team member to continue.'
     return
   }
   if (working.value) return
@@ -113,7 +113,7 @@ function markHardCopyReady() {
 
 function createRequest() {
   if (sharedDemoEnabled) {
-    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    toast.value = 'This action is not available from this view. Open the owning page or ask the assigned team member to continue.'
     return
   }
   requestDraft.value = { title: '', classification: 'AUDIT_EVIDENCE', due: '', ownerActorId: 'ACT-NADIA', acceptanceCriteria: '' }
@@ -122,7 +122,7 @@ function createRequest() {
 
 function saveRequestDraft() {
   if (sharedDemoEnabled) {
-    toast.value = 'Local PBC fixtures are read-only in shared mode; use the shared workflow command surface.'
+    toast.value = 'This action is not available from this view. Open the owning page or ask the assigned team member to continue.'
     return
   }
   if (working.value || !requestDraft.value.title.trim()) return
@@ -143,7 +143,7 @@ function saveRequestDraft() {
     <div v-if="toast" class="toast" role="status" aria-live="polite"><Icon name="check-circle" :size="17" />{{ toast }}</div>
     <div v-if="targetNotice" class="guide-status-message" role="status"><Icon name="warning" :size="16" />{{ targetNotice }}</div>
 
-    <section v-if="requestDraftOpen" class="panel request-draft-panel" aria-labelledby="request-draft-title"><div class="panel-heading"><div><span class="eyebrow">Scoped request workspace</span><h2 id="request-draft-title">Create a PBC request draft</h2></div><button type="button" class="icon-button" aria-label="Close request draft" title="Close request draft" @click="requestDraftOpen = false"><Icon name="x" :size="17" /></button></div><p class="panel-copy">The request is prepared for the selected engagement. The next handoff makes the client owner and due date clear.</p><form class="portal-form" @submit.prevent="saveRequestDraft"><div class="form-grid"><label>Request title<input v-model="requestDraft.title" required maxlength="140" placeholder="e.g. Bank reconciliation pack" /></label><label>Classification<select v-model="requestDraft.classification"><option value="AUDIT_EVIDENCE">Audit evidence</option><option value="ACCOUNTING_INPUT">Accounting input</option><option value="CLIENT_INFORMATION">Client information</option></select></label><label>Client owner<select v-model="requestDraft.ownerActorId"><option value="ACT-NADIA">Nadia Faris · client</option></select></label><label>Due date<input v-model="requestDraft.due" type="date" /></label><label class="form-span-2">Acceptance criteria<textarea v-model="requestDraft.acceptanceCriteria" rows="3" maxlength="400" placeholder="Entity, period, completeness, usability and expected totals"></textarea></label></div><div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />A clear request keeps the owner, period and acceptance criteria together.</span><button type="submit" class="button primary" :disabled="working || !requestDraft.title.trim()">{{ working ? 'Saving…' : 'Save request draft' }}<Icon name="arrow-right" :size="17" /></button></div></form></section>
+    <section v-if="requestDraftOpen" class="panel request-draft-panel" aria-labelledby="request-draft-title"><div class="panel-heading"><div><span class="eyebrow">Scoped request workspace</span><h2 id="request-draft-title">Create a PBC request draft</h2></div><button type="button" class="icon-button" aria-label="Close request draft" title="Close request draft" @click="requestDraftOpen = false"><Icon name="x" :size="17" /></button></div><p class="panel-copy">The request is prepared for the selected engagement. The next handoff makes the client owner and due date clear.</p><form class="portal-form" @submit.prevent="saveRequestDraft"><div class="form-grid"><label>Request title<input v-model="requestDraft.title" name="request-title" required maxlength="140" placeholder="e.g. Bank reconciliation pack…" /></label><label>Classification<select v-model="requestDraft.classification" name="request-classification"><option value="AUDIT_EVIDENCE">Audit evidence</option><option value="ACCOUNTING_INPUT">Accounting input</option><option value="CLIENT_INFORMATION">Client information</option></select></label><label>Client owner<select v-model="requestDraft.ownerActorId" name="request-owner"><option value="ACT-NADIA">Nadia Faris · client</option></select></label><label>Due date<input v-model="requestDraft.due" name="request-due" type="date" /></label><label class="form-span-2">Acceptance criteria<textarea v-model="requestDraft.acceptanceCriteria" name="acceptance-criteria" rows="3" maxlength="400" placeholder="Entity, period, completeness, usability and expected totals…"></textarea></label></div><div class="portal-form-footer"><span class="form-safety-note"><Icon name="shield" :size="16" />A clear request keeps the owner, period and acceptance criteria together.</span><button type="submit" class="button primary" :disabled="working || !requestDraft.title.trim()">{{ working ? 'Saving…' : 'Save request draft' }}<Icon name="arrow-right" :size="17" /></button></div></form></section>
 
     <section class="portal-banner"><div class="portal-banner-icon"><Icon name="inbox" :size="20" /></div><div><strong>{{ selectedClient?.name || 'No assigned client' }} · {{ selectedEngagement?.periodLabel || 'No assigned period' }}</strong><span>Client-facing view is limited to assigned requests and published deliverables.</span></div><StatusPill label="Client portal view" tone="neutral" /></section>
 

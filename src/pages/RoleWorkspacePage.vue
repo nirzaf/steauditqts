@@ -399,12 +399,15 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
         </div>
       </article>
 
-      <aside class="panel role-boundary-panel">
-        <div class="panel-heading"><div><span class="eyebrow">Authority boundary</span><h2>What this role can do</h2></div><Icon name="shield" :size="18" /></div>
-        <div class="role-boundary-group"><span class="guide-label"><Icon name="check" :size="14" />Allowed actions</span><ul class="check-list compact"><li v-for="item in workspace.allowed" :key="item"><span class="list-icon good"><Icon name="check" :size="13" /></span><span>{{ item }}</span></li></ul></div>
-        <div class="role-boundary-group"><span class="guide-label"><Icon name="lock" :size="14" />Blocked actions</span><ul class="check-list compact"><li v-for="item in workspace.blocked" :key="item"><span class="list-icon danger"><Icon name="lock" :size="13" /></span><span>{{ item }}</span></li></ul></div>
-        <div class="role-boundary-note"><Icon name="info" :size="16" /><span>Role membership, client assignment, and session validity are checked separately before each action.</span></div>
-      </aside>
+      <details class="role-boundary-details">
+        <summary><span>Authority boundary</span><small>Allowed and blocked actions for this role</small><Icon name="shield" :size="17" /></summary>
+        <aside class="panel role-boundary-panel">
+          <div class="panel-heading"><div><span class="eyebrow">Authority boundary</span><h2>What this role can do</h2></div><Icon name="shield" :size="18" /></div>
+          <div class="role-boundary-group"><span class="guide-label"><Icon name="check" :size="14" />Allowed actions</span><ul class="check-list compact"><li v-for="item in workspace.allowed" :key="item"><span class="list-icon good"><Icon name="check" :size="13" /></span><span>{{ item }}</span></li></ul></div>
+          <div class="role-boundary-group"><span class="guide-label"><Icon name="lock" :size="14" />Blocked actions</span><ul class="check-list compact"><li v-for="item in workspace.blocked" :key="item"><span class="list-icon danger"><Icon name="lock" :size="13" /></span><span>{{ item }}</span></li></ul></div>
+          <div class="role-boundary-note"><Icon name="info" :size="16" /><span>Role membership, client assignment, and session validity are checked separately before each action.</span></div>
+        </aside>
+      </details>
     </section>
 
     <SharedTasks v-if="sharedEnabled" :engagement-id="engagement?.id || ''" title="Shared queue for this persona" :assignee="sharedAssignee" @navigate="navigate" />
@@ -416,7 +419,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
       <div class="shared-actions-grid">
         <form v-if="sharedActionAllowed('VERIFY_ADVANCE')" class="shared-action-form" @submit.prevent="submitSharedVerifyAdvance">
           <span class="eyebrow">Verify advance payment (G4 · Finance)</span>
-          <label>Payment reference<input v-model="sharedAdvanceReference" type="text" maxlength="40" placeholder="e.g. PAY-SIM-0018" /></label>
+          <label>Payment reference<input v-model="sharedAdvanceReference" name="payment-reference" type="text" autocomplete="off" maxlength="40" placeholder="e.g. PAY-SIM-0018…" /></label>
           <small v-if="workspaceDraftStatus" class="muted-label">{{ workspaceDraftStatus }}</small>
           <small v-else-if="workspaceDraftError" class="draft-error">{{ workspaceDraftError }}</small>
           <button type="submit" class="button secondary" :disabled="sharedActionBusy === 'advance'">{{ sharedActionBusy === 'advance' ? 'Verifying…' : 'Verify advance' }}</button>
@@ -428,7 +431,7 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
         </form>
         <form v-if="sharedActionAllowed('APPROVE_FEE')" class="shared-action-form" @submit.prevent="submitSharedApproveFee">
           <span class="eyebrow">Approve fee (Finance handoff · Partner)</span>
-          <label>Approved fee (QAR)<input v-model="sharedApprovedFee" type="text" inputmode="decimal" placeholder="e.g. 12500.00" /></label>
+          <label>Approved fee (QAR)<input v-model="sharedApprovedFee" name="approved-fee" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 12500.00…" /></label>
           <button type="submit" class="button secondary" :disabled="sharedActionBusy === 'fee'">{{ sharedActionBusy === 'fee' ? 'Recording…' : 'Approve fee' }}</button>
         </form>
         <p v-if="!sharedActionAllowed('VERIFY_ADVANCE') && !sharedActionAllowed('ISSUE_TEMP_CREDENTIAL') && !sharedActionAllowed('APPROVE_FEE')" class="guide-empty-state">This persona has no registered shared command; the queued tasks above name the owning page for each handoff.</p>
@@ -454,8 +457,8 @@ watch(() => sharedEngagement.value?.generationId, () => restoreWorkspaceDraft())
         <div class="terms-decision-summary"><span>Recorded by</span><strong>{{ terms?.clientDecision?.actorId || terms?.signedBy || '—' }}</strong><small>{{ terms?.clientDecision?.rationale || 'Decision rationale will be retained with the exact version.' }}</small></div>
       </div>
       <div v-if="!sharedEnabled && canDecideTerms && terms" class="terms-actions">
-        <label>Decision<select v-model="termsDecision"><option value="ACCEPT">Accept exact version</option><option value="REQUEST_CHANGES">Request changes</option><option value="REJECT">Reject exact version</option></select></label>
-        <label class="terms-rationale">Rationale<textarea v-model="termsRationale" rows="2" maxlength="500" :placeholder="termsDecision === 'ACCEPT' ? 'Optional approval context' : 'Explain the correction required'" /></label>
+        <label>Decision<select v-model="termsDecision" name="terms-decision"><option value="ACCEPT">Accept exact version</option><option value="REQUEST_CHANGES">Request changes</option><option value="REJECT">Reject exact version</option></select></label>
+        <label class="terms-rationale">Rationale<textarea v-model="termsRationale" name="terms-rationale" rows="2" maxlength="500" :placeholder="termsDecision === 'ACCEPT' ? 'Optional approval context…' : 'Explain the correction required…'" /></label>
         <button type="button" class="button primary" :disabled="busyTask === 'terms-decision' || (termsDecision !== 'ACCEPT' && termsRationale.trim().length < 8)" @click="decideTerms">{{ busyTask === 'terms-decision' ? 'Recording…' : 'Record decision' }}<Icon name="check-circle" :size="16" /></button>
         <button v-if="canReissueTerms" type="button" class="button secondary" :disabled="busyTask === 'terms-reissue'" @click="reissueTerms">{{ busyTask === 'terms-reissue' ? 'Issuing…' : `Issue ${nextTermsVersion}` }}</button>
       </div>

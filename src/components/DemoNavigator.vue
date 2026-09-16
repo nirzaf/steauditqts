@@ -98,19 +98,18 @@ function openNext() {
   <section class="demo-navigator" aria-label="Workspace navigator">
     <div class="demo-nav-summary">
       <div class="demo-nav-scope">
-        <span class="demo-nav-label">Current scope</span>
-        <strong>{{ activeContext?.clientName || 'Choose a client' }}</strong>
+        <label class="demo-nav-label" for="demo-client-select">Current client</label>
+        <select id="demo-client-select" name="demo-client" class="demo-nav-inline-select" :value="activeContext?.clientId" :disabled="loading || !contexts.length" @change="onClient">
+          <option v-if="!clientOptions.length" value="">Choose a client</option>
+          <option v-for="client in clientOptions" :key="client.id" :value="client.id">{{ client.name }}</option>
+        </select>
         <small>{{ activeContext ? `${activeContext.serviceLabel} · ${activeContext.period}` : 'Select a workspace to begin' }}</small>
+        <small v-if="activeContext?.engagementId" class="demo-nav-context-id">{{ activeContext.engagementId }}</small>
       </div>
       <div class="demo-nav-stage">
         <span class="demo-nav-label">Workflow stage</span>
         <strong>{{ stageText }}</strong>
         <small>{{ stageDetail }} · {{ gatesText }}</small>
-      </div>
-      <div class="demo-nav-context-code">
-        <span class="demo-nav-label">Engagement</span>
-        <strong>{{ activeContext?.engagementId || 'Not selected' }}</strong>
-        <small>{{ activeContext?.serviceLabel || 'Service route' }}</small>
       </div>
       <div class="demo-nav-next">
         <span class="demo-nav-label">Next action</span>
@@ -125,49 +124,35 @@ function openNext() {
         <small v-if="nextAction" class="demo-nav-hint">{{ nextAction.owner }}</small>
         <small v-else class="demo-nav-hint">Choose a role to see the next handoff.</small>
       </div>
-      <div class="demo-nav-tools">
-        <button type="button" class="text-button" title="Search workspace (Ctrl/Cmd+K)" aria-label="Search workspace" @click="emit('open-palette')"><Icon name="search" :size="15" />Search</button>
-        <button type="button" class="text-button" aria-label="Open notifications" @click="emit('open-notifications')"><Icon name="bell" :size="15" />Alerts</button>
-      </div>
     </div>
 
-    <div class="demo-nav-context-controls">
-      <div class="demo-nav-group">
-        <label class="demo-nav-label" for="demo-client-select">Client</label>
-        <select id="demo-client-select" class="demo-nav-select" :value="activeContext?.clientId" :disabled="loading || !contexts.length" @change="onClient">
-          <option v-for="client in clientOptions" :key="client.id" :value="client.id">{{ client.name }}</option>
-        </select>
-      </div>
-      <small v-if="activeContext?.engagementId" class="demo-nav-context-id">{{ activeContext.engagementId }}</small>
-    </div>
-
-    <details v-if="!isClientInvitation && currentUser?.role !== 'client' && (personas.length || serviceOptions.length || periodOptions.length > 1 || scenarioOptions.length || canRestart)" class="demo-nav-details">
+    <details v-if="showAdvanced && !isClientInvitation && currentUser?.role !== 'client' && (personas.length || serviceOptions.length || periodOptions.length > 1 || scenarioOptions.length || canRestart)" class="demo-nav-details">
       <summary><span>Context details</span><small>{{ presentationMode ? 'Core journey' : 'Role, focus and walkthrough controls' }}</small></summary>
       <div class="demo-nav-advanced-grid">
         <div v-if="personas.length" class="demo-nav-group">
           <label class="demo-nav-label" for="demo-persona-select">Role</label>
-          <select id="demo-persona-select" class="demo-nav-select" :value="currentUser?.id" :disabled="personaBusy" aria-label="Choose role" @change="onPersona">
+            <select id="demo-persona-select" name="demo-persona" class="demo-nav-select" :value="currentUser?.id" :disabled="personaBusy" aria-label="Choose role" @change="onPersona">
             <option v-for="persona in personas" :key="persona.id" :value="persona.id">{{ persona.roleLabel }}</option>
           </select>
           <small class="demo-nav-hint">Choose the workspace that matches the work you want to explore.</small>
         </div>
         <div v-if="serviceOptions.length" class="demo-nav-group">
           <label class="demo-nav-label" for="demo-service-select">Engagement</label>
-          <select id="demo-service-select" class="demo-nav-select" :value="activeContext?.service" :disabled="loading || !contexts.length" @change="onService">
+            <select id="demo-service-select" name="demo-service" class="demo-nav-select" :value="activeContext?.service" :disabled="loading || !contexts.length" @change="onService">
             <option v-for="service in serviceOptions" :key="service.id" :value="service.id">{{ service.label }}</option>
           </select>
           <small class="demo-nav-hint">Choose the service route for this client.</small>
         </div>
         <div v-if="periodOptions.length" class="demo-nav-group demo-nav-period">
           <label class="demo-nav-label" for="demo-period-select">Period</label>
-          <select id="demo-period-select" class="demo-nav-select" :value="activeContext?.period" :disabled="loading || periodOptions.length < 2" aria-label="Period" @change="onPeriod">
+            <select id="demo-period-select" name="demo-period" class="demo-nav-select" :value="activeContext?.period" :disabled="loading || periodOptions.length < 2" aria-label="Period" @change="onPeriod">
             <option v-for="period in periodOptions" :key="period" :value="period">{{ period }}</option>
           </select>
           <small class="demo-nav-hint">Reporting period for the selected engagement.</small>
         </div>
         <div v-if="scenarioOptions.length" class="demo-nav-group">
           <label class="demo-nav-label" for="demo-scenario-select">Walkthrough focus</label>
-          <select id="demo-scenario-select" class="demo-nav-select" :value="activeScenario?.key || ''" :disabled="scenarioBusy" @change="onScenario">
+            <select id="demo-scenario-select" name="demo-scenario" class="demo-nav-select" :value="activeScenario?.key || ''" :disabled="scenarioBusy" @change="onScenario">
             <option value="" disabled>Choose a focus</option>
             <option v-for="scenario in scenarioOptions" :key="scenario.key" :value="scenario.key">{{ scenario.label }}</option>
           </select>
@@ -180,6 +165,13 @@ function openNext() {
             <Icon name="refresh" :size="15" />
           </button>
           <small class="demo-nav-hint">Restore the starting workflow.</small>
+        </div>
+      </div>
+      <div class="demo-nav-detail-footer">
+        <span v-if="activeContext?.engagementId" class="demo-nav-context-detail-id">Engagement {{ activeContext.engagementId }}</span>
+        <div class="demo-nav-detail-actions">
+          <button type="button" class="text-button" title="Search workspace (Ctrl/Cmd+K)" aria-label="Search workspace" @click="emit('open-palette')"><Icon name="search" :size="15" />Search workspace</button>
+          <button type="button" class="text-button" aria-label="Open notifications" @click="emit('open-notifications')"><Icon name="bell" :size="15" />Alerts</button>
         </div>
       </div>
     </details>
@@ -259,5 +251,34 @@ function openNext() {
   .demo-nav-action { min-height: 44px; }
   .demo-nav-tools { grid-column: 1 / -1; justify-content: flex-start; }
   .demo-nav-advanced-grid { grid-template-columns: 1fr; gap: 9px; }
+}
+
+/* Focused context bar: three decisions up front, everything else on demand. */
+.demo-navigator { min-width: 0; overflow-x: hidden; }
+.demo-nav-summary { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(220px, 1.2fr); gap: 18px; }
+.demo-nav-scope, .demo-nav-stage, .demo-nav-next { min-width: 0; }
+.demo-nav-label { font-size: 12px; letter-spacing: .05em; }
+.demo-nav-scope small, .demo-nav-stage small { font-size: 13px; }
+.demo-nav-scope strong, .demo-nav-stage strong { font-size: .92rem; }
+.demo-nav-inline-select { width: 100%; min-width: 0; min-height: 40px; padding: 6px 28px 6px 0; color: var(--primary, #1e3a5f); border: 0; border-bottom: 1px solid transparent; border-radius: 0; background-color: transparent; font-size: .92rem; font-weight: 700; text-overflow: ellipsis; }
+.demo-nav-inline-select:hover { border-bottom-color: #9bb5d3; }
+.demo-nav-inline-select:focus-visible { outline: 3px solid rgba(37, 99, 235, .28); outline-offset: 2px; border-radius: 4px; }
+.demo-nav-detail-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding-top: 10px; border-top: 1px solid #eef2f7; }
+.demo-nav-detail-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.demo-nav-detail-actions .text-button { min-height: 40px; }
+.demo-nav-details summary { min-height: 40px; }
+.demo-nav-context-id, .demo-nav-context-detail-id { max-width: 100%; }
+
+@media (max-width: 1100px) {
+  .demo-nav-summary { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .demo-nav-next { grid-column: 1 / -1; border-left: 0; padding-left: 0; }
+}
+
+@media (max-width: 680px) {
+  .demo-nav-summary { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .demo-nav-scope, .demo-nav-stage, .demo-nav-next { grid-column: auto; }
+  .demo-nav-inline-select { min-height: 44px; }
+  .demo-nav-detail-footer { align-items: stretch; flex-direction: column; }
+  .demo-nav-detail-actions { justify-content: flex-start; }
 }
 </style>

@@ -2730,3 +2730,97 @@ details > summary:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3p
   .top-user > span:nth-child(2), .top-user > svg { display: none; }
   .top-icon-button, .mobile-menu, .icon-button { width: 44px; height: 44px; }
 }
+
+/* M9 UX cleanup: keep the working surface calm, legible and bounded. */
+:root {
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --focus-ring: 0 0 0 3px rgba(37, 99, 235, .22);
+}
+
+body { overflow-x: visible; }
+.app-main { min-width: 0; overflow-x: visible; }
+.sidebar-nav { min-width: 0; overflow-x: hidden; }
+.page { overflow-x: visible; }
+.main-content { min-width: 0; }
+.main-content { scroll-margin-top: 92px; }
+.main-content:focus { outline: 0; }
+.main-content:focus-visible { outline: 3px solid #93c5fd; outline-offset: -3px; border-radius: 8px; }
+.palette-search-row:focus-within { border-color: #82aee9; box-shadow: var(--focus-ring); }
+.palette-search-row input:focus-visible { outline: 0; }
+.top-search:focus-within { border-color: #82aee9; box-shadow: var(--focus-ring); }
+.top-search input:focus-visible { outline: 0; }
+
+/* The compact role workspace keeps the action queue before supporting detail. */
+.role-workspace-page { display: flex; flex-direction: column; }
+.role-workspace-page > .page-header { order: 1; }
+.role-workspace-page > .next-best-action { order: 2; }
+.role-workspace-page > .toast,
+.role-workspace-page > .guide-status-message { order: 3; }
+.role-workspace-page > .role-scope-banner { order: 4; }
+.role-workspace-page > .role-workspace-layout { order: 5; }
+.role-workspace-page > .role-metrics { order: 6; }
+.role-workspace-page > .workflow-guide { order: 7; }
+.role-workspace-page > .shared-tasks-panel,
+.role-workspace-page > .shared-actions-panel,
+.role-workspace-page > .credential-panel,
+.role-workspace-page > .terms-panel,
+.role-workspace-page > .notification-panel { order: 8; }
+.role-workspace-page .workflow-guide { margin-top: 0; }
+.role-workspace-page > .workflow-guide .guide-header { min-height: 64px; padding-top: 11px; padding-bottom: 11px; }
+.role-workspace-page > .workflow-guide .guide-intro p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.role-workspace-page > .workflow-guide .guide-toggle { min-height: 40px; }
+.role-workspace-page .role-task-panel { min-width: 0; }
+.role-boundary-details { min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: var(--shadow-sm); overflow: hidden; }
+.role-boundary-details > summary { display: flex; align-items: center; gap: 9px; min-height: 52px; padding: 12px 15px; color: var(--primary); cursor: pointer; list-style: none; }
+.role-boundary-details > summary::-webkit-details-marker { display: none; }
+.role-boundary-details > summary::before { content: '›'; color: var(--secondary); font-size: 1.2rem; line-height: 1; transform: rotate(0deg); transition: transform 160ms ease; }
+.role-boundary-details[open] > summary::before { transform: rotate(90deg); }
+.role-boundary-details > summary span { font-weight: 700; }
+.role-boundary-details > summary small { min-width: 0; margin-left: auto; overflow: hidden; color: var(--subtle); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.role-boundary-details > summary .icon { color: var(--secondary); }
+.role-boundary-details > summary:focus-visible { outline: 3px solid #93c5fd; outline-offset: -3px; }
+.role-boundary-details .role-boundary-panel { border: 0; border-top: 1px solid var(--line); border-radius: 0; box-shadow: none; }
+
+/* Root access page: prevent a tall directory from vertically centering the hero in empty space. */
+.login-shell { align-items: stretch; overflow-x: visible; }
+.login-intro { align-self: stretch; min-height: 100dvh; }
+.login-copy { align-self: start; margin-top: clamp(28px, 7vh, 96px); }
+.login-copy h1 { text-wrap: balance; }
+.login-directory-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; padding: 10px 12px; border: 1px solid #d7e2f0; border-radius: 9px; background: #fbfdff; }
+.login-directory-toggle > span { min-width: 0; display: grid; gap: 2px; }
+.login-directory-toggle strong { color: var(--primary); font-size: .8rem; }
+.login-directory-toggle small { color: var(--subtle); font-size: var(--text-xs); }
+.login-directory-toggle .text-button { min-height: 44px; flex: 0 0 auto; color: var(--secondary); font-size: .78rem; font-weight: 700; }
+.login-access-toolbar-heading strong { font-size: .82rem; }
+.login-access-toolbar-heading span, .login-result-count, .login-result-count small { font-size: var(--text-xs); }
+.login-result-count strong { font-size: var(--text-sm); }
+.login-filter-tab { min-height: 44px; font-size: .78rem; }
+.persona-card-copy strong, .persona-card-title strong { font-size: .88rem; }
+.persona-card-copy > span:not(.persona-card-title), .persona-card-copy small { font-size: var(--text-xs); }
+.persona-selected { font-size: var(--text-xs); }
+.persona-launch { min-height: 44px; font-size: .78rem; }
+.login-form label { font-size: var(--text-sm); }
+.login-form input { min-height: 44px; font-size: var(--text-sm); }
+
+@media (max-width: 980px) {
+  .login-intro { position: relative; top: auto; min-height: auto; }
+  .login-copy { margin-top: 18px; }
+  .role-workspace-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .login-intro { min-height: 0; }
+  .login-copy { margin-top: 6px; }
+  .login-directory-toggle { align-items: flex-start; flex-direction: column; }
+  .login-directory-toggle .text-button { width: 100%; justify-content: center; }
+  .role-boundary-details > summary { align-items: flex-start; }
+  .role-boundary-details > summary small { white-space: normal; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

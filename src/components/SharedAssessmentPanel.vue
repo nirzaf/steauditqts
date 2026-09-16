@@ -161,19 +161,19 @@ onMounted(() => {
         <span class="eyebrow">Record a shared response</span>
         <div class="form-grid compact-form-grid">
           <label>Question
-            <select v-model="questionId" required>
+            <select v-model="questionId" name="assessment-question" required>
               <option value="" disabled>Choose a question</option>
               <option v-for="{ question, response } in responseRows" :key="question.id" :value="question.id" :disabled="!canRespond(question)">{{ question.id }} · {{ response?.answer || 'UNANSWERED' }} — {{ question.question.slice(0, 60) }}</option>
             </select>
           </label>
           <label>Answer
-            <select v-model="answer"><option v-for="option in answerOptions(questionId)" :key="option" :value="option">{{ option }}</option></select>
+            <select v-model="answer" name="assessment-answer"><option v-for="option in answerOptions(questionId)" :key="option" :value="option">{{ option }}</option></select>
           </label>
           <label>Applicability
-            <select v-model="applicability"><option>APPLICABLE</option><option>NOT_APPLICABLE</option></select>
+            <select v-model="applicability" name="assessment-applicability"><option>APPLICABLE</option><option>NOT_APPLICABLE</option></select>
           </label>
           <label>Explanation / evidence
-            <input v-model="explanation" type="text" placeholder="Rationale, evidence reference…" />
+            <input v-model="explanation" name="assessment-explanation" type="text" autocomplete="off" placeholder="Rationale, evidence reference…" />
           </label>
         </div>
         <button type="submit" class="button secondary" :disabled="busy || !questionId">Record response</button>
@@ -183,10 +183,10 @@ onMounted(() => {
         <span class="eyebrow">Partner decision — professional judgment, system assists only</span>
         <div class="form-grid compact-form-grid">
           <label>Decision
-            <select v-model="decision"><option>ACCEPT</option><option>DECLINE</option><option>ESCALATE</option></select>
+            <select v-model="decision" name="assessment-decision"><option>ACCEPT</option><option>DECLINE</option><option>ESCALATE</option></select>
           </label>
           <label>Rationale
-            <input v-model="rationale" type="text" placeholder="Decision rationale (required)" />
+            <input v-model="rationale" name="assessment-rationale" type="text" autocomplete="off" placeholder="Decision rationale (required)…" />
           </label>
         </div>
         <button type="submit" class="button primary" :disabled="busy">Record decision</button>

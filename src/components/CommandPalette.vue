@@ -67,7 +67,10 @@ function onKeydown(event) {
         <input
           ref="inputRef"
           v-model="query"
+          name="command-search"
           type="search"
+          autocomplete="off"
+          spellcheck="false"
           aria-label="Search clients, engagements, IDs, stages, personas and routes"
           placeholder="Search clients, ENG-IDs, stages, personas, routes… (Esc closes)"
           @keydown="onKeydown"

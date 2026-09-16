@@ -182,6 +182,15 @@ test('route registry remains the single policy source for visible navigation met
   assert.ok(!managerRoutes.some((route) => route.key === 'dashboard'));
 });
 
+test('route registry separates operational routes from reference workspace routes', () => {
+  assert.equal(ROUTE_REGISTRY.reviews.navTier, 'core');
+  assert.equal(ROUTE_REGISTRY.pipeline.navTier, 'advanced');
+  assert.equal(ROUTE_REGISTRY.architecture.navTier, 'advanced');
+  const adminRoutes = routeMenuForRole('admin');
+  assert.ok(adminRoutes.some((route) => route.key === 'reviews' && route.navTier === 'core'));
+  assert.ok(adminRoutes.some((route) => route.key === 'pipeline' && route.navTier === 'advanced'));
+});
+
 test('breadcrumbs keep every middle segment clickable', () => {
   const crumbs = buildBreadcrumbs({
     personaLabel: 'Audit Manager',

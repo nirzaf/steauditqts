@@ -16,6 +16,7 @@ const errorMessage = ref('')
 const activeFilterId = ref('all')
 const roleSearch = ref('')
 const showManualSignIn = ref(false)
+const showAllRoles = ref(invitationMode.value)
 
 const selectedUser = computed(() => availableUsers.value.find((user) => user.id === selectedId.value) || availableUsers.value[0] || demoUsers[0])
 
@@ -62,6 +63,12 @@ const filteredUsers = computed(() => {
     return [user.roleLabel, user.name, user.organization, user.description]
       .some((value) => value.toLowerCase().includes(needle))
   })
+})
+
+const visibleUsers = computed(() => {
+  const hasExplicitFilter = activeFilterId.value !== 'all' || roleSearch.value.trim()
+  if (invitationMode.value || showAllRoles.value || hasExplicitFilter) return filteredUsers.value
+  return filteredUsers.value.filter((user) => recommendedRoleIds.has(user.id))
 })
 
 const activeFilterLabel = computed(() => categoryFilters.value.find((filter) => filter.id === activeFilterId.value)?.label || 'All roles')
@@ -155,13 +162,18 @@ function openManualSignIn() {
       <label class="login-role-search">
         <Icon name="search" :size="17" />
         <span class="sr-only">Search roles</span>
-        <input v-model="roleSearch" type="search" placeholder="Search by role, person, or focus" />
+        <input v-model="roleSearch" name="role-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search by role, person, or focus…" />
       </label>
 
-      <p class="login-result-count" aria-live="polite"><strong>{{ activeFilterLabel }}</strong><span>{{ filteredUsers.length === 1 ? '1 role' : `${filteredUsers.length} roles` }} available</span><small>Open a workspace to continue.</small></p>
+      <div v-if="!invitationMode && activeFilterId === 'all' && !roleSearch.trim()" class="login-directory-toggle">
+        <span><strong>{{ showAllRoles ? 'All roles' : 'Recommended roles' }}</strong><small>{{ showAllRoles ? 'Every workspace is available below.' : 'Start with a guided path or open the practice overview.' }}</small></span>
+        <button type="button" class="text-button" :aria-pressed="showAllRoles" @click="showAllRoles = !showAllRoles">{{ showAllRoles ? 'Show recommended' : `View all ${availableUsers.length} roles` }}</button>
+      </div>
+
+      <p class="login-result-count" aria-live="polite"><strong>{{ activeFilterLabel }}</strong><span>{{ visibleUsers.length === 1 ? '1 role' : `${visibleUsers.length} roles` }} shown</span><small>Open a workspace to continue.</small></p>
 
       <div class="persona-grid">
-        <article v-for="user in filteredUsers" :key="user.id" class="persona-card" :class="[{ selected: selectedId === user.id }, `tone-${user.tone}`]">
+        <article v-for="user in visibleUsers" :key="user.id" class="persona-card" :class="[{ selected: selectedId === user.id }, `tone-${user.tone}`]">
           <button type="button" class="persona-card-select" :aria-pressed="selectedId === user.id" :aria-label="`Select ${user.roleLabel}`" @click="chooseUser(user)">
             <span class="persona-avatar avatar" :class="`avatar-${user.tone}`">{{ user.initials }}</span>
             <span class="persona-card-copy"><span class="persona-card-title"><strong>{{ user.roleLabel }}</strong><em v-if="recommendedRoleIds.has(user.id)">Recommended</em></span><span>{{ user.name }} · {{ user.organization }}</span><small>{{ user.description }}</small></span>
@@ -171,15 +183,15 @@ function openManualSignIn() {
         </article>
       </div>
 
-      <p v-if="!filteredUsers.length" class="login-empty">No roles match “{{ roleSearch }}”. <button type="button" class="text-button" @click="roleSearch = ''; activeFilterId = 'all'">Clear filters</button></p>
+      <p v-if="!visibleUsers.length" class="login-empty">No roles match “{{ roleSearch }}”. <button type="button" class="text-button" @click="roleSearch = ''; activeFilterId = 'all'; showAllRoles = false">Clear filters</button></p>
 
       <button type="button" class="manual-signin-toggle" :aria-expanded="showManualSignIn" @click="openManualSignIn"><span><Icon name="key" :size="15" />Sign in manually</span><small>Use the selected role’s sign-in details</small><Icon name="chevron-down" :size="16" :class="{ rotated: showManualSignIn }" /></button>
 
       <div v-if="showManualSignIn" class="manual-signin-panel">
         <form class="login-form" @submit.prevent="signIn">
           <div class="login-form-heading"><span>Selected role</span><strong>{{ selectedUser.roleLabel }}</strong></div>
-          <label>Email<input v-model="email" type="email" autocomplete="username" /></label>
-          <label>Password<input v-model="password" type="text" autocomplete="current-password" /></label>
+          <label>Email<input v-model="email" name="email" type="email" autocomplete="username" spellcheck="false" /></label>
+          <label>Password<input v-model="password" name="password" type="password" autocomplete="current-password" /></label>
           <p v-if="errorMessage" class="login-error" role="alert">{{ errorMessage }}</p>
           <button type="submit" class="button primary full-width">Sign in as {{ selectedUser.name }}<Icon name="arrow-right" :size="17" /></button>
         </form>

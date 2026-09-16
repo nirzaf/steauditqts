@@ -236,8 +236,11 @@ const canSwitchPersona = computed(() => !isClientInvitation.value && ['admin', '
 const canUsePresentationMode = computed(() => canSwitchPersona.value)
 const canManageScenario = computed(() => !isClientInvitation.value && ['admin', 'audit-manager', 'partner'].includes(currentUser.value?.role))
 const canRestartWalkthrough = computed(() => !isClientInvitation.value && ['admin', 'partner'].includes(currentUser.value?.role))
+const showSystemStrip = computed(() => !isClientInvitation.value
+  && ['admin', 'system-admin'].includes(currentUser.value?.role)
+  && ['admin-console', 'integration', 'readiness', 'shared-demo'].includes(currentRoute.value))
 const helpCopy = computed(() => isClient.value
-  ? 'Use Client details to submit facts, Requests to see what is due, Communications for every question, and Pipeline visualizer to understand the end-to-end handoff.'
+  ? 'Use Client details to submit facts, Requests to see what is due, and Communications for every question or reply.'
   : isClientManagement.value
     ? 'Review the exact Engagement Letter and Draft FS versions, then use the portal surface to confirm what is published. Professional opinion and release controls remain separate.'
     : isAccountant.value
@@ -270,10 +273,10 @@ const visibleNavItems = computed(() => presentationMode.value && canUsePresentat
   : coreNavItems.value)
 const coreNavItems = computed(() => allNavItems.value.filter((item) => currentUser.value?.role === 'client'
   ? CLIENT_CORE_NAVIGATION_KEYS.has(item.key)
-  : ROUTE_REGISTRY[item.key]?.presentation))
+  : (ROUTE_REGISTRY[item.key]?.navTier || 'core') === 'core'))
 const moreNavItems = computed(() => isClientInvitation.value || currentUser.value?.role === 'client'
   ? []
-  : allNavItems.value.filter((item) => !ROUTE_REGISTRY[item.key]?.presentation))
+  : allNavItems.value.filter((item) => ROUTE_REGISTRY[item.key]?.navTier === 'advanced'))
 const shellNavItems = computed(() => [...visibleNavItems.value, ...moreNavItems.value])
 const navGroups = computed(() => {
   const groups = []
@@ -721,7 +724,7 @@ onBeforeUnmount(() => {
       <header class="topbar">
         <div class="topbar-left"><button ref="mobileNavButton" type="button" class="mobile-menu" aria-label="Open navigation" title="Open navigation" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="openMobileNav"><Icon name="menu" :size="19" /></button><nav class="breadcrumbs" aria-label="Context breadcrumb"><template v-for="(crumb, index) in demoCrumbs" :key="`${crumb.label}-${index}`"><button v-if="crumb.route" type="button" class="text-button breadcrumb-link" @click="navigate(crumb.route)">{{ crumb.label }}</button><strong v-else aria-current="page">{{ crumb.label }}</strong><Icon v-if="index < demoCrumbs.length - 1" name="chevron-right" :size="16" /></template></nav></div>
         <div class="topbar-actions">
-          <form class="top-search" role="search" @submit.prevent="submitSearch"><Icon name="search" :size="17" /><input v-model="search" type="search" aria-label="Search clients, engagements and IDs (opens command palette)" placeholder="Search anything (Ctrl/Cmd+K)" @focus="commandPaletteOpen = true" /></form>
+          <form class="top-search" role="search" @submit.prevent="submitSearch"><Icon name="search" :size="17" /><input v-model="search" name="global-search" type="search" autocomplete="off" spellcheck="false" aria-label="Search clients, engagements and IDs (opens command palette)" placeholder="Search anything (Ctrl/Cmd+K)…" @focus="commandPaletteOpen = true" /></form>
           <button type="button" class="top-icon-button" :aria-label="`Notifications, ${demoNotificationCount} items`" :title="`Notifications, ${demoNotificationCount} items`" @click="demoNotificationsOpen = true"><Icon name="bell" :size="18" /><span aria-hidden="true">{{ demoNotificationCount }}</span></button>
           <div class="account-control">
             <button type="button" class="top-user top-user-button" aria-label="Open account menu" title="Open account menu" :aria-expanded="accountMenuOpen" @click="accountMenuOpen = !accountMenuOpen"><span class="avatar" :class="`avatar-${currentUser.tone}`">{{ currentUser.initials }}</span><span><strong>{{ currentUser.name }}</strong><small>{{ currentUser.roleLabel }}</small></span><Icon name="chevron-down" :size="15" /></button>
@@ -763,9 +766,10 @@ onBeforeUnmount(() => {
         <button v-if="canUsePresentationMode" type="button" class="text-button" :aria-pressed="presentationMode" @click="togglePresentationMode"><Icon name="workflow" :size="15" />{{ presentationMode ? 'Exit presentation mode' : 'Presentation mode' }}</button>
         <span v-if="presentationMode" class="workspace-tools-note">Core journey shown · technical pages are under More workspace.</span>
         <button type="button" class="text-button" @click="preflightOpen = true"><Icon name="check-circle" :size="15" />Demo status</button>
+        <button v-if="canRestartWalkthrough" type="button" class="text-button" @click="requestRestart"><Icon name="refresh" :size="15" />Restart walkthrough</button>
         <button v-if="presentationMode && moreNavItems.length" type="button" class="text-button" @click="openMoreWorkspace">More workspace</button>
       </div>
-      <div class="system-strip"><span><i></i> {{ systemLabel }}</span><span>{{ demoActiveContext ? `${demoActiveContext.clientName} · ${demoActiveContext.serviceLabel} ${demoActiveContext.period}` : (isClient ? currentUser.organization : `${client.name} · ${client.period}`) }}</span><span class="build-version">Build {{ buildCommit }}</span></div>
+      <div v-if="showSystemStrip" class="system-strip"><span><i></i> {{ systemLabel }}</span><span>{{ demoActiveContext ? `${demoActiveContext.clientName} · ${demoActiveContext.serviceLabel} ${demoActiveContext.period}` : (isClient ? currentUser.organization : `${client.name} · ${client.period}`) }}</span><span class="build-version">Build {{ buildCommit }}</span></div>
       <div v-if="permissionNotice" class="permission-notice" role="status" aria-live="polite"><Icon name="warning" :size="17" />{{ permissionNotice }}</div>
       <main id="main-content" class="main-content" tabindex="-1"><component :is="current.component" :navigation-target="routeLocation" @navigate="navigate" @request-restart="requestRestart" /></main>
     </div>

@@ -226,18 +226,18 @@ function openAmendment() {
       <div class="split-grid">
         <form class="shared-completion-form" @submit.prevent="submitFinalDiscussion">
           <span class="eyebrow">Final client discussion</span>
-          <label>Date<input v-model="discussionForm.date" type="text" /></label>
-          <label>Attendees<input v-model="discussionForm.attendees" type="text" placeholder="Names and roles" /></label>
-          <label>Topics<input v-model="discussionForm.topics" type="text" placeholder="Opinion, adjustments, next steps" /></label>
-          <label>Outcome<input v-model="discussionForm.outcome" type="text" placeholder="Agreed outcome and matters" /></label>
+          <label>Date<input v-model="discussionForm.date" name="discussion-date" type="date" /></label>
+          <label>Attendees<input v-model="discussionForm.attendees" name="discussion-attendees" type="text" autocomplete="off" placeholder="Names and roles…" /></label>
+          <label>Topics<input v-model="discussionForm.topics" name="discussion-topics" type="text" autocomplete="off" placeholder="Opinion, adjustments, next steps…" /></label>
+          <label>Outcome<input v-model="discussionForm.outcome" name="discussion-outcome" type="text" autocomplete="off" placeholder="Agreed outcome and matters…" /></label>
           <button type="submit" class="button secondary" :disabled="!canSharedPartner || sharedBusy === 'discussion'">{{ sharedBusy === 'discussion' ? 'Recording…' : 'Record discussion' }}</button>
           <small v-if="!canSharedPartner">Available to the Partner role after the opinion.</small>
         </form>
         <div class="shared-completion-form">
           <span class="eyebrow">Release then commercial close</span>
           <button type="button" class="button primary" :disabled="!canSharedPartner || sharedBusy === 'release'" @click="submitSharedRelease">{{ sharedBusy === 'release' ? 'Releasing…' : 'Release final report' }}</button>
-          <label>Actual hours<input v-model="invoiceForm.actualHours" type="text" /></label>
-          <label>Actual cost (QAR)<input v-model="invoiceForm.actualCost" type="text" /></label>
+          <label>Actual hours<input v-model="invoiceForm.actualHours" name="actual-hours" type="text" inputmode="decimal" autocomplete="off" /></label>
+          <label>Actual cost (QAR)<input v-model="invoiceForm.actualCost" name="actual-cost" type="text" inputmode="decimal" autocomplete="off" /></label>
           <button type="button" class="button secondary" :disabled="!canSharedFinance || sharedBusy === 'invoice'" @click="submitSharedInvoice">{{ sharedBusy === 'invoice' ? 'Issuing…' : 'Generate invoice' }}</button>
           <button type="button" class="button secondary" :disabled="!canSharedFinance || sharedBusy === 'close'" @click="submitSharedClose">{{ sharedBusy === 'close' ? 'Closing…' : 'Close commercial record' }}</button>
           <small>Release needs the Partner persona; invoice and close need Finance. Every button is validated server-side.</small>
@@ -246,7 +246,7 @@ function openAmendment() {
     </section>
 
 
-    <section class="panel engagement-selector release-scope-selector"><div><span class="eyebrow">Release scope</span><strong>Compare candidates without leaving the control page</strong><small>Switch between assigned service-period candidates. Every release command remains bound to the selected engagement and exact candidate revision.</small></div><label>Engagement<select :value="selectedEngagement?.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
+    <section class="panel engagement-selector release-scope-selector"><div><span class="eyebrow">Release scope</span><strong>Compare candidates without leaving the control page</strong><small>Switch between assigned service-period candidates. Every release command remains bound to the selected engagement and exact candidate revision.</small></div><label>Engagement<select name="release-engagement" :value="selectedEngagement?.id" @change="changeEngagement"><option v-for="item in engagementOptions" :key="item.id" :value="item.id">{{ item.id }} · {{ item.serviceLabel }} · {{ item.period }}</option></select></label></section>
 
     <section class="release-hero panel"><div><span class="eyebrow">Release candidate {{ candidate.id }} · {{ selectedClient?.name || 'No assigned client' }}</span><h2>Version-bound release package</h2><p>{{ selectedEngagement ? `Period ${selectedEngagement.periodLabel} · ${selectedEngagement.currency}` : 'No assigned engagement is selected for this persona.' }} · manifest digest <code>{{ candidate.manifestDigest }}</code></p></div><div class="release-hero-meta"><StatusPill :label="releaseStatus" :tone="releaseTone" /><strong>{{ formatMoney(745000) }}</strong><span>illustrative total assets · current package</span></div></section>
 

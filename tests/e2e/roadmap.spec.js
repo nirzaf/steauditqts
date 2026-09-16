@@ -2,7 +2,11 @@ import { test, expect } from '@playwright/test'
 
 async function openRole(page, roleLabel) {
   await page.goto('/')
-  const card = page.locator('.persona-card').filter({ hasText: roleLabel }).first()
+  let card = page.locator('.persona-card').filter({ hasText: roleLabel }).first()
+  if (await card.count() === 0) {
+    await page.getByRole('button', { name: /View all \d+ roles/ }).click()
+    card = page.locator('.persona-card').filter({ hasText: roleLabel }).first()
+  }
   await expect(card).toBeVisible()
   await card.getByRole('button', { name: 'Open workspace' }).click()
   await expect(page.locator('.app-shell')).toBeVisible()
@@ -12,6 +16,14 @@ test('admin opens a populated overview', async ({ page }) => {
   await openRole(page, 'Admin portal')
   await expect(page.locator('main')).toContainText('See the whole engagement at a glance')
   await expect(page.locator('.demo-navigator')).toBeVisible()
+})
+
+test('landing page starts with recommended roles and can reveal the full directory', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.persona-card')).toHaveCount(3)
+  await expect(page.locator('.persona-card').filter({ hasText: 'Audit manager' })).toHaveCount(0)
+  await page.getByRole('button', { name: /View all 14 roles/ }).click()
+  await expect(page.locator('.persona-card')).toHaveCount(14)
 })
 
 test('presenter role switch keeps the selected engagement', async ({ page }) => {
@@ -68,6 +80,49 @@ test('context details keep advanced controls discoverable without crowding the s
   await expect(page.locator('#demo-persona-select')).toBeVisible()
   await details.locator('summary').click()
   await expect(page.locator('#demo-persona-select')).toBeHidden()
+})
+
+test('reference routes stay behind More workspace', async ({ page }) => {
+  await openRole(page, 'Admin portal')
+  await expect(page.getByRole('button', { name: 'Pipeline visualizer' })).toHaveCount(0)
+  const more = page.locator('.more-workspace-nav')
+  await expect(more).toBeVisible()
+  await more.locator('summary').click()
+  await expect(page.getByRole('button', { name: 'Pipeline visualizer' })).toBeVisible()
+})
+
+test('tablet shell contains navigation without horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 900 })
+  await openRole(page, 'Admin portal')
+  const overflow = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth > window.innerWidth + 1,
+    shell: document.querySelector('.app-shell')?.scrollWidth > document.querySelector('.app-shell')?.clientWidth + 1,
+    navigator: document.querySelector('.demo-navigator')?.scrollWidth > document.querySelector('.demo-navigator')?.clientWidth + 1,
+  }))
+  expect(overflow.document).toBe(false)
+  expect(overflow.shell).toBe(false)
+  expect(overflow.navigator).toBe(false)
+  await expect(page.locator('.demo-nav-next')).toBeVisible()
+})
+
+test('registered workspace routes render without clipped content', async ({ page }) => {
+  await openRole(page, 'Admin portal')
+  const routeKeys = [
+    'dashboard', 'portfolio', 'clients', 'engagements', 'pbc', 'accounting', 'audit', 'reviews',
+    'release', 'integration', 'architecture', 'blueprint', 'cycle', 'pipeline', 'shared-demo',
+    'artifacts', 'readiness', 'client-home', 'client-details', 'client-communications',
+    'accountant-home', 'accountant-client', 'client-architecture', 'accountant-architecture', 'admin-console',
+  ]
+  for (const routeKey of routeKeys) {
+    await page.evaluate((key) => { window.location.hash = `#/${key}` }, routeKey)
+    await expect(page.locator('main .page')).toBeVisible({ timeout: 8000 })
+    const overflow = await page.evaluate(() => ({
+      document: document.documentElement.scrollWidth > window.innerWidth + 1,
+      main: document.querySelector('main')?.scrollWidth > document.querySelector('main')?.clientWidth + 1,
+    }))
+    expect(overflow.document, `${routeKey} widened the document`).toBe(false)
+    expect(overflow.main, `${routeKey} widened main`).toBe(false)
+  }
 })
 
 test('client workspace hides presenter-only context controls', async ({ page }) => {

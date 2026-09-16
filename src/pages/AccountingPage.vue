@@ -306,28 +306,28 @@ function journalStatusFor(index) {
       <div class="split-grid">
         <form class="shared-completion-form" @submit.prevent="submitSharedTb">
           <span class="eyebrow">Record TB source (advances input generation)</span>
-          <label>Source ID<input v-model="tbForm.sourceId" type="text" /></label>
-          <label>Version<input v-model="tbForm.sourceVersion" type="text" /></label>
-          <label>Debit total<input v-model="tbForm.debitTotal" type="text" /></label>
-          <label>Credit total<input v-model="tbForm.creditTotal" type="text" /></label>
+          <label>Source ID<input v-model="tbForm.sourceId" name="tb-source-id" type="text" autocomplete="off" /></label>
+          <label>Version<input v-model="tbForm.sourceVersion" name="tb-source-version" type="text" autocomplete="off" /></label>
+          <label>Debit total<input v-model="tbForm.debitTotal" name="tb-debit-total" type="text" inputmode="decimal" autocomplete="off" /></label>
+          <label>Credit total<input v-model="tbForm.creditTotal" name="tb-credit-total" type="text" inputmode="decimal" autocomplete="off" /></label>
           <button type="submit" class="button secondary" :disabled="!canSharedAccountant || sharedBusy === 'tb'">{{ sharedBusy === 'tb' ? 'Recording…' : 'Record TB source' }}</button>
           <small v-if="!canSharedAccountant">Available to the Client, Accountant or Reviewer role.</small>
         </form>
         <form class="shared-completion-form" @submit.prevent="submitSharedTracker">
           <span class="eyebrow">Update tracker</span>
-          <label>Mapping<input v-model="trackerForm.mapping_coverage" type="text" placeholder="e.g. 14/14 reviewed" /></label>
-          <label>Recon state<select v-model="trackerForm.recon_state"><option>PENDING</option><option>IN_PROGRESS</option><option>COMPLETE</option></select></label>
-          <label>Open recons<input v-model.number="trackerForm.open_recon_count" type="number" min="0" /></label>
-          <label>Journal state<select v-model="trackerForm.journal_state"><option>PENDING</option><option>IN_PROGRESS</option><option>COMPLETE</option></select></label>
-          <label>Pending journals<input v-model.number="trackerForm.pending_journal_count" type="number" min="0" /></label>
-          <label>FS version<input v-model="trackerForm.fs_version" type="text" placeholder="e.g. FS-v04" /></label>
-          <label>FS state<select v-model="trackerForm.fs_state"><option>DRAFT</option><option>IN_REVIEW</option><option>FINAL</option></select></label>
+          <label>Mapping<input v-model="trackerForm.mapping_coverage" name="mapping-coverage" type="text" autocomplete="off" placeholder="e.g. 14/14 reviewed…" /></label>
+          <label>Recon state<select v-model="trackerForm.recon_state" name="reconciliation-state"><option>PENDING</option><option>IN_PROGRESS</option><option>COMPLETE</option></select></label>
+          <label>Open recons<input v-model.number="trackerForm.open_recon_count" name="open-reconciliations" type="number" min="0" inputmode="numeric" /></label>
+          <label>Journal state<select v-model="trackerForm.journal_state" name="journal-state"><option>PENDING</option><option>IN_PROGRESS</option><option>COMPLETE</option></select></label>
+          <label>Pending journals<input v-model.number="trackerForm.pending_journal_count" name="pending-journals" type="number" min="0" inputmode="numeric" /></label>
+          <label>FS version<input v-model="trackerForm.fs_version" name="fs-version" type="text" autocomplete="off" placeholder="e.g. FS-v04…" /></label>
+          <label>FS state<select v-model="trackerForm.fs_state" name="fs-state"><option>DRAFT</option><option>IN_REVIEW</option><option>FINAL</option></select></label>
           <button type="submit" class="button secondary" :disabled="!canSharedAccountant || sharedBusy === 'tracker'">{{ sharedBusy === 'tracker' ? 'Saving…' : 'Save tracker' }}</button>
         </form>
         <form class="shared-completion-form" @submit.prevent="submitSharedPackageApproval">
           <span class="eyebrow">Management package approval</span>
-          <label>Decision<select v-model="packageDecision"><option>ACCEPT</option><option>REJECT</option></select></label>
-          <label>Explanation<input v-model="packageExplanation" type="text" placeholder="Required when rejecting" /></label>
+          <label>Decision<select v-model="packageDecision" name="package-decision"><option>ACCEPT</option><option>REJECT</option></select></label>
+          <label>Explanation<input v-model="packageExplanation" name="package-explanation" type="text" autocomplete="off" placeholder="Required when rejecting…" /></label>
           <button type="submit" class="button secondary" :disabled="!canSharedMgmtApprove || sharedBusy === 'approval'">{{ sharedBusy === 'approval' ? 'Recording…' : 'Record approval' }}</button>
           <small v-if="!canSharedMgmtApprove">Available to the Client Management role.</small>
         </form>
@@ -339,7 +339,7 @@ function journalStatusFor(index) {
     <section v-if="importOpen" class="panel import-panel" aria-labelledby="import-title">
       <div class="panel-heading"><div><span class="eyebrow">Trial balance import</span><h2 id="import-title">Load a trial-balance receipt</h2></div><button type="button" class="icon-button" aria-label="Close import" title="Close import" @click="closeImport"><Icon name="x" :size="17" /></button></div>
       <p class="panel-copy">Use the supplied CSV structure to check column headings, account codes and control totals before continuing.</p>
-      <div class="import-actions"><button type="button" class="button secondary" @click="useFixture('baseline')">Use TB v02 fixture</button><button type="button" class="button secondary" @click="useFixture('replacement')">Use TB v03 fixture</button><label class="button primary import-file-label">Choose CSV<input ref="importFile" type="file" accept=".csv,text/csv" @change="readImport" /></label></div>
+      <div class="import-actions"><button type="button" class="button secondary" @click="useFixture('baseline')">Use TB v02 fixture</button><button type="button" class="button secondary" @click="useFixture('replacement')">Use TB v03 fixture</button><label class="button primary import-file-label">Choose CSV<input ref="importFile" name="trial-balance-file" type="file" accept=".csv,text/csv" @change="readImport" /></label></div>
       <p v-if="importError" class="form-error" role="alert"><Icon name="warning" :size="16" />{{ importError }}</p>
       <dl class="import-contract"><div><dt>Required columns</dt><dd><code>account_code, account_name, area, debit, credit</code></dd></div><div><dt>Validation</dt><dd>Balanced control totals, unique account codes, literal Decimal values</dd></div><div><dt>Current result</dt><dd>{{ importSummary.rows }} rows · {{ importSummary.debitTotal }} / {{ importSummary.creditTotal }} · {{ importSummary.reflection }}</dd></div></dl>
     </section>
@@ -406,7 +406,7 @@ function journalStatusFor(index) {
       <section v-if="canManageDraft" class="panel draft-fs-panel">
         <div class="panel-heading"><div><span class="eyebrow">Client management decision</span><h2>Review Draft FS v{{ packageRecord?.statement?.revision || '—' }}</h2></div><StatusPill v-if="statementApproval" :label="statementApproval.decision" :tone="statementApproval.decision === 'APPROVE' ? 'good' : 'warn'" /></div>
         <p class="panel-copy">Management can approve the exact version, reject it, or request changes. Rejection and requested changes create a durable revision task for the preparer.</p>
-        <div class="draft-fs-form"><label><span>Decision</span><select v-model="draftFsDecision"><option value="APPROVE">Approve</option><option value="REQUEST_CHANGES">Request changes</option><option value="REJECT">Reject</option></select></label><label class="wide"><span>Rationale (required for changes or rejection)</span><textarea v-model="draftFsRationale" rows="3" placeholder="Explain the decision for the review record"></textarea></label><button type="button" class="button primary" :disabled="decisionWorking || !packageRecord" @click="saveDraftFsDecision">{{ decisionWorking ? 'Saving…' : 'Record decision' }}</button></div>
+        <div class="draft-fs-form"><label><span>Decision</span><select v-model="draftFsDecision" name="draft-fs-decision"><option value="APPROVE">Approve</option><option value="REQUEST_CHANGES">Request changes</option><option value="REJECT">Reject</option></select></label><label class="wide"><span>Rationale (required for changes or rejection)</span><textarea v-model="draftFsRationale" name="draft-fs-rationale" rows="3" placeholder="Explain the decision for the review record…"></textarea></label><button type="button" class="button primary" :disabled="decisionWorking || !packageRecord" @click="saveDraftFsDecision">{{ decisionWorking ? 'Saving…' : 'Record decision' }}</button></div>
         <div v-if="packageRecord?.statement?.revisionTasks?.length" class="revision-task"><Icon name="arrow-right" :size="16" /><span><strong>Open revision task</strong><small>{{ packageRecord.statement.revisionTasks.at(-1).id }} · owner {{ packageRecord.statement.revisionTasks.at(-1).ownerActorId }} · {{ packageRecord.statement.revisionTasks.at(-1).state }}</small></span></div>
       </section>
 

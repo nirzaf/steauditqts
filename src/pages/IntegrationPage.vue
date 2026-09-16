@@ -86,8 +86,8 @@ function resumeBackup() {
       <div class="panel-heading"><div><span class="eyebrow">Connection controls</span><h2>Review provider outcomes</h2></div><StatusPill label="Controlled actions" tone="good" /></div>
       <p class="integration-control-intro">Use these controls to explain retry-after, permission denial, timeout uncertainty, expired leases, and cursor recovery.</p>
       <div class="integration-control-grid">
-        <label><span>Provider connection</span><select v-model="connectedDraft" aria-label="Provider connection"><option :value="false">Not connected</option><option :value="true">Connected</option></select></label>
-        <label><span>Next provider outcome</span><select v-model="selectedFault" aria-label="Next provider outcome"><option v-for="fault in providerFaults" :key="fault" :value="fault">{{ fault }}</option></select></label>
+        <label><span>Provider connection</span><select v-model="connectedDraft" name="provider-connection" aria-label="Provider connection"><option :value="false">Not connected</option><option :value="true">Connected</option></select></label>
+        <label><span>Next provider outcome</span><select v-model="selectedFault" name="provider-outcome" aria-label="Next provider outcome"><option v-for="fault in providerFaults" :key="fault" :value="fault">{{ fault }}</option></select></label>
         <div class="integration-control-actions"><button type="button" class="button secondary" :disabled="!canSystemOperate" @click="applyProviderSimulation">Apply setting</button><button type="button" class="button primary" :disabled="!canSystemOperate" @click="reconcile">Run now <Icon name="arrow-right" :size="16" /></button></div>
       </div>
       <div class="integration-control-foot"><span><strong>Current:</strong> {{ providerConnected ? 'connected' : 'not connected' }} · <strong>next outcome:</strong> {{ scenario.provider.nextFault || 'NONE' }}</span><button type="button" class="text-button" :disabled="!retryableOperation || !canSystemOperate" @click="retryLatest">Retry latest operation <Icon name="arrow-right" :size="15" /></button></div>
