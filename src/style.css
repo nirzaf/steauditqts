@@ -2753,6 +2753,16 @@ body { overflow-x: visible; }
 .top-search:focus-within { border-color: #82aee9; box-shadow: var(--focus-ring); }
 .top-search input:focus-visible { outline: 0; }
 
+/* Keep the PBC detail actions inside their split-pane grid track at compact
+   desktop widths. Long action labels must wrap rather than widening the page. */
+.pbc-layout,
+.pbc-layout > * { min-width: 0; }
+.pbc-layout .card-footer { min-width: 0; align-items: stretch; flex-wrap: wrap; justify-content: flex-start; }
+.pbc-layout .card-footer > .button { min-width: 0; flex: 1 1 140px; white-space: normal; overflow-wrap: anywhere; text-align: center; }
+.pbc-layout .request-row > * { min-width: 0; }
+.pbc-layout .request-meta { max-width: 45%; min-width: 0; }
+.pbc-layout .request-meta .status-pill { max-width: 100%; }
+
 /* The compact role workspace keeps the action queue before supporting detail. */
 .role-workspace-page { display: flex; flex-direction: column; }
 .role-workspace-page > .page-header { order: 1; }
