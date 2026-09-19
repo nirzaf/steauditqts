@@ -5,6 +5,8 @@
 // cached projection; the derived stage is the authority. Gates with no shared
 // D1 record type in this phase are marked advisory so they stay visible
 // without capping derived completion.
+import { waitingDisplayStateFor } from '../shared/lifecycleRules.js';
+
 export const PROGRESS_STAGE_ORDER = ['STAGE-01', 'STAGE-02', 'STAGE-03', 'STAGE-04', 'STAGE-05', 'STAGE-06', 'STAGE-07', 'STAGE-08'];
 
 export const PROGRESS_STAGE_TITLES = {
@@ -41,12 +43,10 @@ export function progressOwnerLabel(role) {
 }
 
 export function progressWaitingState(role) {
-  if (role === 'client_contributor' || role === 'client_finance' || role === 'management_approver') return 'WAITING_FOR_CLIENT';
-  if (role === 'finance_team') return 'WAITING_FOR_FINANCE';
-  if (role === 'audit_senior' || role === 'preparer' || role === 'accounting_reviewer') return 'WAITING_FOR_SENIOR';
-  if (role === 'audit_manager' || role === 'independent_reviewer') return 'WAITING_FOR_MANAGER';
-  if (role === 'eqr_reviewer') return 'WAITING_FOR_EQR';
-  return 'WAITING_FOR_PARTNER';
+  // The pipeline vocabulary is shared with the browser projection so a stage
+  // cannot read "waiting for the senior" in one mode and a different owner in
+  // the other (shared/lifecycleRules.js owns the mapping).
+  return waitingDisplayStateFor(role);
 }
 
 export function progressStageNumber(stage) {
@@ -78,6 +78,10 @@ export function normalizeProgressSnapshot(raw) {
     reviewPoints: Array.isArray(snap.reviewPoints) ? snap.reviewPoints : [],
     draftVersions: Array.isArray(snap.draftVersions) ? snap.draftVersions : [],
     tasks: Array.isArray(snap.tasks) ? snap.tasks : [],
+    team: Array.isArray(snap.team) ? snap.team : [],
+    auditCommenced: snap.auditCommenced === true,
+    smallFirmMode: snap.smallFirmMode === true,
+    eqrRequired: snap.eqrRequired === true,
     artifactCount: Number(snap.artifactCount || 0),
     publishedArtifactCount: Number(snap.publishedArtifactCount || 0),
     today: String(snap.today || new Date().toISOString().slice(0, 10)),
@@ -676,6 +680,18 @@ export function deriveProgressFromSnapshot(rawSnapshot) {
     engagementId: snap.engagementId,
     inputGeneration: snap.inputGeneration,
     evaluatedGeneration: snap.evaluatedGeneration,
+    // Raw D1 records the presenters and the pipeline projection need in order to
+    // stay authoritative in SHARED_DEMO: who is staffed, whether fieldwork has
+    // commenced, the staffing policy, and the accounting tracker behind the
+    // accounting→audit handoff card.
+    team: snap.team,
+    workpapers: snap.workpapers,
+    pbcRequests: snap.pbcRequests,
+    reviewPoints: snap.reviewPoints,
+    auditCommenced: snap.auditCommenced,
+    smallFirmMode: snap.smallFirmMode,
+    eqrRequired: snap.eqrRequired,
+    accounting: snap.accounting,
     valid: valid,
     currentStage: currentStage,
     cachedStage: snap.cachedStage || null,

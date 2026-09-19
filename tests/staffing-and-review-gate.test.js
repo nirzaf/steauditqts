@@ -171,6 +171,11 @@ test('P5: PARTNER_REQUIRED blocker when no partner in team', () => {
       { role: 'preparer', actorId: 'ACT-JUNIOR', plannedHours: '40' },
     ],
   })
+  // Lead conversion seeds the converting Partner into the roster and assignment
+  // merges by (role, actorId) like the D1 table, so this scenario has to remove
+  // that member explicitly to represent a team with no Partner at all.
+  const partnerless = engagementById(engId)
+  partnerless.team = partnerless.team.filter((member) => member.role !== 'engagement_partner')
   const blockers = auditCommencementBlockers(engId)
   assert.ok(blockers.some((b) => b.code === 'PARTNER_REQUIRED'), 'Should have PARTNER_REQUIRED blocker')
 })

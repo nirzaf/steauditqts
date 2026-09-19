@@ -41,7 +41,10 @@ export function makeFakeDb(engagementOverrides = {}) {
     accountingStatus: new Map(),
   };
   function apply(sql, p) {
-    if (sql.includes('INSERT INTO auditflow_engagement_team')) {
+    if (sql.startsWith('DELETE FROM auditflow_engagement_team')) {
+      state.team = state.team.filter((m) => m.engagement_id !== p[0]);
+    }
+    else if (sql.includes('INSERT INTO auditflow_engagement_team')) {
       const existing = state.team.find((m) => m.engagement_id === p[0] && m.role === p[1] && m.actor_id === p[2]);
       const row = { engagement_id: p[0], role: p[1], actor_id: p[2], actor_name: p[3], planned_hours: p[4], start_date: p[5], end_date: p[6], responsibility: p[7] };
       if (existing) Object.assign(existing, row);

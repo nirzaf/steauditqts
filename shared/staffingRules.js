@@ -45,26 +45,44 @@ export function validateDateRange(startDate, endDate) {
 }
 
 /**
+ * Does an actor hold the professional role required for a staffing role?
+ *
+ * Single predicate for the assignment validator and for every "who can I pick?"
+ * picker in the UI, so a dropdown can never offer somebody the command will
+ * reject.
+ *
+ * @param {string} role — engagement staffing role
+ * @param {{roles?: string[]}|null} actor
+ */
+export function staffingActorHolds(role, actor) {
+  const required = STAFFING_ROLE_REQUIREMENTS[role] || [];
+  return Boolean(actor) && required.some((requiredRole) => (actor.roles || []).includes(requiredRole));
+}
+
+/**
  * Validate one team assignment against a resolved actor record.
+ *
+ * Both runtimes call this directly so a rejected roster carries the same code
+ * and the same explanation in LOCAL_ONLY and SHARED_DEMO.
  *
  * @param {object} args
  * @param {string} args.role — engagement staffing role (e.g. 'audit_senior')
  * @param {object|null} args.actor — resolved actor { id, name, roles, active } or null when unknown
+ * @param {string} [args.actorId] — requested id, used when the actor could not be resolved
  * @returns {{ code: string, message: string } | null} — null when valid
  */
-export function validateAssignmentActor({ role, actor } = {}) {
+export function validateAssignmentActor({ role, actor = null, actorId = '' } = {}) {
   if (!STAFFING_ROLES.includes(role)) {
     return { code: 'INVALID_ROLE', message: `Role "${role}" is not a recognized engagement staffing role.` }
   }
   if (!actor) {
-    return { code: 'ACTOR_NOT_FOUND', message: 'The assigned actor was not found.' }
+    return { code: 'ACTOR_NOT_FOUND', message: `Actor ${actorId || 'unknown'} was not found.` }
   }
   if (!actor.active) {
     return { code: 'ACTOR_INACTIVE', message: `Actor ${actor.name || actor.id} is not active and cannot be assigned to the engagement team.` }
   }
   const requiredActorRoles = STAFFING_ROLE_REQUIREMENTS[role] || []
-  const actorHasRequiredRole = (actor.roles || []).some((r) => requiredActorRoles.includes(r))
-  if (!actorHasRequiredRole) {
+  if (!staffingActorHolds(role, actor)) {
     return {
       code: 'ACTOR_ROLE_MISMATCH',
       message: `Actor ${actor.name || actor.id} does not hold the required role for ${role} (needs: ${requiredActorRoles.join(' or ')}).`,
@@ -76,22 +94,25 @@ export function validateAssignmentActor({ role, actor } = {}) {
 /**
  * Derive precise staffing-profile blockers for audit commencement.
  *
- * Normal audit profile:
+ * Normal audit profile (hard prerequisites, identical in both runtimes):
  *   Engagement Partner  — REQUIRED
  *   Audit Senior        — REQUIRED
- *   Audit Manager       — REQUIRED unless approved small-firm mode
+ *   Audit Manager       — REQUIRED unless the engagement is approved small-firm
  *   At least 1 Preparer — REQUIRED
  *   Accounting Reviewer — REQUIRED when an accounting package applies
- *   EQR Reviewer        — REQUIRED when EQR applies by policy
+ *
+ * EQR staffing is deliberately not a commencement blocker: EQR applies at the
+ * review stage, where both runtimes already enforce it against the recorded
+ * policy, and an EQR reviewer is normally appointed after fieldwork is planned.
+ * `staffingProfileWarnings` still surfaces it so the presenter sees the gap.
  *
  * @param {Array<{ role: string }>} team — assigned team members
  * @param {object} [options]
  * @param {boolean} [options.smallFirmMode] — approved small-firm mode waives the manager requirement
  * @param {boolean} [options.requiresAccountingReviewer] — accounting package is linked
- * @param {boolean} [options.eqrRequired] — EQR applies by policy
  * @returns {Array<{ code: string, message: string }>}
  */
-export function staffingProfileBlockers(team, { smallFirmMode = false, requiresAccountingReviewer = false, eqrRequired = false } = {}) {
+export function staffingProfileBlockers(team, { smallFirmMode = false, requiresAccountingReviewer = false } = {}) {
   const members = Array.isArray(team) ? team : []
   const has = (role) => members.some((m) => m && m.role === role)
   const blockers = []
@@ -102,7 +123,7 @@ export function staffingProfileBlockers(team, { smallFirmMode = false, requiresA
     blockers.push({ code: 'AUDIT_SENIOR_REQUIRED', message: 'An Audit Senior must be assigned before commencing the audit.' })
   }
   if (!has('audit_manager') && !smallFirmMode) {
-    blockers.push({ code: 'AUDIT_MANAGER_REQUIRED', message: 'An Audit Manager must be assigned before commencing the audit. For small-firm engagements, set smallFirmMode: true.' })
+    blockers.push({ code: 'AUDIT_MANAGER_REQUIRED', message: 'An Audit Manager must be assigned before commencing the audit. An approved small-firm engagement records small_firm_mode on the engagement.' })
   }
   if (!has('preparer')) {
     blockers.push({ code: 'PREPARER_REQUIRED', message: 'At least one Preparer must be assigned before commencing the audit.' })
@@ -110,8 +131,22 @@ export function staffingProfileBlockers(team, { smallFirmMode = false, requiresA
   if (requiresAccountingReviewer && !has('accounting_reviewer')) {
     blockers.push({ code: 'ACCOUNTING_REVIEWER_REQUIRED', message: 'An Accounting Technical Reviewer must be assigned because this engagement has a linked accounting package.' })
   }
-  if (eqrRequired && !has('eqr_reviewer')) {
-    blockers.push({ code: 'EQR_REVIEWER_REQUIRED', message: 'An EQR Reviewer must be assigned because engagement quality review applies to this engagement by policy.' })
-  }
   return blockers
+}
+
+/**
+ * Non-blocking staffing advisories, reported identically in both runtimes.
+ *
+ * @param {Array<{ role: string }>} team — assigned team members
+ * @param {object} [options]
+ * @param {boolean} [options.eqrRequired] — engagement quality review applies by policy
+ * @returns {Array<{ code: string, message: string }>}
+ */
+export function staffingProfileWarnings(team, { eqrRequired = false } = {}) {
+  const members = Array.isArray(team) ? team : []
+  const warnings = []
+  if (eqrRequired && !members.some((m) => m && m.role === 'eqr_reviewer')) {
+    warnings.push({ code: 'EQR_REVIEWER_RECOMMENDED', message: 'Engagement quality review applies to this engagement by policy. Assign an EQR Reviewer before the file reaches completion review.' })
+  }
+  return warnings
 }

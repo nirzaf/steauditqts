@@ -6,23 +6,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../worker/index.js';
+import { act, envFor, makeFakeDb, seedCommencementReady, sidFor } from './helpers/demoWorkerHarness.js';
 import {
-  act,
-  DEMO_ENGAGEMENT_ID as ENG,
-  envFor,
-  makeFakeDb,
-  seedCommencementReady,
-  sidFor,
-} from './helpers/demoWorkerHarness.js';
-import {
+  actorById,
   assignEngagementTeam,
   auditCommencementBlockers,
   auditCommencementWarnings,
+  eligibleActorsFor,
   engagementById,
   recordSeniorReview,
   resetScenario,
   scenario,
 } from '../src/domain/scenario.js';
+import { staffingActorHolds } from '../shared/staffingRules.js';
 
 test.beforeEach(() => {
   resetScenario();
@@ -84,7 +80,7 @@ test('assigning a subset updates that member without dropping the rest of the te
   const result = assignEngagementTeam({
     engagementId,
     actorPersonaId: 'admin-demo',
-    assignments: [{ role: 'preparer', actorId: 'ACT-ZAINAB', plannedHours: '25', startDate: '2026-09-01', endDate: '2026-09-20', responsibility: 'Additional preparer' }],
+    assignments: [{ role: 'preparer', actorId: 'ACT-OMAR', plannedHours: '25', startDate: '2026-09-01', endDate: '2026-09-20', responsibility: 'Second preparer on the same file' }],
   });
   assert.equal(result.outcome, 'COMMITTED');
   const team = engagementById(engagementId).team;
@@ -164,6 +160,37 @@ test('the Worker reads EQR applicability from the engagement and never hard-bloc
   }), envFor(fake));
   const started = await worker.fetch(act(partner, { action: 'START_AUDIT' }), envFor(fake));
   assert.equal(started.status, 201, 'an EQR-applicable engagement may still commence');
+});
+
+// ─── Staffing candidates come from the actor directory, not hard-coded ids ───
+
+test('every staffing role offers only actors who actually hold that role', () => {
+  for (const role of ['preparer', 'audit_senior', 'audit_manager', 'engagement_partner', 'eqr_reviewer', 'accounting_reviewer']) {
+    const candidates = eligibleActorsFor(role, 'ENG-0018-AUD-2026');
+    assert.ok(candidates.length, `${role} must offer at least one eligible actor`);
+    for (const candidate of candidates) {
+      const actor = actorById(candidate.id);
+      assert.ok(staffingActorHolds(role, actor), `${candidate.id} is offered for ${role} but holds ${actor.roles.join(', ')}`);
+    }
+  }
+});
+
+test('an inactive actor is never offered for staffing', () => {
+  const junior = actorById('ACT-JUNIOR');
+  junior.active = false;
+  assert.ok(!eligibleActorsFor('preparer', 'ENG-0018-AUD-2026').some((actor) => actor.id === 'ACT-JUNIOR'));
+  junior.active = true;
+});
+
+test('replaceRoster is the same explicit operation in the shared Worker', async () => {
+  const fake = makeFakeDb();
+  const partner = sidFor(fake, 'partner-demo', 'sess-parity-replace-0001');
+  const env = envFor(fake);
+  await worker.fetch(act(partner, { action: 'ASSIGN_ENGAGEMENT_TEAM', assignments: [{ role: 'engagement_partner', actorId: 'ACT-PARTNER' }, { role: 'audit_senior', actorId: 'ACT-OMAR-SENIOR' }] }), env);
+  assert.equal(fake.state.team.length, 2);
+  const replaced = await worker.fetch(act(partner, { action: 'ASSIGN_ENGAGEMENT_TEAM', replaceRoster: true, assignments: [{ role: 'preparer', actorId: 'ACT-JUNIOR' }] }), env);
+  assert.equal(replaced.status, 201);
+  assert.deepEqual(fake.state.team.map((row) => row.role), ['preparer']);
 });
 
 // ─── Senior-review authority is one shared list ────────────────────────────

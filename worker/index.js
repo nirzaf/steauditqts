@@ -3,7 +3,7 @@ import { buildPortfolioRows, deriveProcessHealth, rankTasks, resolveScenarioPres
 import { clientEvaluationQuestionIds, clientEvaluationQuestions, QUESTION_BANK_VERSION } from '../src/domain/questionBanks.js';
 import { evaluateAssessment } from '../src/domain/assessments.js';
 import { SHARED_ACTION_SET, validateActionPayload, validateCommandEnvelope } from '../shared/actionContracts.js';
-import { staffingProfileBlockers, validateAssignmentActor, validateDateRange, validatePlannedHours } from '../shared/staffingRules.js';
+import { staffingProfileBlockers, staffingProfileWarnings, validateAssignmentActor, validateDateRange, validatePlannedHours } from '../shared/staffingRules.js';
 import {
   isWorkpaperSubmitted,
   managerCompletionGateBlockers,
@@ -525,6 +525,14 @@ function serializeEngagementState(row) {
     gStatus,
     generationId: row.generation_id,
     updatedAt: row.updated_at,
+    // Commencement facts and the staffing policy the shared rules read. Column
+    // values are undefined until migration 0014 is applied, so each falls back
+    // to the same default the rules use.
+    auditCommenced: Number(row.audit_commenced || 0) === 1,
+    commencedAt: row.commenced_at || '',
+    commencedBy: row.commenced_by || '',
+    smallFirmMode: Number(row.small_firm_mode || 0) === 1,
+    eqrRequired: Number(row.eqr_required || 0) === 1,
   };
 }
 
@@ -3218,10 +3226,9 @@ async function actionAssignEngagementTeam(request, env, session, id, payload, co
     const endDate = cleanText(item.endDate, 40, '') || '';
     const responsibility = cleanText(item.responsibility, 300, '') || '';
     if (!role || !actorId) return error(request, 'Every assignment needs a role and an actorId.', 400, 'ASSIGNMENT_INCOMPLETE');
-    const actorError = validateAssignmentActor({ role, actor: DEMO_ACTORS[actorId] || null });
+    const actorError = validateAssignmentActor({ role, actor: DEMO_ACTORS[actorId] || null, actorId });
     if (actorError) {
-      const message = actorError.code === 'ACTOR_NOT_FOUND' ? `Actor ${actorId} was not found.` : actorError.message;
-      return error(request, message, 409, actorError.code);
+      return error(request, actorError.message, 409, actorError.code);
     }
     const hours = validatePlannedHours(plannedHours);
     if (hours.code) return error(request, hours.message, 409, hours.code);
@@ -3230,6 +3237,11 @@ async function actionAssignEngagementTeam(request, env, session, id, payload, co
     validated.push({ role, actorId, actorName, plannedHours: hours.hours, startDate, endDate, responsibility });
   }
   for (const item of validated) {
+    if (item === validated[0] && payload.replaceRoster === true) {
+      // Explicit roster replacement, identical to the local domain's replaceRoster
+      // flag: the payload becomes the whole team instead of merging into it.
+      await env.DB.prepare('DELETE FROM auditflow_engagement_team WHERE engagement_id = ?1').bind(id).run();
+    }
     await env.DB.prepare(
       `INSERT INTO auditflow_engagement_team (engagement_id, role, actor_id, actor_name, planned_hours, start_date, end_date, responsibility)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -3280,17 +3292,20 @@ async function actionStartAudit(request, env, session, id, payload, correlationI
   }
   const teamRows = await env.DB.prepare('SELECT role FROM auditflow_engagement_team WHERE engagement_id = ?1').bind(id).all().catch(() => ({ results: [] }));
   // P8A — the Worker enforces the same commencement staffing profile as the
-  // local domain (shared/staffingRules.js). A team of only preparers no
-  // longer slips through: every missing required role is reported.
+  // local domain (shared/staffingRules.js). A team of only preparers no longer
+  // slips through: every missing required role is reported, and the policy
+  // inputs (small-firm waiver, EQR applicability) come from the engagement
+  // record itself so neither mode can be looser or stricter than the other.
   const accountingStatus = await readAccountingStatus(env, id);
+  const policy = staffingPolicyFor(engagement);
   const staffingBlockers = staffingProfileBlockers(teamRows.results || [], {
-    smallFirmMode: false,
+    smallFirmMode: policy.smallFirmMode,
     requiresAccountingReviewer: accountingStatus.exists,
-    eqrRequired: false,
   });
   if (staffingBlockers.length) {
     return error(request, `Audit commencement staffing incomplete: ${staffingBlockers.map((b) => b.message).join(' ')}`, 409, staffingBlockers[0].code, { blockers: staffingBlockers });
   }
+  const staffingWarnings = staffingProfileWarnings(teamRows.results || [], policy);
 
   await env.DB.prepare(
     `UPDATE auditflow_engagement_state SET audit_commenced = 1, commenced_at = datetime('now'), commenced_by = ?2, current_stage = CASE WHEN current_stage IN ('STAGE-01', 'STAGE-02', 'STAGE-03') THEN 'STAGE-04' ELSE current_stage END, revision = revision + 1, updated_at = datetime('now') WHERE engagement_id = ?1`,
@@ -3319,7 +3334,7 @@ async function actionStartAudit(request, env, session, id, payload, correlationI
     correlationId,
   });
 
-  return json(request, { ok: true, auditCommenced: true, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
+  return json(request, { ok: true, auditCommenced: true, engagement: serializeEngagementState(next), staffingWarnings, evidenceLevel: 'SIMULATION' }, 201);
 }
 
 async function actionRecordSeniorReview(request, env, session, id, payload, correlationId) {
@@ -4211,6 +4226,7 @@ async function readProgressSnapshotOnce(env, engagementId) {
     env.DB.prepare('SELECT * FROM auditflow_accounting_status WHERE engagement_id = ?1').bind(id).first(),
     env.DB.prepare('SELECT document_id, document_type, version, state, created_at FROM auditflow_artifacts WHERE engagement_id = ?1').bind(id).all(),
     env.DB.prepare('SELECT task_id, state, due_date, assignee_role FROM auditflow_tasks WHERE engagement_id = ?1').bind(id).all(),
+    env.DB.prepare('SELECT role, actor_id FROM auditflow_engagement_team WHERE engagement_id = ?1 ORDER BY role, actor_id').bind(id).all(),
   ]);
   const engagement = rows[0];
   if (!engagement) return null;
@@ -4240,6 +4256,11 @@ async function readProgressSnapshotOnce(env, engagementId) {
     cachedStage: engagement.current_stage,
     revision: engagement.revision,
     generationId: engagement.generation_id,
+    // Commencement fact and staffing policy: the shared pipeline and the shared
+    // completion checklist read the engagement record, never the browser scenario.
+    auditCommenced: Number(engagement.audit_commenced || 0) === 1,
+    smallFirmMode: Number(engagement.small_firm_mode || 0) === 1,
+    eqrRequired: Number(engagement.eqr_required || 0) === 1,
     hasClientProfile: Boolean(rows[1]),
     decisions: decisions,
     commercial: commercialRow ? {
@@ -4266,6 +4287,7 @@ async function readProgressSnapshotOnce(env, engagementId) {
     reviewPoints: (rows[9].results || []).map((row) => ({ id: row.review_id, state: row.state, severity: row.severity, clearedGeneration: Number(row.cleared_generation || 1) })),
     draftVersions: draftVersions,
     tasks: (rows[12].results || []).map((row) => ({ id: row.task_id, state: row.state, dueDate: row.due_date, role: row.assignee_role })),
+    team: (rows[13]?.results || []).map((row) => ({ role: row.role, actorId: row.actor_id })),
     artifactCount: artifactRows.length,
     publishedArtifactCount: artifactRows.filter((row) => row.state === 'PUBLISHED').length,
     assessment: assessmentSummary ? {
@@ -4276,6 +4298,8 @@ async function readProgressSnapshotOnce(env, engagementId) {
     inputGeneration: statusRow ? Number(statusRow.input_generation) || 1 : 1,
     evaluatedGeneration: statusRow ? Number(statusRow.audit_evaluated_generation) || 1 : 1,
     accounting: statusRow ? {
+      exists: true,
+      engagementId: id,
       sourceVersion: statusRow.source_version,
       sourceState: statusRow.source_state,
       mappingState: statusRow.mapping_state,

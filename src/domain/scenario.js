@@ -4,21 +4,25 @@ import { createAssessment, evaluateAssessment, recordPartnerDecision as recordAs
 import { clientEvaluationQuestions } from './questionBanks.js'
 import { baselineFixture, fixtureRows, registerJournalRevision, replacementFixture, sourceReflection, summarizeRows } from './accounting.js'
 import { auditRiskFixture, calculateMateriality, evaluateAuditChain, findingFixture, inventoryPopulationFixture, materialityFixture, populationFixture, sampleFixture } from './audit.js'
-import { staffingProfileBlockers, STAFFING_ROLE_REQUIREMENTS, validateDateRange, validatePlannedHours } from '../../shared/staffingRules.js'
+import { staffingActorHolds, staffingProfileBlockers, staffingProfileWarnings, STAFFING_ROLE_REQUIREMENTS, validateAssignmentActor, validateDateRange, validatePlannedHours } from '../../shared/staffingRules.js'
 import {
   actorHoldsAnyRole,
   completionRecommendationView,
+  deriveAccountingHandoffFacts,
+  linkedAccountingEngagementFrom,
   managerCompletionGateBlockers,
   mergeTeamAssignments,
   normalizeSeniorReviewDecision,
   SENIOR_REVIEW_ROLES,
   seniorReviewGateFrom,
+  staffingPolicyFor,
+  TEAM_ASSIGNMENT_AUTHORITY_ROLES,
 } from '../../shared/lifecycleRules.js'
 
 // The staffing contract is defined once in shared/staffingRules.js so the
 // browser-local domain and the shared Worker enforce identical rules. It is
 // re-exported here for existing domain consumers.
-export { STAFFING_ROLE_REQUIREMENTS, staffingProfileBlockers, validateDateRange, validatePlannedHours }
+export { STAFFING_ROLE_REQUIREMENTS, staffingActorHolds, staffingProfileBlockers, staffingProfileWarnings, validateDateRange, validatePlannedHours }
 
 export const SCENARIO_VERSION = 2
 export const SCENARIO_STORAGE_KEY = 'auditflow-scenario-v2'
@@ -970,19 +974,24 @@ export function accountingPackageFor(engagementId = scenario.selectedEngagementI
 
 /**
  * P5 — accounting input generations for an audit engagement.
- * Mirrors the shared Worker accounting_status contract: the accounting side
- * advances `input` when its package changes, and the audit side evaluates it
- * back to `evaluated` via evaluateAccountingInput(). A gap means the audit is
- * working from a superseded accounting package.
+ *
+ * Resolution is shared with the handoff projection (deriveAccountingHandoffFacts)
+ * so the card and the evaluate command can never disagree about whether a gap
+ * exists. Mirrors the shared Worker accounting_status contract: the accounting
+ * side advances `input` when its package changes, and the audit side evaluates
+ * it back to `evaluated`. A gap means the audit is working from a superseded
+ * accounting package.
  */
 export function accountingGenerationsFor(engagementId = scenario.selectedEngagementId) {
   const engagement = engagementById(engagementId)
   if (!engagement) return { input: 1, evaluated: 1, linkedAccountingEngagementId: '' }
   const linked = linkedAccountingEngagementFor(engagement)
-  const linkedGeneration = linked?.inputGeneration ?? null
-  const input = Number(engagement.evidence?.accountingInputGeneration ?? linkedGeneration ?? engagement.inputGeneration ?? 1)
-  const evaluated = Number(engagement.evidence?.accountingEvaluatedGeneration ?? input)
-  return { input, evaluated, linkedAccountingEngagementId: linked?.id || '' }
+  const facts = deriveAccountingHandoffFacts({
+    auditEngagement: engagement,
+    accountingEngagement: linked,
+    packageRecord: linked ? accountingPackageFor(linked.id) : null,
+  })
+  return { input: facts.accountingInputGeneration, evaluated: facts.auditEvaluatedGeneration, linkedAccountingEngagementId: linked?.id || '' }
 }
 
 /**
@@ -1612,17 +1621,18 @@ export function assignEngagementTeam({
   expectedSessionEpoch,
   idempotencyKey,
   assignments = [],
+  replaceRoster = false,
 } = {}) {
   const engagement = engagementById(engagementId)
   const actor = actorForPersona(actorPersonaId)
-  const fingerprint = commandFingerprint({ action: 'ASSIGN_ENGAGEMENT_TEAM', targetId: engagementId, engagementId, payload: { expectedSessionEpoch, assignments } })
+  const fingerprint = commandFingerprint({ action: 'ASSIGN_ENGAGEMENT_TEAM', targetId: engagementId, engagementId, payload: { expectedSessionEpoch, assignments, replaceRoster: Boolean(replaceRoster) } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
   if (!engagement || !actor?.active || (!canViewEngagement(actor.id, engagementId) && !actor.roles?.includes('system_admin') && !actor.roles?.includes('engagement_partner'))) {
     return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot assign team members to this engagement.' }))
   }
-  if (!actor.roles?.some((r) => ['engagement_partner', 'audit_manager', 'system_admin'].includes(r))) {
+  if (!actorHoldsAnyRole(actor, TEAM_ASSIGNMENT_AUTHORITY_ROLES)) {
     return finish(commandResult('DENIED', { code: 'TEAM_ASSIGNMENT_AUTHORITY_REQUIRED', message: 'Only an Engagement Partner, Audit Manager, or System Administrator can assign team members.' }))
   }
   const stale = sessionGuard(actor, expectedSessionEpoch)
@@ -1630,41 +1640,27 @@ export function assignEngagementTeam({
   if (!Array.isArray(assignments) || assignments.length === 0) {
     return finish(commandResult('BLOCKED', { code: 'ASSIGNMENTS_EMPTY', message: 'At least one team assignment is required.' }))
   }
-  const validRoles = Object.keys(STAFFING_ROLE_REQUIREMENTS)
+  // Every row is validated before anything is written, so a rejected roster can
+  // never leave a half-applied team behind — the same all-or-nothing guarantee
+  // the Worker gives in SHARED_DEMO.
   for (const item of assignments) {
-    if (!validRoles.includes(item.role)) {
-      return finish(commandResult('BLOCKED', { code: 'INVALID_ROLE', message: `Role "${item.role}" is not a recognized engagement staffing role.` }))
-    }
-    const assignedActor = actorById(item.actorId)
-    if (!assignedActor) {
-      return finish(commandResult('BLOCKED', { code: 'ACTOR_NOT_FOUND', message: `Actor ${item.actorId} was not found.` }))
-    }
-    if (!assignedActor.active) {
-      return finish(commandResult('BLOCKED', { code: 'ACTOR_INACTIVE', message: `Actor ${assignedActor.name || item.actorId} is not active and cannot be assigned to the engagement team.` }))
-    }
-    // P2: Strict role-to-actor-role enforcement at the command boundary
-    const requiredActorRoles = STAFFING_ROLE_REQUIREMENTS[item.role]
-    const actorHasRequiredRole = assignedActor.roles?.some((r) => requiredActorRoles.includes(r))
-    if (!actorHasRequiredRole) {
-      return finish(commandResult('BLOCKED', {
-        code: 'ACTOR_ROLE_MISMATCH',
-        message: `Actor ${assignedActor.name || item.actorId} does not hold the ${item.role} role and cannot be assigned to that position. Required: ${requiredActorRoles.join(' or ')}.`,
-      }))
-    }
-    // Validate hours
+    const invalid = validateAssignmentActor({ role: item.role, actor: actorById(item.actorId) || null, actorId: item.actorId })
+    if (invalid) return finish(commandResult('BLOCKED', invalid))
     const hoursResult = validatePlannedHours(item.plannedHours)
     if (hoursResult.code) return finish(commandResult('BLOCKED', hoursResult))
-    // Validate date range
     const dateError = validateDateRange(item.startDate, item.endDate)
     if (dateError) return finish(commandResult('BLOCKED', dateError))
     // Auto-assign engagement scope to newly staffed actor
+    const assignedActor = actorById(item.actorId)
     if (!assignedActor.assignments) assignedActor.assignments = []
     if (!assignedActor.assignments.includes(engagementId)) assignedActor.assignments.push(engagementId)
   }
-  // P4: Multiple preparers are supported — the team array can have multiple preparer entries.
-  // Single-authority roles (partner, manager, senior) may also have multiple entries for
-  // larger engagements but only one is treated as primary for sequential review gating.
-  engagement.team = assignments.map((a) => ({
+  // Multiple preparers are supported: the roster is keyed (role, actorId) exactly
+  // like the D1 auditflow_engagement_team table, so the same payload merges into
+  // the same set of rows in both modes instead of replacing the whole team.
+  // `replaceRoster` is the explicit way to SET the team (used to demo an
+  // incomplete staffing profile) and behaves the same in the shared Worker.
+  const roster = assignments.map((a) => ({
     role: a.role,
     actorId: a.actorId,
     actorName: a.actorName || actorById(a.actorId)?.name || a.actorId,
@@ -1673,11 +1669,35 @@ export function assignEngagementTeam({
     endDate: a.endDate || '',
     responsibility: a.responsibility || '',
   }))
+  engagement.team = mergeTeamAssignments(replaceRoster ? [] : (engagement.team || []), roster)
   engagement.evidence.assignmentsEligible = true
   engagement.revision += 1
   scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'ENGAGEMENT_TEAM_ASSIGNED', engagementId, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
   return finish(commandResult('COMMITTED', { data: { engagementId, team: engagement.team }, revision: engagement.revision, operationId: `TEAM-${engagementId}` }))
+}
+
+/**
+ * Actors who may legitimately be offered for a staffing role on an engagement.
+ *
+ * The list is derived from the same role matrix the assignment command
+ * enforces, so a picker can never offer somebody the command then rejects
+ * (the staffing form previously defaulted to hard-coded ids that do not exist
+ * in the actor directory at all).
+ *
+ * @param {string} role — engagement staffing role
+ * @param {string} engagementId
+ */
+export function eligibleActorsFor(role, engagementId = scenario.selectedEngagementId) {
+  if (!STAFFING_ROLE_REQUIREMENTS[role]) return []
+  const engagement = engagementById(engagementId)
+  return (scenario.actors || [])
+    .filter((actor) => actor.active && staffingActorHolds(role, actor))
+    // Somebody already holding this seat on the engagement stays offerable: the
+    // accounting technical reviewer legitimately reviews a linked package without
+    // being scoped into the audit engagement's own record set.
+    .filter((actor) => canViewEngagement(actor.id, engagementId) || (engagement?.team || []).some((member) => member.actorId === actor.id && member.role === role))
+    .map((actor) => ({ id: actor.id, name: actor.name, roles: [...actor.roles] }))
 }
 
 /**
@@ -1687,15 +1707,13 @@ export function assignEngagementTeam({
  * P5 accounting->audit handoff projection.
  */
 export function linkedAccountingEngagementFor(engagement) {
-  if (!engagement || engagement.service !== 'audit') return null
-  return (scenario.engagements || []).find(
-    (e) => e.service === 'accounting' && (e.id === engagement.linkedEngagementId || e.linkedEngagementId === engagement.id),
-  ) || null
+  return linkedAccountingEngagementFrom(scenario.engagements || [], engagement)
 }
 
 /**
  * Audit commencement prerequisite checks before START_AUDIT can be committed.
- * Returns precise per-role blocker codes (STORY 5).
+ * Returns precise per-role blocker codes (STORY 5) derived from the SHARED rule
+ * set (shared/staffingRules.js) so LOCAL_ONLY and SHARED_DEMO agree.
  */
 export function auditCommencementBlockers(engagementId = scenario.selectedEngagementId) {
   const engagement = engagementById(engagementId)
@@ -1716,11 +1734,22 @@ export function auditCommencementBlockers(engagementId = scenario.selectedEngage
   // rule set (shared/staffingRules.js) so LOCAL_ONLY and SHARED_DEMO agree.
   const linkedAccountingEngagement = linkedAccountingEngagementFor(engagement)
   blockers.push(...staffingProfileBlockers(engagement.team || [], {
-    smallFirmMode: engagement.smallFirmMode === true,
+    smallFirmMode: staffingPolicyFor(engagement).smallFirmMode,
     requiresAccountingReviewer: Boolean(linkedAccountingEngagement),
-    eqrRequired: engagement.evidence?.eqrRequired === true,
   }))
   return blockers
+}
+
+/**
+ * Commencement advisories: professional requirements the engagement record
+ * declares but which do not hold START_AUDIT back. Reported with the same codes
+ * in both demo modes, so a presenter never sees guidance in one mode that the
+ * other mode contradicts.
+ */
+export function auditCommencementWarnings(engagementId = scenario.selectedEngagementId) {
+  const engagement = engagementById(engagementId)
+  if (!engagement) return []
+  return staffingProfileWarnings(engagement.team || [], staffingPolicyFor(engagement))
 }
 
 /**
