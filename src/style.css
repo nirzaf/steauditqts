@@ -1917,6 +1917,35 @@ tfoot th { color: var(--primary); background: #f7faff; }
 .pipeline-boundary h2 { margin-bottom: 4px; color: var(--primary); font-size: 1rem; }
 .pipeline-boundary p { margin-bottom: 0; font-size: .75rem; line-height: 1.45; }
 .pipeline-boundary .button { align-self: center; }
+/* ── Pipeline lifecycle overview (two-level: Relationship + Engagement) ──── */
+.pipeline-lifecycle-overview { display: flex; flex-direction: column; gap: 16px; margin-bottom: 18px; padding: 22px 25px 20px; border-color: #b8cde4; background: linear-gradient(135deg, #f5f9ff 0%, #fff 80%); }
+.pipeline-lifecycle-sections { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pipeline-lifecycle-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid #d6e2f0; border-radius: 12px; background: #fff; }
+.pipeline-lifecycle-card.lifecycle-complete { border-color: #a8d7b5; background: #f3fbf5; }
+.pipeline-lifecycle-card.lifecycle-in-progress { border-color: #b9cfe6; background: #f5f9ff; }
+.pipeline-lifecycle-card.lifecycle-blocked { border-color: #f5c0b8; background: #fff6f5; }
+.pipeline-lifecycle-card .pipeline-lifecycle-icon { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 9px; }
+.pipeline-lifecycle-card.lifecycle-complete .pipeline-lifecycle-icon { color: var(--good); background: #e5f8ea; }
+.pipeline-lifecycle-card > div { flex: 1 1 0; min-width: 0; }
+.pipeline-lifecycle-card > div strong { display: block; color: var(--primary); font-size: .82rem; }
+.pipeline-lifecycle-card > div small { color: var(--subtle); font-size: .68rem; line-height: 1.35; }
+/* ── Lifecycle group headers inside the stage rail ─────────────────────── */
+.pipeline-lifecycle-group { margin: 0; }
+.pipeline-lifecycle-group-header { display: flex; align-items: center; gap: 7px; margin: 18px 25px 4px; padding: 5px 10px 5px 8px; border-radius: 6px; font-size: .68rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.pipeline-lifecycle-group-header.tone-navy { color: var(--primary); background: #eef3fa; }
+.pipeline-lifecycle-group-header.tone-blue { color: var(--secondary); background: #eef5ff; }
+/* ── Live pipeline stage state panel ───────────────────────────────────── */
+.pipeline-live-state-panel { margin: 10px 21px; border: 1px solid #d8e5f0; border-radius: 10px; overflow: hidden; }
+.pipeline-live-next { margin: 0 !important; padding: 10px 14px; border-bottom: 1px solid #eef2f7; background: #f8fbff; }
+.pipeline-live-next .eyebrow { color: var(--secondary); }
+.pipeline-live-next p { margin: 3px 0 0; font-size: .78rem; }
+.pipeline-live-blocker { margin: 0 !important; padding: 10px 14px; background: #fff8f5; }
+.pipeline-live-blocker .eyebrow { color: var(--warn); }
+.pipeline-live-blocker p { margin: 3px 0 0; color: var(--warn); font-size: .78rem; }
+/* Grid layout update for wider swimlane with 11 stages */
+.pipeline-lane-grid { min-width: 1200px; grid-template-columns: minmax(168px, 1.25fr) repeat(11, minmax(82px, 1fr)); }
+/* Stats bar with 4 columns for the updated facts */
+.pipeline-intro-facts { grid-template-columns: repeat(4, minmax(80px, 1fr)); }
 
 @media (max-width: 980px) {
   .role-architecture-intro { grid-template-columns: 1fr; align-items: start; gap: 15px; }

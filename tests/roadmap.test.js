@@ -57,16 +57,27 @@ test('stage next action keeps the projected record target and route', () => {
   assert.equal(summary.nextAction.targetId, 'PBC-LOCAL-01')
 })
 
-test('the six local presets have stable keys and supported engagement scopes', () => {
-  assert.deepEqual(LOCAL_SCENARIO_PRESETS.map((preset) => preset.key), [
-    'CLEAN_START',
-    'CLIENT_ACTION_REQUIRED',
-    'ACCOUNTING_PREPARATION',
-    'MANAGER_REVIEW',
-    'PARTNER_EQR_REVIEW',
-    'READY_FOR_RELEASE',
-  ])
-  assert.ok(LOCAL_SCENARIO_PRESETS.every((preset) => preset.engagementId && preset.label && preset.description))
+test('local scenario presets cover the full lifecycle and have stable keys', () => {
+  // All 17 presets must have the required structural fields
+  assert.ok(LOCAL_SCENARIO_PRESETS.every((preset) => preset.engagementId && preset.label && preset.description && preset.key && preset.group),
+    'Every preset must have key, label, description, group, and engagementId')
+  // Keys must be unique
+  const keys = LOCAL_SCENARIO_PRESETS.map((preset) => preset.key)
+  assert.equal(new Set(keys).size, keys.length, 'Preset keys must be unique')
+  // Must have at least one preset from each lifecycle group
+  const groups = new Set(LOCAL_SCENARIO_PRESETS.map((preset) => preset.group))
+  assert.ok(groups.has('Relationship'), 'Must have Relationship group presets')
+  assert.ok(groups.has('Engagement'), 'Must have Engagement group presets')
+  assert.ok(groups.has('Negative'), 'Must have Negative group presets')
+  // Core stable keys must still be present (backward compatibility)
+  const keySet = new Set(keys)
+  for (const expected of ['CLEAN_START', 'ACCOUNTING_PREPARATION', 'MANAGER_REVIEW', 'PARTNER_EQR_REVIEW', 'READY_FOR_RELEASE']) {
+    assert.ok(keySet.has(expected), `Stable key ${expected} must still be present`)
+  }
+  // New lifecycle presets must be present
+  for (const expected of ['NEW_LEAD', 'QUALIFIED_LEAD', 'STAFFING_READY', 'RELEASE_BLOCKED', 'STAFFING_BLOCKED']) {
+    assert.ok(keySet.has(expected), `New lifecycle key ${expected} must be present`)
+  }
 })
 
 test('notification read state is scoped, bounded, and resettable', () => {
