@@ -7,9 +7,11 @@ import {
   completeSyntheticCredentialSetup,
   commercialRecordFor,
   createPbcRequest,
+  clearReviewPoint,
   createWorkpaperDraft,
   createReleaseCheckpoint,
   deriveGates,
+  deriveSeniorReviewGate,
   issueSyntheticCredential,
   recordClientInformationResponse,
   recordCompletionRecommendation,
@@ -17,6 +19,7 @@ import {
   recordHardCopyReadiness,
   recordPbcUpload,
   recordRoleTaskAction,
+  recordSeniorReview,
   recordTerms,
   recordTermsDecision,
   replaceAccountingSource,
@@ -109,18 +112,49 @@ test('Engagement Letter decisions stay bound to the exact version and scoped app
   assert.equal(termsFor(current.id).clientDecision.version, 'EL-2026-02')
 })
 
-test('audit manager can record a conditional completion recommendation with visible blockers', () => {
+test('audit manager can record a conditional completion recommendation with visible blockers', async () => {
   setActivePersona('audit-manager-demo')
   let current = selectedEngagement()
   const denied = recordCompletionRecommendation({ engagementId: current.id, actorPersonaId: 'client-management-demo', expectedRevision: current.revision, expectedSessionEpoch: 1, idempotencyKey: 'completion-denied', decision: 'RECOMMEND', rationale: 'Reviewed the current file and blockers.' })
   assert.equal(denied.outcome, 'DENIED')
   assert.equal(denied.code, 'COMPLETION_AUTHORITY_REQUIRED')
 
+  // Submit both workpapers through the domain command first: with nothing
+  // submitted the shared prerequisite order reports NO_SUBMITTED_WORKPAPERS.
+  let wp = scenario.workpapers.find((item) => item.id === 'WP-AR-01')
+  const submittedAr = await submitWorkpaper({ workpaperId: 'WP-AR-01', actorPersonaId: 'preparer-demo', expectedRevision: wp.revision, expectedSessionEpoch: 1, idempotencyKey: 'completion-submit-ar' })
+  assert.equal(submittedAr.outcome, 'COMMITTED')
+  wp = scenario.workpapers.find((item) => item.id === 'WP-INV-01')
+  const submittedInv = await submitWorkpaper({ workpaperId: 'WP-INV-01', actorPersonaId: 'preparer-demo', expectedRevision: wp.revision, expectedSessionEpoch: 1, idempotencyKey: 'completion-submit-inv' })
+  assert.equal(submittedInv.outcome, 'COMMITTED')
+
+  // P8A — Senior Review is a hard prerequisite: a RECOMMEND is blocked while
+  // submitted workpapers have not been cleared by an Audit Senior.
+  current = selectedEngagement()
+  const blockedBySeniorGate = recordCompletionRecommendation({ engagementId: current.id, actorPersonaId: 'audit-manager-demo', expectedRevision: current.revision, expectedSessionEpoch: 1, idempotencyKey: 'completion-senior-gate', decision: 'RECOMMEND', rationale: 'Attempting completion before senior review.' })
+  assert.equal(blockedBySeniorGate.outcome, 'BLOCKED')
+  assert.ok((blockedBySeniorGate.blockers || []).some((blocker) => blocker.code === 'SENIOR_REVIEW_REQUIRED'))
+
+  assert.equal(recordSeniorReview({ engagementId: current.id, workpaperId: 'WP-AR-01', actorPersonaId: 'audit-senior-demo', expectedSessionEpoch: 1, idempotencyKey: 'completion-senior-ar', decision: 'PASSED' }).outcome, 'COMMITTED')
+  assert.equal(recordSeniorReview({ engagementId: current.id, workpaperId: 'WP-INV-01', actorPersonaId: 'audit-senior-demo', expectedSessionEpoch: 1, idempotencyKey: 'completion-senior-inv', decision: 'PASSED' }).outcome, 'COMMITTED')
+  assert.equal(deriveSeniorReviewGate(current.id).complete, true)
+
+  // Open review points are a shared hard prerequisite too: both demo modes must
+  // refuse a recommendation while a point is unresolved.
+  const blockedByReviewPoints = recordCompletionRecommendation({ engagementId: current.id, actorPersonaId: 'audit-manager-demo', expectedRevision: current.revision, expectedSessionEpoch: 1, idempotencyKey: 'completion-review-points', decision: 'RECOMMEND', rationale: 'Senior review is clear but review points remain open.' })
+  assert.equal(blockedByReviewPoints.outcome, 'BLOCKED')
+  assert.ok((blockedByReviewPoints.blockers || []).some((blocker) => blocker.code === 'REVIEW_POINTS_OPEN'))
+  for (const pointId of ['RP-042', 'RP-047']) {
+    const cleared = clearReviewPoint({ pointId, actorPersonaId: 'independent-reviewer-demo', expectedSessionEpoch: 1, idempotencyKey: `completion-clear-${pointId}`, response: 'Independent re-performance resolved the point; evidence is attached to the current snapshot.' })
+    assert.equal(cleared.outcome, 'COMMITTED')
+  }
+
   current = selectedEngagement()
   const recorded = recordCompletionRecommendation({ engagementId: current.id, actorPersonaId: 'audit-manager-demo', expectedRevision: current.revision, expectedSessionEpoch: 1, idempotencyKey: 'completion-manager', decision: 'RECOMMEND', rationale: 'Reviewed exact snapshots; partner and EQR blockers remain visible.' })
   assert.equal(recorded.outcome, 'COMMITTED')
   assert.equal(recorded.data.status, 'CONDITIONAL')
   assert.ok(recorded.data.blockers.length > 0)
+  assert.ok(!recorded.data.blockers.some((blocker) => blocker.code === 'SENIOR_REVIEW_REQUIRED'))
   assert.equal(scenario.engagements.find((item) => item.id === current.id).evidence.completionRecommendation.decision, 'RECOMMEND')
 })
 

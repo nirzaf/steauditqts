@@ -71,7 +71,7 @@ function makeFakeDb() {
       state.decisions.push({ decision_id: p[0], type: kind, object_version: p[2], version: p[2], decision: kind === 'RELEASE' ? 'RELEASED' : p[3], decided_by: p[4], rationale: p[5], decided_at: '2026-09-14 00:00:00', input_generation: kind === 'AUDIT_OPINION' ? p[6] : kind === 'DRAFT_FS' ? p[7] : 1 });
     }
     else if (sql.includes('INSERT INTO auditflow_workpapers')) state.workpapers.set(p[0], { workpaper_id: p[0], engagement_id: p[1], submitted_by: p[5], state: 'SUBMITTED', revision: 1 });
-    else if (sql.includes("UPDATE auditflow_workpapers SET state = 'SENIOR_REVIEWED'")) { const w = state.workpapers.get(p[0]); if (w) w.state = 'SENIOR_REVIEWED'; }
+    else if (sql.includes('UPDATE auditflow_workpapers SET state')) { const w = state.workpapers.get(p[0]); if (w) w.state = p[1] || 'SENIOR_REVIEWED'; }
     else if (sql.includes('INSERT INTO auditflow_review_points')) state.reviews.set(p[0], { review_id: p[0], engagement_id: p[1], workpaper_id: p[2], severity: p[3], owner: p[4], author: p[5], state: 'OPEN', cleared_generation: 1 });
     else if (sql.includes('UPDATE auditflow_review_points SET response')) { const r = state.reviews.get(p[0]); if (r) { r.response = p[1]; r.state = 'CLEARED'; r.cleared_generation = p[2]; } }
     else if (sql.includes('INSERT INTO auditflow_pbc_requests')) state.pbcRequests.set(p[0], { request_id: p[0], engagement_id: p[1], title: p[2], state: 'OPEN', due_date: p[6] });

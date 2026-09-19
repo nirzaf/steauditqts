@@ -109,6 +109,142 @@ export function localArtifactProjection(state, engagementId) {
   return (state?.documents || []).filter((entry) => entry.engagementId === id)
 }
 
+// ── P5 — stakeholder-facing derived projections ─────────────────────────────
+// Pure, read-only: these never mutate scenario state. They exist so a
+// presenter can explain the accounting -> audit handoff and the consolidated
+// engagement completion checklist without reading raw records.
+
+function engagementById(state, engagementId) {
+  return (state?.engagements || []).find((entry) => entry.id === engagementId) || null
+}
+
+function linkedAccountingEngagement(state, engagement) {
+  if (!engagement || engagement.service !== 'audit') return null
+  return (state?.engagements || []).find(
+    (entry) => entry.service === 'accounting'
+      && (entry.id === engagement.linkedEngagementId || entry.linkedEngagementId === engagement.id),
+  ) || null
+}
+
+function accountingPackageLabel(packageRecord) {
+  const statementId = packageRecord?.statement?.id || ''
+  const version = statementId.match(/-V(\d+)$/i)
+  return version ? `FS v${version[1]}` : (packageRecord?.source?.sourceLabel || statementId || 'Accounting package')
+}
+
+/**
+ * Derive the accounting -> audit handoff card:
+ *   Accounting Package: FS v05
+ *   Management approval: ACCEPTED
+ *   Accounting input: g5 / Audit evaluated input: g4
+ *   STATUS: STALE  [Evaluate g5]
+ */
+export function deriveAccountingHandoff(state, engagementId) {
+  const id = String(engagementId || '')
+  const engagement = engagementById(state, id)
+  if (!engagement) {
+    return { status: 'NOT_APPLICABLE', applicable: false, message: 'That engagement is not in the local scenario.', actionLabel: '' }
+  }
+  const accounting = linkedAccountingEngagement(state, engagement)
+  if (!accounting) {
+    return {
+      status: 'NOT_APPLICABLE',
+      applicable: false,
+      engagementId: id,
+      message: 'No accounting package is linked to this engagement, so no handoff applies.',
+      actionLabel: '',
+    }
+  }
+  const packageRecord = (state.accountingPackages || []).find((entry) => entry.engagementId === accounting.id) || null
+  const approvalDecision = packageRecord?.managementApproval?.decision || ''
+  const managementApproval = approvalDecision === 'APPROVE' ? 'ACCEPTED' : approvalDecision ? String(approvalDecision).toUpperCase() : 'PENDING'
+  const accountingInputGeneration = Number(accounting.inputGeneration ?? 1)
+  const auditEvaluatedGeneration = Number(engagement.evidence?.accountingEvaluatedGeneration ?? accountingInputGeneration)
+  const stale = auditEvaluatedGeneration < accountingInputGeneration
+  const statementApproved = String(packageRecord?.statement?.state || '').toUpperCase() === 'APPROVED'
+  let status = 'CURRENT'
+  if (!packageRecord) status = 'MISSING'
+  else if (stale) status = 'STALE'
+  else if (managementApproval !== 'ACCEPTED' || !statementApproved) status = 'PENDING_APPROVAL'
+  const messages = {
+    MISSING: 'The linked accounting engagement has no package on record yet.',
+    STALE: `Accounting input g${accountingInputGeneration} is ahead of the audit-evaluated g${auditEvaluatedGeneration}. Evaluate the current package before relying on it.`,
+    PENDING_APPROVAL: 'Management approval of the accounting package is not on record yet.',
+    CURRENT: `The audit has evaluated the current accounting input g${accountingInputGeneration}.`,
+  }
+  return {
+    status,
+    applicable: true,
+    engagementId: id,
+    accountingEngagementId: accounting.id,
+    packageId: packageRecord?.id || '',
+    packageLabel: accountingPackageLabel(packageRecord),
+    managementApproval,
+    accountingInputGeneration,
+    auditEvaluatedGeneration,
+    stale,
+    actionLabel: stale ? `Evaluate g${accountingInputGeneration}` : '',
+    message: messages[status],
+  }
+}
+
+/**
+ * Consolidated engagement completion checklist, in professional order.
+ * state semantics: COMPLETE (done) | ATTENTION (actionable now) | PENDING
+ * (waiting on an upstream item).
+ */
+export function deriveEngagementCompletionChecklist(state, engagementId) {
+  const id = String(engagementId || '')
+  const engagement = engagementById(state, id)
+  if (!engagement) return { engagementId: id, items: [], completeCount: 0, totalCount: 0, complete: false }
+
+  const evidence = engagement.evidence || {}
+  const team = engagement.team || []
+  const has = (role) => team.some((member) => member?.role === role)
+  const commercial = (state.commercialRecords || []).find((entry) => entry.engagementId === id) || null
+  const acceptance = (state.assessments || []).find((entry) => entry.engagementId === id && entry.type === 'acceptance') || null
+  const terms = (state.terms || []).find((entry) => entry.engagementId === id) || null
+  const workpapers = (state.workpapers || []).filter((entry) => entry.engagementId === id)
+  const submitted = workpapers.filter((entry) => String(entry.state || '').toUpperCase() !== 'DRAFT')
+  const seniorCleared = submitted.filter((entry) => entry.seniorReviewed === true || String(entry.reviewState || '').toUpperCase() === 'SENIOR_CLEARED')
+  const pbcRequests = (state.pbcRequests || []).filter((entry) => entry.engagementId === id)
+  const acceptedPbc = pbcRequests.filter((entry) => ['ACCEPTED', 'CLOSED'].includes(String(entry.state || '').toUpperCase()))
+  const handoff = deriveAccountingHandoff(state, id)
+  const recommendation = evidence.completionRecommendation
+  const recommended = typeof recommendation === 'string' ? recommendation === 'RECOMMEND_COMPLETE' : recommendation?.decision === 'RECOMMEND'
+  const eqrRequired = evidence.eqrRequired === true
+
+  const items = []
+  const add = (key, label, done, detail, upstreamDone = true) => {
+    items.push({ key, label, state: done ? 'COMPLETE' : upstreamDone ? 'ATTENTION' : 'PENDING', detail })
+  }
+  const ok = (key) => {
+    const item = items.find((entry) => entry.key === key)
+    return item?.state === 'COMPLETE' || item?.state === 'ATTENTION'
+  }
+
+  add('client-accepted', 'Client accepted', Boolean(acceptance?.decision && ['ACCEPT', 'CONTINUE'].includes(acceptance.decision.decision)), acceptance?.decision?.decision || 'Partner acceptance decision not recorded')
+  add('terms-accepted', 'Terms accepted', terms?.state === 'ACCEPTED' || terms?.clientDecision?.decision === 'ACCEPT', terms?.clientDecision?.decision || terms?.state || 'Engagement letter not accepted', ok('client-accepted'))
+  const advanceVerified = !commercial?.advanceRequired || Number(commercial.advanceRequired) === 0 || commercial.advanceState === 'VERIFIED'
+  add('advance', 'Advance verified', advanceVerified, advanceVerified ? 'No outstanding advance' : (commercial?.advanceState || 'Advance not verified'), ok('terms-accepted'))
+  const staffingGaps = !has('engagement_partner') || !has('audit_senior') || !has('preparer')
+  add('staffing', 'Staffing assigned', !staffingGaps, staffingGaps ? 'Required roles are not all assigned' : `${team.length} team member(s) assigned`, ok('terms-accepted'))
+  add('commenced', 'Audit commenced', evidence.accepted === true && engagement.auditCommenced === true, engagement.auditCommenced ? 'Audit commencement recorded' : 'Audit not commenced', ok('staffing'))
+  add('pbc', 'Information requests satisfied', pbcRequests.length > 0 && acceptedPbc.length === pbcRequests.length, `${acceptedPbc.length}/${pbcRequests.length} request(s) accepted`, ok('commenced'))
+  add('accounting', 'Accounting current', handoff.status === 'CURRENT' || handoff.status === 'NOT_APPLICABLE', handoff.message, ok('pbc'))
+  add('workpapers', 'Workpapers submitted', submitted.length > 0, `${submitted.length} submitted / ${workpapers.length} total`, ok('accounting'))
+  const seniorComplete = submitted.length > 0 && seniorCleared.length === submitted.length
+  add('senior-review', 'Senior review', seniorComplete, seniorComplete ? `All ${submitted.length} submitted workpaper(s) cleared` : `${seniorCleared.length}/${submitted.length} cleared by the Audit Senior`, ok('workpapers'))
+  add('manager-completion', 'Manager completion', recommended, recommended ? (typeof recommendation === 'string' ? recommendation : recommendation.decision) : 'Manager recommendation not recorded', ok('senior-review'))
+  add('partner-review', 'Partner review', evidence.partnerApproved === true, evidence.partnerApproved ? 'Partner approved the file' : 'Partner review outstanding', ok('manager-completion'))
+  add('eqr', 'EQR', !eqrRequired || evidence.eqrComplete === true, eqrRequired ? (evidence.eqrComplete ? 'Quality review complete' : 'Quality review outstanding') : 'Not required for this engagement', ok('partner-review'))
+  add('opinion', 'Opinion formed', evidence.partnerApproved === true, 'Partner opinion is recorded after EQR', ok('eqr'))
+  add('release', 'Released & archived', evidence.archiveVerified === true, evidence.archiveVerified ? 'Archive verified' : 'Release and archive outstanding', ok('opinion'))
+
+  const completeCount = items.filter((item) => item.state === 'COMPLETE').length
+  return { engagementId: id, items, completeCount, totalCount: items.length, complete: completeCount === items.length }
+}
+
 export function localNotificationProjection({ state, engagementId, personaId = '' } = {}) {
   const tasks = localTaskProjection(state, engagementId, personaId)
   const events = localActivityProjection(state, engagementId)

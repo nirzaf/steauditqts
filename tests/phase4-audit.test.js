@@ -32,7 +32,7 @@ function makeFakeDb() {
     if (sql.includes('INSERT INTO auditflow_tb_sources')) state.tb.set(`${p[1]}@${p[3]}`, { version: p[3], debit: p[7] });
     else if (sql.includes('INSERT INTO auditflow_workpapers')) state.workpapers.set(p[0], { workpaper_id: p[0], engagement_id: p[1], submitted_by: p[5], state: 'SUBMITTED', revision: 1 });
     else if (sql.includes('UPDATE auditflow_workpapers SET procedure_title')) { const w = state.workpapers.get(p[0]); if (w) { w.revision += 1; w.state = 'SUBMITTED'; w.submitted_by = p[4]; } }
-    else if (sql.includes("UPDATE auditflow_workpapers SET state = 'SENIOR_REVIEWED'")) { const w = state.workpapers.get(p[0]); if (w) w.state = 'SENIOR_REVIEWED'; }
+    else if (sql.includes('UPDATE auditflow_workpapers SET state')) { const w = state.workpapers.get(p[0]); if (w) w.state = p[1] || 'SENIOR_REVIEWED'; }
     else if (sql.includes('INSERT INTO auditflow_review_points')) state.reviews.set(p[0], { review_id: p[0], engagement_id: p[1], workpaper_id: p[2], severity: p[3], owner: p[4], author: p[5], state: 'OPEN' });
     else if (sql.includes("UPDATE auditflow_review_points SET response")) { const r = state.reviews.get(p[0]); if (r) { r.response = p[1]; r.state = 'CLEARED'; } }
     else if (sql.includes('INSERT INTO auditflow_artifacts')) state.artifacts.push({ document_id: p[0], engagement_id: p[1], document_type: 'DRAFT_FS', version: p[3], state: 'PUBLISHED', created_at: `2026-09-14 0${state.artifacts.length}:00:00` });

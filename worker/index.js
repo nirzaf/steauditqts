@@ -4,6 +4,15 @@ import { clientEvaluationQuestionIds, clientEvaluationQuestions, QUESTION_BANK_V
 import { evaluateAssessment } from '../src/domain/assessments.js';
 import { SHARED_ACTION_SET, validateActionPayload, validateCommandEnvelope } from '../shared/actionContracts.js';
 import { staffingProfileBlockers, validateAssignmentActor, validateDateRange, validatePlannedHours } from '../shared/staffingRules.js';
+import {
+  isWorkpaperSubmitted,
+  managerCompletionGateBlockers,
+  normalizeSeniorReviewDecision,
+  SENIOR_REVIEW_ROLES,
+  seniorReviewGateFrom,
+  staffingPolicyFor,
+  SUBMITTED_WORKPAPER_STATES,
+} from '../shared/lifecycleRules.js';
 import { questionPolicyFor, validateQuestionResponse } from '../shared/questionPolicy.js';
 import { buildWorkspaceProjection, isWorkspaceEventPublic } from './application/workspace.js';
 import { actionAllowed, actionDefinition } from './application/actions.js';
@@ -418,10 +427,10 @@ const DEMO_ACTORS = Object.freeze(Object.fromEntries(
   ]),
 ));
 
-// Workpapers cleared by senior review remain submitted evidence. Every gate
-// that requires "submitted workpapers" must accept both states, otherwise a
-// fully senior-reviewed file would read as having no submitted workpapers.
-const SUBMITTED_WORKPAPER_STATES = ['SUBMITTED', 'SENIOR_REVIEWED'];
+// Workpapers cleared or returned by the senior review remain submitted evidence.
+// Every gate that requires "submitted workpapers" must accept each state in
+// shared/lifecycleRules.js, otherwise a fully senior-reviewed file would read as
+// having no submitted workpapers at all.
 
 function submittedWorkpaperFilter(alias = '') {
   const prefix = alias ? alias + '.' : '';
@@ -435,18 +444,17 @@ async function countSubmittedWorkpapers(env, engagementId) {
   return Number(row?.n || 0);
 }
 
-async function readSeniorReviewGate(env, engagementId) {
+async function readWorkpaperRows(env, engagementId) {
   const rows = await env.DB.prepare(
-    `SELECT workpaper_id, state FROM auditflow_workpapers WHERE engagement_id = ?1 AND state <> 'DRAFT'`,
+    `SELECT workpaper_id, state FROM auditflow_workpapers WHERE engagement_id = ?1`,
   ).bind(engagementId).all().catch(() => ({ results: [] }));
-  const submitted = rows.results || [];
-  const pending = submitted.filter((row) => String(row.state || '').toUpperCase() !== 'SENIOR_REVIEWED');
-  return {
-    complete: submitted.length > 0 && pending.length === 0,
-    total: submitted.length,
-    reviewed: submitted.length - pending.length,
-    pending: pending.map((row) => row.workpaper_id),
-  };
+  return rows.results || [];
+}
+
+async function readSeniorReviewGate(env, engagementId) {
+  // One predicate for both runtimes: LOCAL_ONLY records the clearance on
+  // reviewState, D1 records it on state, and shared/lifecycleRules.js reads both.
+  return seniorReviewGateFrom(await readWorkpaperRows(env, engagementId));
 }
 
 function readSessionId(request) {
@@ -3315,17 +3323,33 @@ async function actionStartAudit(request, env, session, id, payload, correlationI
 }
 
 async function actionRecordSeniorReview(request, env, session, id, payload, correlationId) {
-  if (!hasAnyRole(session, ['audit_senior', 'audit_manager'])) {
-    return error(request, 'Only an Audit Senior or Audit Manager can record senior reviews.', 403, 'ROLE_NOT_AUTHORIZED');
+  if (!hasAnyRole(session, SENIOR_REVIEW_ROLES)) {
+    return error(request, `Only ${SENIOR_REVIEW_ROLES.map((role) => role.replace('_', ' ')).join(' or ')} roles can record senior reviews.`, 403, 'ROLE_NOT_AUTHORIZED');
   }
   const workpaperId = cleanText(payload.workpaperId, 80);
   if (!workpaperId) return error(request, 'workpaperId is required.');
+  // A senior review records a professional outcome. Only an explicit PASSED
+  // clears the workpaper; FAILED returns it to the preparer and keeps the
+  // manager completion gate shut, exactly as LOCAL_ONLY behaves.
+  const decision = normalizeSeniorReviewDecision(payload.decision);
+  if (decision.code) return error(request, decision.message, 400, decision.code);
   const workpaper = await env.DB.prepare('SELECT * FROM auditflow_workpapers WHERE workpaper_id = ?1 AND engagement_id = ?2').bind(workpaperId, id).first();
   if (!workpaper) return error(request, 'Workpaper not found on this engagement.', 404, 'WORKPAPER_NOT_FOUND');
+  if (!isWorkpaperSubmitted({ state: workpaper.state })) {
+    return error(request, 'A senior review is recorded against a submitted workpaper.', 409, 'WORKPAPER_NOT_SUBMITTED');
+  }
+  const passed = decision.decision === 'PASSED';
+  const nextState = passed ? 'SENIOR_REVIEWED' : 'SENIOR_RETURNED';
   await env.DB.prepare(
-    `UPDATE auditflow_workpapers SET state = 'SENIOR_REVIEWED', updated_at = datetime('now') WHERE workpaper_id = ?1`,
-  ).bind(workpaperId).run();
+    `UPDATE auditflow_workpapers SET state = ?2, updated_at = datetime('now') WHERE workpaper_id = ?1`,
+  ).bind(workpaperId, nextState).run();
   await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`wp-senior-review-${workpaperId}`).run();
+  if (passed) {
+    await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`wp-correct-${workpaperId}`).run();
+  } else {
+    // P4 handoff — the returned workpaper is the preparer's work now.
+    await upsertTask(env, { taskId: `wp-correct-${workpaperId}`, engagementId: id, assigneeRole: 'preparer', title: `Re-perform the returned workpaper (${workpaperId}): ${cleanText(payload.notes || payload.note, 300) || 'Senior requirements not met'}`, state: 'OPEN', linkedObjectType: 'workpaper', linkedObjectId: workpaperId });
+  }
   const engagement = await touchEngagement(env, id, null);
   await appendEvent(env, {
     engagementId: id,
@@ -3352,7 +3376,7 @@ async function actionRecordSeniorReview(request, env, session, id, payload, corr
       linkedObjectId: id,
     });
   }
-  return json(request, { ok: true, workpaperId, state: 'SENIOR_REVIEWED', seniorReview: seniorGate, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
+  return json(request, { ok: true, workpaperId, state: nextState, decision: decision.decision, seniorReview: seniorGate, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
 }
 
 async function readCommandReceipt(env, { generationId, engagementId, actorId, idempotencyKey } = {}) {

@@ -13,6 +13,7 @@ import {
   qualifyLead,
   convertLeadToClient,
   createLead,
+  recordCompletionRecommendation,
   recordSeniorReview,
   resetScenario,
   scenario,
@@ -265,4 +266,99 @@ test('P3: DRAFT workpaper does not count toward senior review gate', () => {
   const gate = deriveSeniorReviewGate(engagementId)
   assert.equal(gate.complete, true)
   assert.equal(gate.total, 1)
+})
+
+// ─── P8A: a senior review records an outcome, and only PASSED clears ────────
+
+function submitBothWorkpapers(engagementId) {
+  scenario.workpapers.forEach((wp) => {
+    if (wp.engagementId === engagementId && wp.state === 'DRAFT') {
+      wp.state = 'SUBMITTED'
+      wp.submittedSnapshotId = `SNAP-${wp.id}-P8A`
+    }
+  })
+}
+
+test('P8A: a FAILED senior review returns the workpaper and never clears the gate', () => {
+  const engagementId = 'ENG-0018-AUD-2026'
+  submitBothWorkpapers(engagementId)
+  const returned = recordSeniorReview({
+    engagementId,
+    workpaperId: 'WP-AR-01',
+    actorPersonaId: 'audit-senior-demo',
+    decision: 'FAILED',
+    notes: 'Sample was not representative; re-perform the test.',
+  })
+  assert.equal(returned.outcome, 'COMMITTED')
+  const workpaper = scenario.workpapers.find((w) => w.id === 'WP-AR-01')
+  assert.equal(workpaper.seniorReviewed, false)
+  assert.equal(workpaper.reviewState, 'SENIOR_RETURNED')
+  recordSeniorReview({ engagementId, workpaperId: 'WP-INV-01', actorPersonaId: 'audit-senior-demo', decision: 'PASSED' })
+  const gate = deriveSeniorReviewGate(engagementId)
+  assert.equal(gate.complete, false)
+  assert.equal(gate.returned, 1)
+})
+
+test('P8A: a returned workpaper cannot unblock a manager completion recommendation', () => {
+  const engagementId = 'ENG-0018-AUD-2026'
+  submitBothWorkpapers(engagementId)
+  recordSeniorReview({ engagementId, workpaperId: 'WP-AR-01', actorPersonaId: 'audit-senior-demo', decision: 'FAILED', notes: 'Re-perform the sample.' })
+  recordSeniorReview({ engagementId, workpaperId: 'WP-INV-01', actorPersonaId: 'audit-senior-demo', decision: 'PASSED' })
+  const recommendation = recordCompletionRecommendation({
+    engagementId,
+    actorPersonaId: 'audit-manager-demo',
+    expectedSessionEpoch: 1,
+    idempotencyKey: 'p8a-recommend-after-return',
+    decision: 'RECOMMEND',
+    rationale: 'Manager believes the file is complete despite the returned workpaper.',
+  })
+  assert.equal(recommendation.outcome, 'BLOCKED')
+  // Both runtimes report the shared prerequisite order, so the senior gate is
+  // asserted through the reported blocker set rather than a single first code.
+  assert.ok((recommendation.blockers || []).some((entry) => entry.code === 'SENIOR_REVIEW_REQUIRED'), 'SENIOR_REVIEW_REQUIRED must be reported')
+})
+
+test('P8A: an unrecognised senior review decision is rejected without mutating the workpaper', () => {
+  const engagementId = 'ENG-0018-AUD-2026'
+  submitBothWorkpapers(engagementId)
+  const before = JSON.stringify(scenario.workpapers.find((w) => w.id === 'WP-AR-01'))
+  const rejected = recordSeniorReview({ engagementId, workpaperId: 'WP-AR-01', actorPersonaId: 'audit-senior-demo', decision: 'LOOKS_FINE' })
+  assert.equal(rejected.outcome, 'BLOCKED')
+  assert.equal(rejected.code, 'SENIOR_REVIEW_DECISION_INVALID')
+  assert.equal(JSON.stringify(scenario.workpapers.find((w) => w.id === 'WP-AR-01')), before)
+})
+
+test('P8A: recommending completion on an empty file reports NO_SUBMITTED_WORKPAPERS', () => {
+  const engagementId = 'ENG-0018-AUD-2026'
+  const recommendation = recordCompletionRecommendation({
+    engagementId,
+    actorPersonaId: 'audit-manager-demo',
+    expectedSessionEpoch: 1,
+    idempotencyKey: 'p8a-recommend-empty-file',
+    decision: 'RECOMMEND',
+    rationale: 'Nothing has been submitted yet but the manager wants to proceed.',
+  })
+  assert.equal(recommendation.outcome, 'BLOCKED')
+  assert.equal(recommendation.code, 'NO_SUBMITTED_WORKPAPERS')
+})
+
+test('P8A: senior review authority is the shared role list, not the admin escape hatch', () => {
+  const engagementId = 'ENG-0018-AUD-2026'
+  submitBothWorkpapers(engagementId)
+  const byAdmin = recordSeniorReview({ engagementId, workpaperId: 'WP-AR-01', actorPersonaId: 'admin-demo', decision: 'PASSED' })
+  assert.equal(byAdmin.outcome, 'DENIED')
+  assert.equal(byAdmin.code, 'SENIOR_REVIEW_AUTHORITY_REQUIRED')
+  const byPartner = recordSeniorReview({ engagementId, workpaperId: 'WP-AR-01', actorPersonaId: 'partner-demo', decision: 'PASSED' })
+  assert.equal(byPartner.outcome, 'DENIED')
+  assert.equal(byPartner.code, 'SENIOR_REVIEW_AUTHORITY_REQUIRED')
+})
+
+test('P8A: re-performing a returned workpaper clears it', () => {
+  const engagementId = 'ENG-0018-AUD-2026'
+  submitBothWorkpapers(engagementId)
+  recordSeniorReview({ engagementId, workpaperId: 'WP-AR-01', actorPersonaId: 'audit-senior-demo', decision: 'FAILED', notes: 'Re-perform the sample.' })
+  recordSeniorReview({ engagementId, workpaperId: 'WP-AR-01', actorPersonaId: 'audit-senior-demo', decision: 'PASSED', notes: 'Re-performed sample is representative.' })
+  const workpaper = scenario.workpapers.find((w) => w.id === 'WP-AR-01')
+  assert.equal(workpaper.seniorReviewed, true)
+  assert.equal(workpaper.reviewState, 'SENIOR_CLEARED')
 })

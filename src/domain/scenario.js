@@ -4,6 +4,21 @@ import { createAssessment, evaluateAssessment, recordPartnerDecision as recordAs
 import { clientEvaluationQuestions } from './questionBanks.js'
 import { baselineFixture, fixtureRows, registerJournalRevision, replacementFixture, sourceReflection, summarizeRows } from './accounting.js'
 import { auditRiskFixture, calculateMateriality, evaluateAuditChain, findingFixture, inventoryPopulationFixture, materialityFixture, populationFixture, sampleFixture } from './audit.js'
+import { staffingProfileBlockers, STAFFING_ROLE_REQUIREMENTS, validateDateRange, validatePlannedHours } from '../../shared/staffingRules.js'
+import {
+  actorHoldsAnyRole,
+  completionRecommendationView,
+  managerCompletionGateBlockers,
+  mergeTeamAssignments,
+  normalizeSeniorReviewDecision,
+  SENIOR_REVIEW_ROLES,
+  seniorReviewGateFrom,
+} from '../../shared/lifecycleRules.js'
+
+// The staffing contract is defined once in shared/staffingRules.js so the
+// browser-local domain and the shared Worker enforce identical rules. It is
+// re-exported here for existing domain consumers.
+export { STAFFING_ROLE_REQUIREMENTS, staffingProfileBlockers, validateDateRange, validatePlannedHours }
 
 export const SCENARIO_VERSION = 2
 export const SCENARIO_STORAGE_KEY = 'auditflow-scenario-v2'
@@ -192,6 +207,13 @@ function initialScenario() {
           partnerApproved: false,
           eqrRequired: true,
           eqrComplete: false,
+          // P5 — accounting package generations evaluated by the audit team.
+          // The linked accounting engagement (ENG-0018-ACC-2026) is at g2 and
+          // the audit has evaluated the same generation, so the handoff starts
+          // CURRENT. Source mutations bump the accounting generation and leave
+          // this evaluated value behind, which surfaces as STALE.
+          accountingInputGeneration: 2,
+          accountingEvaluatedGeneration: 2,
           completionRecommendation: null,
           protection: 'UNKNOWN',
           archiveVerified: false,
@@ -946,6 +968,51 @@ export function accountingPackageFor(engagementId = scenario.selectedEngagementI
   return scenario.accountingPackages?.find((item) => item.engagementId === engagementId) || null
 }
 
+/**
+ * P5 — accounting input generations for an audit engagement.
+ * Mirrors the shared Worker accounting_status contract: the accounting side
+ * advances `input` when its package changes, and the audit side evaluates it
+ * back to `evaluated` via evaluateAccountingInput(). A gap means the audit is
+ * working from a superseded accounting package.
+ */
+export function accountingGenerationsFor(engagementId = scenario.selectedEngagementId) {
+  const engagement = engagementById(engagementId)
+  if (!engagement) return { input: 1, evaluated: 1, linkedAccountingEngagementId: '' }
+  const linked = linkedAccountingEngagementFor(engagement)
+  const linkedGeneration = linked?.inputGeneration ?? null
+  const input = Number(engagement.evidence?.accountingInputGeneration ?? linkedGeneration ?? engagement.inputGeneration ?? 1)
+  const evaluated = Number(engagement.evidence?.accountingEvaluatedGeneration ?? input)
+  return { input, evaluated, linkedAccountingEngagementId: linked?.id || '' }
+}
+
+/**
+ * Record that the audit team evaluated the current accounting input generation.
+ * Authority mirrors the shared Worker: Audit Senior or Audit Manager.
+ */
+export function evaluateAccountingInput({ engagementId = scenario.selectedEngagementId, actorPersonaId, expectedRevision, expectedSessionEpoch, idempotencyKey } = {}) {
+  const engagement = engagementById(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'EVALUATE_ACCOUNTING_INPUT', targetId: engagementId, engagementId, payload: { expectedRevision, expectedSessionEpoch } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !actor?.active || !canViewEngagement(actor.id, engagementId)) return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot evaluate this accounting input.' }))
+  if (!actor.roles?.some((r) => ['audit_senior', 'audit_manager'].includes(r))) return finish(commandResult('DENIED', { code: 'ACCOUNTING_INPUT_AUTHORITY_REQUIRED', message: 'Only an Audit Senior or Audit Manager can evaluate the accounting input.' }))
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (expectedRevision != null && expectedRevision !== engagement.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected engagement revision ${expectedRevision}, current revision is ${engagement.revision}.`, revision: engagement.revision }))
+  const generations = accountingGenerationsFor(engagementId)
+  if (generations.input === generations.evaluated) {
+    return finish(commandResult('COMMITTED', { data: { engagementId, inputGeneration: generations.input, evaluatedGeneration: generations.evaluated, duplicate: true }, revision: engagement.revision, operationId: `EVAL-${engagementId}-g${generations.input}` }))
+  }
+  engagement.evidence.accountingInputGeneration = generations.input
+  engagement.evidence.accountingEvaluatedGeneration = generations.input
+  engagement.revision += 1
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'ACCOUNTING_INPUT_EVALUATED', engagementId, inputGeneration: generations.input, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: { engagementId, inputGeneration: generations.input, evaluatedGeneration: generations.input, duplicate: false }, revision: engagement.revision, operationId: `EVAL-${engagementId}-g${generations.input}` }))
+}
+
 export function renewalCaseFor(engagementId = scenario.selectedEngagementId) {
   return scenario.renewalCases?.find((item) => item.shellEngagementId === engagementId || item.sourceEngagementId === engagementId) || null
 }
@@ -1535,37 +1602,10 @@ export function activateEngagement({ engagementId = scenario.selectedEngagementI
 
 /**
  * Assign or update engagement team members, planned hours, dates, and responsibilities.
+ *
+ * Validation and roster semantics are delegated to the shared rule modules so an
+ * assignment that commits in LOCAL_ONLY has the same meaning in SHARED_DEMO.
  */
-// Role-to-required-actor-role mapping for strict staffing validation.
-// The browser cannot claim a role mismatch unless explicitly validated here.
-const STAFFING_ROLE_REQUIREMENTS = {
-  preparer: ['preparer'],
-  audit_senior: ['audit_senior'],
-  audit_manager: ['audit_manager'],
-  engagement_partner: ['engagement_partner', 'signatory'],
-  eqr_reviewer: ['eqr_reviewer'],
-  accounting_reviewer: ['accounting_reviewer'],
-}
-
-/**
- * Validate a staffing hours value — must be a non-negative decimal.
- */
-function validatePlannedHours(hours) {
-  const raw = String(hours ?? '0').trim()
-  if (!/^\d{1,6}(?:\.\d{1,2})?$/.test(raw)) return { code: 'HOURS_INVALID', message: `Planned hours "${raw}" must be a non-negative number with up to two decimals.` }
-  return { hours: raw }
-}
-
-/**
- * Validate that start date is not after end date when both are present.
- */
-function validateDateRange(startDate, endDate) {
-  if (startDate && endDate && startDate > endDate) {
-    return { code: 'DATE_RANGE_INVALID', message: `Start date ${startDate} cannot be after end date ${endDate}.` }
-  }
-  return null
-}
-
 export function assignEngagementTeam({
   engagementId = scenario.selectedEngagementId,
   actorPersonaId = scenario.activePersonaId,
@@ -1641,6 +1681,19 @@ export function assignEngagementTeam({
 }
 
 /**
+ * Resolve the linked accounting engagement for an audit engagement.
+ * Accounting packages are linked either by an explicit linkedEngagementId on
+ * either side of the pair. Shared by commencement staffing blockers and the
+ * P5 accounting->audit handoff projection.
+ */
+export function linkedAccountingEngagementFor(engagement) {
+  if (!engagement || engagement.service !== 'audit') return null
+  return (scenario.engagements || []).find(
+    (e) => e.service === 'accounting' && (e.id === engagement.linkedEngagementId || e.linkedEngagementId === engagement.id),
+  ) || null
+}
+
+/**
  * Audit commencement prerequisite checks before START_AUDIT can be committed.
  * Returns precise per-role blocker codes (STORY 5).
  */
@@ -1659,66 +1712,37 @@ export function auditCommencementBlockers(engagementId = scenario.selectedEngage
   if (commercial?.advanceRequired && commercial.advanceState !== 'VERIFIED' && Number(commercial.advanceRequired) > 0) {
     blockers.push({ code: 'ADVANCE_REQUIRED', message: 'The required advance payment must be verified before commencing the audit.' })
   }
-  // P2+P5: Derive precise staffing profile blockers per role
-  const team = engagement.team || []
-  const hasPartner = team.some((m) => m.role === 'engagement_partner')
-  const hasSenior = team.some((m) => m.role === 'audit_senior')
-  const hasManager = team.some((m) => m.role === 'audit_manager')
-  const hasPreparer = team.some((m) => m.role === 'preparer')
-  const hasAccountingReviewer = team.some((m) => m.role === 'accounting_reviewer')
-  if (!hasPartner) {
-    blockers.push({ code: 'PARTNER_REQUIRED', message: 'An Engagement Partner must be assigned before commencing the audit.' })
-  }
-  if (!hasSenior) {
-    blockers.push({ code: 'AUDIT_SENIOR_REQUIRED', message: 'An Audit Senior must be assigned before commencing the audit.' })
-  }
-  // Audit Manager is required unless the engagement is explicitly configured as small-firm (no linkedEngagementId and no manager policy)
-  const smallFirmMode = engagement.smallFirmMode === true
-  if (!hasManager && !smallFirmMode) {
-    blockers.push({ code: 'AUDIT_MANAGER_REQUIRED', message: 'An Audit Manager must be assigned before commencing the audit. For small-firm engagements, set smallFirmMode: true.' })
-  }
-  if (!hasPreparer) {
-    blockers.push({ code: 'PREPARER_REQUIRED', message: 'At least one Preparer must be assigned before commencing the audit.' })
-  }
-  // Accounting reviewer is required when there is a linked accounting engagement
-  const linkedAccountingEngagement = scenario.engagements?.find(
-    (e) => e.service === 'accounting' && (e.id === engagement.linkedEngagementId || e.linkedEngagementId === engagement.id),
-  )
-  if (linkedAccountingEngagement && !hasAccountingReviewer) {
-    blockers.push({ code: 'ACCOUNTING_REVIEWER_REQUIRED', message: 'An Accounting Technical Reviewer must be assigned because this engagement has a linked accounting package.' })
-  }
+  // P2+P5: Derive precise staffing profile blockers per role from the SHARED
+  // rule set (shared/staffingRules.js) so LOCAL_ONLY and SHARED_DEMO agree.
+  const linkedAccountingEngagement = linkedAccountingEngagementFor(engagement)
+  blockers.push(...staffingProfileBlockers(engagement.team || [], {
+    smallFirmMode: engagement.smallFirmMode === true,
+    requiresAccountingReviewer: Boolean(linkedAccountingEngagement),
+    eqrRequired: engagement.evidence?.eqrRequired === true,
+  }))
   return blockers
 }
 
 /**
- * Derive the SENIOR_REVIEW_COMPLETE status for an engagement (STORY 2 / P3).
- * Returns { complete: boolean, reviewed: number, total: number, pending: string[] }.
+ * Every workpaper recorded against one engagement, in the shape the shared
+ * lifecycle rules expect (state + reviewState + seniorReviewed).
+ */
+export function workpapersFor(engagementId = scenario.selectedEngagementId) {
+  const id = String(engagementId || '')
+  return (scenario.workpapers || []).filter((wp) => wp.engagementId === id)
+}
+
+/**
+ * Derive the SENIOR_REVIEW_COMPLETE status for an engagement (STORY 2 / P3 / P8A).
+ * Returns { complete, reviewed, returned, total, pending, message }.
  *
- * Senior review is complete when ALL submitted workpapers for the engagement
- * have been reviewed and cleared by an Audit Senior.
- * A DRAFT workpaper (not yet submitted) does not block senior completion.
+ * The predicate itself lives in shared/lifecycleRules.js so the local domain,
+ * the shared Worker and every presenter ask the same question in the same way:
+ * a workpaper is cleared only when an Audit Senior passed it, and a DRAFT (never
+ * submitted) workpaper does not hold the gate.
  */
 export function deriveSeniorReviewGate(engagementId = scenario.selectedEngagementId) {
-  const workpapers = (scenario.workpapers || []).filter(
-    (wp) => wp.engagementId === engagementId,
-  )
-  // Only submitted (non-DRAFT) workpapers count toward the senior gate
-  const submitted = workpapers.filter((wp) => wp.state !== 'DRAFT')
-  if (submitted.length === 0) {
-    return { complete: false, reviewed: 0, total: 0, pending: [], message: 'No submitted workpapers yet. Senior review cannot be complete.' }
-  }
-  const reviewed = submitted.filter((wp) => wp.reviewState === 'SENIOR_CLEARED' || wp.seniorReviewed === true)
-  const pendingWps = submitted.filter((wp) => !wp.seniorReviewed && wp.reviewState !== 'SENIOR_CLEARED')
-  const complete = pendingWps.length === 0
-  return {
-    complete,
-    reviewed: reviewed.length,
-    total: submitted.length,
-    pending: pendingWps.map((wp) => ({ id: wp.id, title: wp.title, reviewState: wp.reviewState || 'OPEN' })),
-    message: complete
-      ? `Senior review complete: all ${submitted.length} submitted workpaper(s) cleared.`
-      : `Senior review incomplete: ${pendingWps.length} of ${submitted.length} workpaper(s) still need Senior review.`,
-  }
+  return seniorReviewGateFrom(workpapersFor(engagementId))
 }
 
 /**
@@ -1778,11 +1802,16 @@ export function startAudit({
 
 /**
  * Record an explicit Audit Senior review on a submitted workpaper before Manager completion.
+ *
+ * A senior review is a professional outcome, not a checkbox: only an explicit
+ * PASSED clears the workpaper. A FAILED review returns it to the preparer and
+ * keeps the manager completion gate shut, in both demo modes.
  */
 export function recordSeniorReview({
   engagementId = scenario.selectedEngagementId,
   workpaperId,
   actorPersonaId = scenario.activePersonaId,
+  expectedRevision,
   expectedSessionEpoch,
   idempotencyKey,
   decision = 'PASSED',
@@ -1792,29 +1821,37 @@ export function recordSeniorReview({
   const engagement = engagementById(engagementId)
   const actor = actorForPersona(actorPersonaId)
   const finalNote = notes || note || ''
-  const fingerprint = commandFingerprint({ action: 'RECORD_SENIOR_REVIEW', targetId: workpaperId, engagementId, payload: { expectedSessionEpoch, workpaperId, note: finalNote, decision } })
+  const normalized = normalizeSeniorReviewDecision(decision)
+  const fingerprint = commandFingerprint({ action: 'RECORD_SENIOR_REVIEW', targetId: workpaperId, engagementId, payload: { expectedRevision, expectedSessionEpoch, workpaperId, note: finalNote, decision: normalized.decision || String(decision || '').toUpperCase() } })
   const prior = existingReceipt(idempotencyKey, fingerprint)
   if (prior) return prior
   const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
   if (!engagement || !actor?.active || !canViewEngagement(actor.id, engagementId)) {
     return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot review workpapers for this engagement.' }))
   }
-  if (!actor.roles?.some((r) => ['audit_senior', 'audit_manager', 'system_admin'].includes(r))) {
-    return finish(commandResult('DENIED', { code: 'SENIOR_REVIEW_AUTHORITY_REQUIRED', message: 'Only an Audit Senior or Audit Manager can record senior reviews.' }))
+  if (!actorHoldsAnyRole(actor, SENIOR_REVIEW_ROLES)) {
+    return finish(commandResult('DENIED', { code: 'SENIOR_REVIEW_AUTHORITY_REQUIRED', message: `Only ${SENIOR_REVIEW_ROLES.map((role) => role.replace('_', ' ')).join(' or ')} roles can record senior reviews.` }))
   }
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish(stale)
+  if (normalized.code) return finish(commandResult('BLOCKED', { code: normalized.code, message: normalized.message }))
   const workpaper = (scenario.workpapers || []).find((wp) => wp.id === workpaperId && wp.engagementId === engagementId)
   if (!workpaper) return finish(commandResult('BLOCKED', { code: 'WORKPAPER_NOT_FOUND', message: `Workpaper ${workpaperId} was not found on this engagement.` }))
-  workpaper.seniorReviewed = true
-  workpaper.seniorReviewState = decision === 'PASSED' ? 'APPROVED' : 'NEEDS_WORK'
-  workpaper.reviewState = decision === 'PASSED' ? 'SENIOR_CLEARED' : 'NEEDS_WORK'
+  if (expectedRevision != null && expectedRevision !== workpaper.revision) {
+    return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected workpaper revision ${expectedRevision}, current revision is ${workpaper.revision}.`, revision: workpaper.revision }))
+  }
+  const passed = normalized.decision === 'PASSED'
+  workpaper.seniorReviewed = passed
+  workpaper.seniorReviewState = passed ? 'APPROVED' : 'NEEDS_WORK'
+  workpaper.reviewState = passed ? 'SENIOR_CLEARED' : 'SENIOR_RETURNED'
   workpaper.seniorReviewedBy = actor.id
   workpaper.seniorReviewedAt = new Date().toISOString()
   workpaper.seniorReviewNote = finalNote
   workpaper.seniorReviewNotes = finalNote
   workpaper.revision = (workpaper.revision || 1) + 1
-  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'WORKPAPER_SENIOR_REVIEWED', engagementId, workpaperId, actorId: actor.id, revision: workpaper.revision, evidenceLevel: EVIDENCE_LEVEL })
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'WORKPAPER_SENIOR_REVIEWED', engagementId, workpaperId, actorId: actor.id, decision: normalized.decision, revision: workpaper.revision, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
-  return finish(commandResult('COMMITTED', { data: workpaper, revision: workpaper.revision, operationId: workpaper.id }))
+  return finish(commandResult('COMMITTED', { data: workpaper, revision: workpaper.revision, seniorReview: deriveSeniorReviewGate(engagementId), operationId: workpaper.id }))
 }
 
 function copyContinuanceResponses(sourceAssessment, targetAssessment) {
@@ -1918,6 +1955,18 @@ function applicable(definition, engagement) {
 
 function openReviewBlockers(engagementId) {
   return scenario.reviews.filter((point) => point.engagementId === engagementId && point.status !== 'CLEARED' && point.severity === 'SIGNIFICANT').map((point) => ({ id: point.id, code: 'REVIEW_POINT_OPEN', message: point.title }))
+}
+
+/**
+ * Count of every unresolved review point on an engagement.
+ *
+ * The shared Worker counts all OPEN points when it gates a completion
+ * recommendation, so LOCAL_ONLY has to count the same population — using only
+ * SIGNIFICANT points here would let a file recommend locally and be refused in
+ * the shared demo.
+ */
+export function openReviewPointCountFor(engagementId) {
+  return (scenario.reviews || []).filter((point) => point.engagementId === engagementId && point.status !== 'CLEARED').length
 }
 
 export function deriveGates(engagementId = scenario.selectedEngagementId) {
@@ -2031,6 +2080,10 @@ export function mutateAccountingInput({ engagementId = scenario.selectedEngageme
     linkedEngagement.revision += 1
     linkedEngagement.inputGeneration += 1
     linkedEngagement.dependencyState = 'STALE_FROM_LINKED_INPUT'
+    // P5 — keep the audit handoff generation truthful when accounting input moves.
+    if (linkedEngagement.service === 'audit' && engagement.service === 'accounting') {
+      linkedEngagement.evidence.accountingInputGeneration = engagement.inputGeneration
+    }
     scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LINKED_INPUT_INVALIDATED', engagementId: linkedEngagement.id, sourceEngagementId: engagement.id, actorId: actor.id, revision: linkedEngagement.revision, inputGeneration: linkedEngagement.inputGeneration, evidenceLevel: EVIDENCE_LEVEL })
   }
   const result = commandResult('COMMITTED', { data: { engagementId, inputGeneration: engagement.inputGeneration, impactCase: engagement.impactCase }, revision: engagement.revision })
@@ -2419,6 +2472,12 @@ function bumpLinkedInputGeneration(engagement, actor, reason) {
     linkedEngagement.revision += 1
     linkedEngagement.inputGeneration += 1
     linkedEngagement.dependencyState = 'STALE_FROM_LINKED_INPUT'
+    // P5 — the audit keeps its last evaluated accounting generation; the new
+    // accounting generation is now ahead, so the handoff reads STALE until the
+    // audit records evaluateAccountingInput().
+    if (linkedEngagement.service === 'audit' && engagement.service === 'accounting') {
+      linkedEngagement.evidence.accountingInputGeneration = engagement.inputGeneration
+    }
     scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LINKED_INPUT_INVALIDATED', engagementId: linkedEngagement.id, sourceEngagementId: engagement.id, actorId: actor.id, revision: linkedEngagement.revision, inputGeneration: linkedEngagement.inputGeneration, evidenceLevel: EVIDENCE_LEVEL })
   }
   return { engagement, linkedEngagement }
@@ -2663,7 +2722,15 @@ export function reviewWorkpaper({ workpaperId, actorPersonaId, expectedRevision,
 function completionBlockersFor(engagement) {
   if (!engagement) return []
   const blockers = [...openReviewBlockers(engagement.id)]
-  if (engagement.service === 'audit') blockers.push(...auditChainSummary(engagement.id).blockers)
+  if (engagement.service === 'audit') {
+    blockers.push(...auditChainSummary(engagement.id).blockers)
+    // P8A — Senior Review is a real Manager Completion prerequisite, not a
+    // display-only derivation. A RECOMMEND is rejected outright by
+    // recordCompletionRecommendation; HOLD and RETURN_FOR_CORRECTION stay
+    // recordable, so the outstanding senior work has to remain visible here.
+    const seniorGate = deriveSeniorReviewGate(engagement.id)
+    if (!seniorGate.complete && seniorGate.total > 0) blockers.push({ code: 'SENIOR_REVIEW_REQUIRED', message: seniorGate.message })
+  }
   if (!engagement.evidence.managementApproved) blockers.push({ code: 'MANAGEMENT_RESPONSE_REQUIRED', message: 'Management responsibility is not yet bound to the current package.' })
   if (engagement.evidence.eqrRequired && !engagement.evidence.eqrComplete) blockers.push({ code: 'EQR_INCOMPLETE', message: 'The required independent engagement quality review is not complete.' })
   const unique = new Map()
@@ -2692,6 +2759,23 @@ export function recordCompletionRecommendation({ engagementId = scenario.selecte
   if (expectedRevision != null && expectedRevision !== engagement.revision) return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected engagement revision ${expectedRevision}, current revision is ${engagement.revision}.`, revision: engagement.revision }))
   if (!['RECOMMEND', 'HOLD', 'RETURN_FOR_CORRECTION'].includes(normalizedDecision)) return finish(commandResult('BLOCKED', { code: 'COMPLETION_DECISION_INVALID', message: 'Choose RECOMMEND, HOLD, or RETURN_FOR_CORRECTION.' }))
   if (cleanRationale.length < 8) return finish(commandResult('BLOCKED', { code: 'COMPLETION_RATIONALE_REQUIRED', message: 'A completion recommendation needs a concise evidence-based rationale.' }))
+  // P8A — a RECOMMEND is a hard-gated decision. The prerequisite order comes
+  // from shared/lifecycleRules.js so LOCAL_ONLY and SHARED_DEMO refuse the same
+  // file state with the same code. Softer blockers (partner review, EQR) stay
+  // visible on the recorded recommendation as CONDITIONAL context.
+  if (normalizedDecision === 'RECOMMEND' && engagement.service === 'audit') {
+    const gateBlockers = managerCompletionGateBlockers({
+      workpapers: workpapersFor(engagement.id),
+      openReviewPointCount: openReviewPointCountFor(engagement.id),
+    })
+    if (gateBlockers.length) {
+      return finish(commandResult('BLOCKED', {
+        code: gateBlockers[0].code,
+        message: gateBlockers[0].message,
+        blockers: gateBlockers,
+      }))
+    }
+  }
   const blockers = completionBlockersFor(engagement)
   const recommendation = {
     decision: normalizedDecision,
@@ -2707,6 +2791,16 @@ export function recordCompletionRecommendation({ engagementId = scenario.selecte
   scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'COMPLETION_RECOMMENDATION_RECORDED', engagementId, decision: normalizedDecision, blockerCount: blockers.length, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
   return finish(commandResult('COMMITTED', { data: recommendation, revision: engagement.revision, operationId: `COMPLETION-${engagementId}` }))
+}
+
+/**
+ * Normalize the manager completion recommendation for display projections.
+ * The normalization itself is shared (shared/lifecycleRules.js) so a presenter
+ * can never read a recorded recommendation as "not recorded".
+ */
+export function completionRecommendationFor(engagementId = scenario.selectedEngagementId) {
+  const engagement = engagementById(engagementId)
+  return completionRecommendationView(engagement?.evidence?.completionRecommendation ?? null)
 }
 
 export const providerFaults = ['NONE', '429_RETRY_AFTER', '403_FORBIDDEN', '500_SERVER_ERROR', 'TIMEOUT_AFTER_UPLOAD_SUCCESS', 'EXPIRED_LEASE', 'CURSOR_EXPIRED']
