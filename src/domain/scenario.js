@@ -128,9 +128,13 @@ function initialScenario() {
   return {
     version: SCENARIO_VERSION,
     firm: { id: 'FIRM-QA-001', name: 'Quadrate Audit Practice', country: 'Qatar' },
+    clientGroups: [
+      { id: 'GRP-0001', name: 'Northstar Holdings Group', createdAt: '2026-09-01T08:00:00.000Z' },
+    ],
     clients: [
       {
         id: 'CLI-0018',
+        groupId: 'GRP-0001',
         name: 'Northstar Trading W.L.L.',
         registration: 'CR 82419',
         contact: { name: 'Nadia Faris', email: 'nadia@northstar.demo' },
@@ -139,6 +143,7 @@ function initialScenario() {
       },
       {
         id: 'CLI-0009',
+        groupId: null,
         name: 'Cedar & Coast Logistics',
         registration: 'CR 66102',
         contact: { name: 'Hassan Saleh', email: 'hassan@cedar.demo' },
@@ -159,6 +164,16 @@ function initialScenario() {
         inputGeneration: 3,
         policyGeneration: 1,
         linkedEngagementId: 'ENG-0018-ACC-2026',
+        auditCommenced: true,
+        commencedAt: '2026-09-05T09:00:00.000Z',
+        commencedBy: 'ACT-OMAR',
+        team: [
+          { role: 'engagement_partner', actorId: 'ACT-PARTNER', actorName: 'Maya Rahman', plannedHours: '30', startDate: '2026-09-01', endDate: '2026-09-30', responsibility: 'Engagement Partner & Signatory' },
+          { role: 'audit_manager', actorId: 'ACT-OMAR', actorName: 'Omar Aziz', plannedHours: '45', startDate: '2026-09-01', endDate: '2026-09-25', responsibility: 'Manager completion & review' },
+          { role: 'audit_senior', actorId: 'ACT-OMAR-SENIOR', actorName: 'Omar Aziz', plannedHours: '40', startDate: '2026-09-05', endDate: '2026-09-20', responsibility: 'Fieldwork supervision & workpaper review' },
+          { role: 'preparer', actorId: 'ACT-JUNIOR', actorName: 'Fatima Saleh', plannedHours: '60', startDate: '2026-09-08', endDate: '2026-09-18', responsibility: 'Workpaper drafting & PBC follow-up' },
+          { role: 'accounting_reviewer', actorId: 'ACT-LEILA', actorName: 'Leila Noor', plannedHours: '25', startDate: '2026-09-01', endDate: '2026-09-15', responsibility: 'TB source & accounting package review' },
+        ],
         evidence: {
           firmReady: true,
           accepted: true,
@@ -392,7 +407,7 @@ function mergeScenarioState(defaults, parsed) {
     const additions = (defaultsList || []).filter((entry) => entry?.id && !currentIds.has(entry.id)).map(clone)
     return [...currentList, ...additions]
   }
-  for (const key of ['clients', 'engagements', 'actors', 'assessments', 'terms', 'activation', 'commercialRecords', 'credentialBootstraps', 'taskActions', 'accountingPackages', 'renewalCases', 'leads', 'documents', 'workpapers', 'reviews', 'releaseCandidates', 'snapshots', 'operations', 'checkpoints', 'events', 'commandReceipts', 'cycleRuns', 'pbcRequests', 'informationRequests', 'outbox', 'legalHolds', 'amendments']) {
+  for (const key of ['clients', 'clientGroups', 'engagements', 'actors', 'assessments', 'terms', 'activation', 'commercialRecords', 'credentialBootstraps', 'taskActions', 'accountingPackages', 'renewalCases', 'leads', 'documents', 'workpapers', 'reviews', 'releaseCandidates', 'snapshots', 'operations', 'checkpoints', 'events', 'commandReceipts', 'cycleRuns', 'pbcRequests', 'informationRequests', 'outbox', 'legalHolds', 'amendments']) {
     merged[key] = appendMissingById(defaults[key], merged[key])
   }
   // Role and assignment metadata is static demo policy, while actor status,
@@ -506,6 +521,14 @@ export function engagementById(engagementId) {
 
 export function clientById(clientId) {
   return scenario.clients.find((client) => client.id === clientId) || null
+}
+
+export function clientGroupById(groupId) {
+  return (scenario.clientGroups || []).find((group) => group.id === groupId) || null
+}
+
+export function clientGroups() {
+  return scenario.clientGroups || []
 }
 
 export function leadById(leadId) {
@@ -625,6 +648,244 @@ export function importLeadFixtures({ actorPersonaId = scenario.activePersonaId, 
   scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LEADS_IMPORTED', actorId: actor.id, importedCount: imported.length, skippedCount: skipped.length, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
   return finish(commandResult('COMMITTED', { data: { imported, skipped, importedCount: imported.length, skippedCount: skipped.length }, scope: leadScope(), revision: scenario.leads.length, operationId: `LEAD-IMPORT-${scenario.events.length}` }))
+}
+
+/**
+ * Transition a synthetic CRM lead to QUALIFIED.
+ */
+export function qualifyLead({ actorPersonaId = scenario.activePersonaId, expectedSessionEpoch, idempotencyKey, leadId } = {}) {
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'QUALIFY_LEAD', targetId: leadId, engagementId: null, payload: { expectedSessionEpoch, leadId } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!leadAuthority(actor) && !actor?.roles?.includes('audit_manager')) {
+    return finish(commandResult('DENIED', { code: 'LEAD_AUTHORITY_REQUIRED', message: 'Only an active administrator, engagement partner, compliance reviewer, or audit manager can qualify leads.', scope: leadScope(leadId) }))
+  }
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish({ ...stale, scope: leadScope(leadId) })
+  const lead = leadById(leadId)
+  if (!lead) return finish(commandResult('BLOCKED', { code: 'LEAD_NOT_FOUND', message: `Lead ${leadId} was not found.`, scope: leadScope(leadId) }))
+  if (lead.status === 'QUALIFIED') return finish(commandResult('COMMITTED', { data: lead, scope: leadScope(lead.id), revision: lead.revision, operationId: lead.id }))
+  if (['CONVERTED', 'CLOSED'].includes(lead.status)) return finish(commandResult('CONFLICT', { code: 'LEAD_ALREADY_RESOLVED', message: `Lead ${leadId} is already ${lead.status.toLowerCase()}.`, scope: leadScope(lead.id) }))
+  lead.status = 'QUALIFIED'
+  lead.revision = (lead.revision || 1) + 1
+  lead.lastContact = new Date().toISOString().slice(0, 10)
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LEAD_QUALIFIED', leadId: lead.id, actorId: actor.id, revision: lead.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: lead, scope: leadScope(lead.id), revision: lead.revision, operationId: lead.id }))
+}
+
+/**
+ * Create a new Client Group for grouping related legal entities commercially.
+ */
+export function createClientGroup({ name, actorPersonaId = scenario.activePersonaId, expectedSessionEpoch, idempotencyKey } = {}) {
+  const actor = actorForPersona(actorPersonaId)
+  const cleanName = String(name || '').trim()
+  const fingerprint = commandFingerprint({ action: 'CREATE_CLIENT_GROUP', targetId: null, engagementId: null, payload: { expectedSessionEpoch, name: cleanName } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!leadAuthority(actor)) {
+    return finish(commandResult('DENIED', { code: 'GROUP_AUTHORITY_REQUIRED', message: 'Only an active administrator or engagement partner can create client groups.' }))
+  }
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish({ ...stale, scope: leadScope() })
+  if (cleanName.length < 2 || cleanName.length > 160) {
+    return finish(commandResult('BLOCKED', { code: 'GROUP_NAME_INVALID', message: 'Group name must be between 2 and 160 characters.' }))
+  }
+  const duplicate = (scenario.clientGroups || []).find((g) => g.name.toLowerCase() === cleanName.toLowerCase())
+  if (duplicate) return finish(commandResult('CONFLICT', { code: 'GROUP_DUPLICATE', message: `A group named "${cleanName}" already exists.`, data: duplicate }))
+  const group = {
+    id: `GRP-${String((scenario.clientGroups || []).length + 1).padStart(4, '0')}`,
+    name: cleanName,
+    createdAt: new Date().toISOString(),
+  }
+  if (!scenario.clientGroups) scenario.clientGroups = []
+  scenario.clientGroups.push(group)
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'CLIENT_GROUP_CREATED', groupId: group.id, actorId: actor.id, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: group, operationId: group.id }))
+}
+
+/**
+ * Convert a CRM lead to a real Client record, draft Engagement shell, and
+ * Acceptance assessment case. Does NOT automatically accept the client.
+ */
+export function convertLeadToClient({
+  actorPersonaId = scenario.activePersonaId,
+  expectedSessionEpoch,
+  idempotencyKey,
+  leadId,
+  clientName,
+  registration,
+  groupId = null,
+  newGroupName = '',
+  service = 'audit',
+  period = 'FY2026',
+  currency = 'QAR',
+} = {}) {
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'CONVERT_LEAD_TO_CLIENT', targetId: leadId, engagementId: null, payload: { expectedSessionEpoch, leadId, clientName, registration, groupId, newGroupName, service, period } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!leadAuthority(actor)) {
+    return finish(commandResult('DENIED', { code: 'LEAD_AUTHORITY_REQUIRED', message: 'Only an active administrator, engagement partner, or compliance reviewer can convert leads to clients.', scope: leadScope(leadId) }))
+  }
+  const stale = sessionGuard(actor, expectedSessionEpoch)
+  if (stale) return finish({ ...stale, scope: leadScope(leadId) })
+  const lead = leadById(leadId)
+  if (!lead) return finish(commandResult('BLOCKED', { code: 'LEAD_NOT_FOUND', message: `Lead ${leadId} was not found.`, scope: leadScope(leadId) }))
+  if (lead.status === 'CONVERTED' && lead.clientId) {
+    return finish(commandResult('CONFLICT', { code: 'LEAD_ALREADY_CONVERTED', message: `Lead ${leadId} was already converted to client ${lead.clientId}.`, data: { clientId: lead.clientId, engagementId: lead.engagementId }, scope: leadScope(lead.id) }))
+  }
+  if (lead.status !== 'QUALIFIED') {
+    return finish(commandResult('BLOCKED', { code: 'LEAD_NOT_QUALIFIED', message: `Lead ${leadId} must be QUALIFIED before conversion. Current status: ${lead.status}.`, scope: leadScope(lead.id) }))
+  }
+
+  // Handle optional group creation
+  let finalGroupId = groupId || null
+  if (newGroupName && newGroupName.trim()) {
+    const cleanGroup = newGroupName.trim()
+    let existingGroup = (scenario.clientGroups || []).find((g) => g.name.toLowerCase() === cleanGroup.toLowerCase())
+    if (!existingGroup) {
+      existingGroup = { id: `GRP-${String((scenario.clientGroups || []).length + 1).padStart(4, '0')}`, name: cleanGroup, createdAt: new Date().toISOString() }
+      if (!scenario.clientGroups) scenario.clientGroups = []
+      scenario.clientGroups.push(existingGroup)
+    }
+    finalGroupId = existingGroup.id
+  }
+
+  // Generate unique Client ID
+  const existingClientIds = new Set((scenario.clients || []).map((c) => c.id))
+  let clientIndex = (scenario.clients || []).length + 1
+  while (existingClientIds.has(`CLI-${String(clientIndex).padStart(4, '0')}`)) clientIndex += 1
+  const clientId = `CLI-${String(clientIndex).padStart(4, '0')}`
+
+  const resolvedName = clientName?.trim() || lead.company || lead.name
+  const resolvedRegistration = registration?.trim() || `CR ${80000 + clientIndex}`
+  const resolvedService = service === 'accounting' || String(lead.service || '').toLowerCase().includes('account') ? 'accounting' : 'audit'
+
+  const client = {
+    id: clientId,
+    groupId: finalGroupId,
+    name: resolvedName,
+    registration: resolvedRegistration,
+    contact: { name: lead.name, email: lead.email, phone: lead.phone || '' },
+    services: [resolvedService],
+    safetyGeneration: 1,
+  }
+  scenario.clients.push(client)
+
+  // Generate draft engagement shell
+  const engagementId = `ENG-${clientId.replace(/^CLI-/, '')}-${resolvedService === 'accounting' ? 'ACC' : 'AUD'}-2026`
+  const engagement = {
+    id: engagementId,
+    clientId: client.id,
+    service: resolvedService,
+    serviceLabel: resolvedService === 'accounting' ? 'Accounting package handoff' : 'Financial-statement audit',
+    period,
+    periodLabel: `Year ended 31 Dec ${period.replace('FY', '')}`,
+    currency,
+    revision: 1,
+    inputGeneration: 1,
+    policyGeneration: 1,
+    auditCommenced: false,
+    commencedAt: null,
+    commencedBy: null,
+    team: [
+      { role: 'engagement_partner', actorId: actor.id, actorName: actor.name, plannedHours: '20', startDate: '', endDate: '', responsibility: 'Engagement Partner & Signatory' }
+    ],
+    evidence: {
+      firmReady: true,
+      accepted: false,
+      commercialReady: false,
+      termsSigned: false,
+      advanceVerified: false,
+      portalEligible: false,
+      assignmentsEligible: true,
+      workspaceVerified: true,
+      sourceValidated: false,
+      mappingReviewed: false,
+      statementApproved: false,
+      auditPlanReady: false,
+      conclusionsComplete: false,
+      managementApproved: false,
+      partnerApproved: false,
+      eqrRequired: false,
+      eqrComplete: null,
+      completionRecommendation: null,
+      protection: 'UNKNOWN',
+      archiveVerified: false,
+      commercialClosed: false,
+    },
+    holds: [],
+  }
+  scenario.engagements.push(engagement)
+
+  // Ensure current actor has assignment to the engagement
+  if (!actor.assignments) actor.assignments = []
+  if (!actor.assignments.includes(engagementId)) actor.assignments.push(engagementId)
+
+  // Acceptance Assessment shell (unaccepted!)
+  const assessment = createAssessment({
+    id: `ASMT-${engagementId}-ACCEPT-2026`,
+    engagementId: engagement.id,
+    type: 'acceptance',
+    revision: 1,
+    seed: {},
+  })
+  scenario.assessments.push(assessment)
+
+  // Commercial record shell
+  const commercial = {
+    id: `COMM-${clientId.replace(/^CLI-/, '')}-2026`,
+    engagementId: engagement.id,
+    estimateId: `COST-${clientId.replace(/^CLI-/, '')}-2026`,
+    estimateHours: 120,
+    estimatedCost: '24000.00',
+    feeBasis: 'FIXED_FEE',
+    quotedFee: lead.value && Number(lead.value) > 0 ? lead.value : '36000.00',
+    feeApprovalState: 'DRAFT',
+    quotationId: '',
+    engagementLetterId: `EL-${period.replace('FY', '')}-01`,
+    advanceRequired: '9000.00',
+    advanceState: 'NOT_REQUIRED',
+    advanceVerifiedBy: null,
+    advanceVerifiedAt: null,
+    invoiceId: null,
+    invoiceState: 'NOT_READY',
+    actualHours: '0.00',
+    actualCost: '0.00',
+    remainingBalance: lead.value && Number(lead.value) > 0 ? lead.value : '36000.00',
+    commercialCloseState: 'OPEN',
+    revision: 1,
+  }
+  scenario.commercialRecords.push(commercial)
+
+  // Update lead
+  lead.status = 'CONVERTED'
+  lead.clientId = client.id
+  lead.engagementId = engagement.id
+  lead.revision = (lead.revision || 1) + 1
+
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'LEAD_CONVERTED', leadId: lead.id, clientId: client.id, engagementId: engagement.id, actorId: actor.id, revision: lead.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+
+  return finish(commandResult('COMMITTED', {
+    data: {
+      client,
+      engagement,
+      assessment,
+      commercial,
+      lead,
+      groupId: finalGroupId,
+    },
+    scope: leadScope(lead.id),
+    revision: lead.revision,
+    operationId: lead.id,
+  }))
 }
 
 export function selectedEngagement() { return engagementById(scenario.selectedEngagementId) || null }
@@ -1239,6 +1500,182 @@ export function activateEngagement({ engagementId = scenario.selectedEngagementI
   scenario.events.push({ id: activation.eventId, type: 'ENGAGEMENT_ACTIVATED', engagementId, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
   persistScenario()
   return finish(commandResult('COMMITTED', { data: activation, revision: engagement.revision, operationId: activation.eventId }))
+}
+
+/**
+ * Assign or update engagement team members, planned hours, dates, and responsibilities.
+ */
+export function assignEngagementTeam({
+  engagementId = scenario.selectedEngagementId,
+  actorPersonaId = scenario.activePersonaId,
+  expectedSessionEpoch,
+  idempotencyKey,
+  assignments = [],
+} = {}) {
+  const engagement = engagementById(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'ASSIGN_ENGAGEMENT_TEAM', targetId: engagementId, engagementId, payload: { expectedSessionEpoch, assignments } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !actor?.active || (!canViewEngagement(actor.id, engagementId) && !actor.roles?.includes('system_admin') && !actor.roles?.includes('engagement_partner'))) {
+    return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot assign team members to this engagement.' }))
+  }
+  if (!actor.roles?.some((r) => ['engagement_partner', 'audit_manager', 'system_admin'].includes(r))) {
+    return finish(commandResult('DENIED', { code: 'TEAM_ASSIGNMENT_AUTHORITY_REQUIRED', message: 'Only an Engagement Partner, Audit Manager, or System Administrator can assign team members.' }))
+  }
+  const validRoles = ['preparer', 'audit_senior', 'audit_manager', 'engagement_partner', 'eqr_reviewer', 'accounting_reviewer']
+  for (const item of assignments) {
+    if (!validRoles.includes(item.role)) {
+      return finish(commandResult('BLOCKED', { code: 'INVALID_ROLE', message: `Role ${item.role} is not a recognized engagement role.` }))
+    }
+    const assignedActor = actorById(item.actorId)
+    if (!assignedActor || !assignedActor.active) {
+      return finish(commandResult('BLOCKED', { code: 'ACTOR_INACTIVE', message: `Assigned actor ${item.actorId} is not active.` }))
+    }
+    if (!assignedActor.assignments) assignedActor.assignments = []
+    if (!assignedActor.assignments.includes(engagementId)) assignedActor.assignments.push(engagementId)
+  }
+  engagement.team = assignments.map((a) => ({
+    role: a.role,
+    actorId: a.actorId,
+    actorName: a.actorName || actorById(a.actorId)?.name || a.actorId,
+    plannedHours: String(a.plannedHours || '0'),
+    startDate: a.startDate || '',
+    endDate: a.endDate || '',
+    responsibility: a.responsibility || '',
+  }))
+  engagement.evidence.assignmentsEligible = true
+  engagement.revision += 1
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'ENGAGEMENT_TEAM_ASSIGNED', engagementId, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: { engagementId, team: engagement.team }, revision: engagement.revision, operationId: `TEAM-${engagementId}` }))
+}
+
+/**
+ * Audit commencement prerequisite checks before START_AUDIT can be committed.
+ */
+export function auditCommencementBlockers(engagementId = scenario.selectedEngagementId) {
+  const engagement = engagementById(engagementId)
+  if (!engagement) return [{ code: 'SCOPE_NOT_FOUND', message: 'That engagement does not exist.' }]
+  const blockers = []
+  const assessment = assessmentFor(engagement.id, 'acceptance')
+  if (!assessment?.decision || !['ACCEPT', 'CONTINUE'].includes(assessment.decision.decision)) {
+    blockers.push({ code: 'ACCEPTANCE_REQUIRED', message: 'Partner acceptance must be recorded before commencing the audit.' })
+  }
+  if (!termsAcceptedFor(engagement.id)) {
+    blockers.push({ code: 'TERMS_REQUIRED', message: 'Client management must accept the Engagement Letter before commencing the audit.' })
+  }
+  const commercial = commercialRecordFor(engagement.id)
+  if (commercial?.advanceRequired && commercial.advanceState !== 'VERIFIED' && Number(commercial.advanceRequired) > 0) {
+    blockers.push({ code: 'ADVANCE_REQUIRED', message: 'The required advance payment must be verified before commencing the audit.' })
+  }
+  const team = engagement.team || []
+  const hasPartner = team.some((m) => m.role === 'engagement_partner') || scenario.actors.some((a) => a.roles?.includes('engagement_partner') && a.assignments?.includes(engagement.id))
+  const hasLeadAuditor = team.some((m) => ['audit_manager', 'audit_senior'].includes(m.role)) || scenario.actors.some((a) => a.roles?.some((r) => ['audit_manager', 'audit_senior'].includes(r)) && a.assignments?.includes(engagement.id))
+  if (!hasPartner) {
+    blockers.push({ code: 'PARTNER_ASSIGNMENT_REQUIRED', message: 'An Engagement Partner must be assigned before commencing the audit.' })
+  }
+  if (!hasLeadAuditor) {
+    blockers.push({ code: 'LEAD_AUDITOR_ASSIGNMENT_REQUIRED', message: 'An Audit Manager or Audit Senior must be assigned before commencing the audit.' })
+  }
+  return blockers
+}
+
+/**
+ * Formal business event to transition ENGAGEMENT_READY -> START_AUDIT -> AUDIT_IN_PROGRESS.
+ */
+export function startAudit({
+  engagementId = scenario.selectedEngagementId,
+  actorPersonaId = scenario.activePersonaId,
+  expectedRevision,
+  idempotencyKey,
+} = {}) {
+  const engagement = engagementById(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const fingerprint = commandFingerprint({ action: 'START_AUDIT', targetId: engagementId, engagementId, payload: { expectedRevision } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !actor?.active || (!canViewEngagement(actor.id, engagementId) && !actor.roles?.includes('system_admin'))) {
+    return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot start this audit.' }))
+  }
+  if (!actor.roles?.some((r) => ['engagement_partner', 'audit_manager', 'audit_senior', 'system_admin'].includes(r))) {
+    return finish(commandResult('DENIED', { code: 'AUDIT_COMMENCEMENT_AUTHORITY_REQUIRED', message: 'Only an Engagement Partner, Audit Manager, or Audit Senior can commence the audit.' }))
+  }
+  if (expectedRevision != null && expectedRevision !== engagement.revision) {
+    return finish(commandResult('CONFLICT', { code: 'REVISION_CONFLICT', message: `Expected engagement revision ${expectedRevision}, current revision is ${engagement.revision}.`, revision: engagement.revision }))
+  }
+  if (engagement.auditCommenced) {
+    return finish(commandResult('COMMITTED', { data: { engagementId, auditCommenced: true, commencedAt: engagement.commencedAt }, revision: engagement.revision, operationId: `START-${engagementId}` }))
+  }
+  const blockers = auditCommencementBlockers(engagementId)
+  if (blockers.length) {
+    return finish(commandResult('BLOCKED', { code: blockers[0].code, message: blockers[0].message, blockers, revision: engagement.revision }))
+  }
+  engagement.auditCommenced = true
+  engagement.commencedAt = new Date().toISOString()
+  engagement.commencedBy = actor.id
+  engagement.evidence.auditPlanReady = true
+  engagement.revision += 1
+  if (!scenario.outbox) scenario.outbox = []
+  if (!scenario.outbox.some((item) => item.engagementId === engagementId && item.reference?.startsWith('ANN-'))) {
+    scenario.outbox.push({
+      id: `OUT-${engagementId}-ANN`,
+      engagementId,
+      channel: 'PORTAL',
+      recipientPersonaId: 'client-demo',
+      reference: `ANN-${engagementId}`,
+      state: 'QUEUED_SIMULATION',
+      preview: 'Synthetic audit commencement announcement',
+      createdAt: engagement.commencedAt,
+      correlationId: `ann-${engagementId}`,
+    })
+  }
+  scenario.events.push({ id: `EV-START-${scenario.events.length + 1}`, type: 'AUDIT_STARTED', engagementId, actorId: actor.id, revision: engagement.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: { engagementId, auditCommenced: true, commencedAt: engagement.commencedAt }, revision: engagement.revision, operationId: `START-${engagementId}` }))
+}
+
+/**
+ * Record an explicit Audit Senior review on a submitted workpaper before Manager completion.
+ */
+export function recordSeniorReview({
+  engagementId = scenario.selectedEngagementId,
+  workpaperId,
+  actorPersonaId = scenario.activePersonaId,
+  expectedSessionEpoch,
+  idempotencyKey,
+  decision = 'PASSED',
+  notes = '',
+  note = '',
+} = {}) {
+  const engagement = engagementById(engagementId)
+  const actor = actorForPersona(actorPersonaId)
+  const finalNote = notes || note || ''
+  const fingerprint = commandFingerprint({ action: 'RECORD_SENIOR_REVIEW', targetId: workpaperId, engagementId, payload: { expectedSessionEpoch, workpaperId, note: finalNote, decision } })
+  const prior = existingReceipt(idempotencyKey, fingerprint)
+  if (prior) return prior
+  const finish = (result) => rememberReceipt(idempotencyKey, fingerprint, result)
+  if (!engagement || !actor?.active || !canViewEngagement(actor.id, engagementId)) {
+    return finish(commandResult('DENIED', { code: 'SCOPE_DENIED', message: 'The actor cannot review workpapers for this engagement.' }))
+  }
+  if (!actor.roles?.some((r) => ['audit_senior', 'audit_manager', 'system_admin'].includes(r))) {
+    return finish(commandResult('DENIED', { code: 'SENIOR_REVIEW_AUTHORITY_REQUIRED', message: 'Only an Audit Senior or Audit Manager can record senior reviews.' }))
+  }
+  const workpaper = (scenario.workpapers || []).find((wp) => wp.id === workpaperId && wp.engagementId === engagementId)
+  if (!workpaper) return finish(commandResult('BLOCKED', { code: 'WORKPAPER_NOT_FOUND', message: `Workpaper ${workpaperId} was not found on this engagement.` }))
+  workpaper.seniorReviewed = true
+  workpaper.seniorReviewState = decision === 'PASSED' ? 'APPROVED' : 'NEEDS_WORK'
+  workpaper.reviewState = decision === 'PASSED' ? 'SENIOR_CLEARED' : 'NEEDS_WORK'
+  workpaper.seniorReviewedBy = actor.id
+  workpaper.seniorReviewedAt = new Date().toISOString()
+  workpaper.seniorReviewNote = finalNote
+  workpaper.seniorReviewNotes = finalNote
+  workpaper.revision = (workpaper.revision || 1) + 1
+  scenario.events.push({ id: `EV-${scenario.events.length + 1}`, type: 'WORKPAPER_SENIOR_REVIEWED', engagementId, workpaperId, actorId: actor.id, revision: workpaper.revision, evidenceLevel: EVIDENCE_LEVEL })
+  persistScenario()
+  return finish(commandResult('COMMITTED', { data: workpaper, revision: workpaper.revision, operationId: workpaper.id }))
 }
 
 function copyContinuanceResponses(sourceAssessment, targetAssessment) {

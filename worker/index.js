@@ -749,6 +749,42 @@ async function listOutbox(request, env, url) {
   return json(request, { ok: true, messages, evidenceLevel: 'SIMULATION' });
 }
 
+async function listLeads(request, env, url) {
+  const session = await resolveDemoSession(request, env);
+  if (!session) return error(request, 'A demo session is required.', 401, 'SESSION_REQUIRED');
+  const result = await env.DB.prepare(
+    'SELECT * FROM auditflow_leads ORDER BY created_at DESC LIMIT 100',
+  ).all().catch(() => ({ results: [] }));
+  return json(request, { ok: true, leads: result.results || [], evidenceLevel: 'SIMULATION' });
+}
+
+async function listClientGroups(request, env, url) {
+  const session = await resolveDemoSession(request, env);
+  if (!session) return error(request, 'A demo session is required.', 401, 'SESSION_REQUIRED');
+  const result = await env.DB.prepare(
+    'SELECT * FROM auditflow_client_groups ORDER BY name ASC LIMIT 100',
+  ).all().catch(() => ({ results: [] }));
+  return json(request, { ok: true, groups: result.results || [], evidenceLevel: 'SIMULATION' });
+}
+
+async function listClients(request, env, url) {
+  const session = await resolveDemoSession(request, env);
+  if (!session) return error(request, 'A demo session is required.', 401, 'SESSION_REQUIRED');
+  const result = await env.DB.prepare(
+    'SELECT * FROM auditflow_clients ORDER BY name ASC LIMIT 100',
+  ).all().catch(() => ({ results: [] }));
+  return json(request, { ok: true, clients: result.results || [], evidenceLevel: 'SIMULATION' });
+}
+
+async function getEngagementTeam(request, env, engagementId) {
+  const checked = await requireEngagementScope(request, env, engagementId);
+  if (checked.response) return checked.response;
+  const result = await env.DB.prepare(
+    'SELECT * FROM auditflow_engagement_team WHERE engagement_id = ?1 ORDER BY role ASC',
+  ).bind(engagementId).all().catch(() => ({ results: [] }));
+  return json(request, { ok: true, engagementId, team: result.results || [], evidenceLevel: 'SIMULATION' });
+}
+
 const ACTOR_ASSIGNMENTS = {
   'ACT-MAYA': ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026', 'ENG-0009-ACC-2026'],
   'ACT-PARTNER': ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026', 'ENG-0009-ACC-2026'],
@@ -2919,6 +2955,281 @@ async function actionCloseEngagement(request, env, session, id, payload, correla
   return json(request, { ok: true, duplicate: false, commercial: updated || null, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
 }
 
+async function actionCreateLead(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['system_admin', 'engagement_partner', 'compliance_reviewer'])) {
+    return error(request, 'Only an administrator, engagement partner, or compliance reviewer can create a lead.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const name = cleanText(payload.name, 120);
+  const company = cleanText(payload.company, 160);
+  const email = cleanText(payload.email, 160);
+  const phone = cleanText(payload.phone, 40, '') || '';
+  const service = cleanText(payload.service, 100, 'Financial-statement audit') || 'Financial-statement audit';
+  const source = cleanText(payload.source, 80, 'Referral') || 'Referral';
+  const value = cleanText(payload.value, 40, '0.00') || '0.00';
+  const assignedActorId = cleanText(payload.assignedActorId, 80, session.actorId) || session.actorId;
+  if (!name || !company || !email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return error(request, 'Complete lead name, company, and valid email.');
+  }
+  const leadId = cleanText(payload.leadId, 80) || `LEAD-${crypto.randomUUID().slice(0, 8)}`;
+  await env.DB.prepare(
+    `INSERT INTO auditflow_leads (lead_id, name, company, email, phone, estimated_value, service, source, assigned_actor_id, status)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'PENDING')
+     ON CONFLICT (lead_id) DO UPDATE SET
+       name = excluded.name, company = excluded.company, email = excluded.email, phone = excluded.phone,
+       estimated_value = excluded.estimated_value, service = excluded.service, source = excluded.source,
+       assigned_actor_id = excluded.assigned_actor_id, updated_at = datetime('now')`,
+  ).bind(leadId, name, company, email, phone, value, service, source, assignedActorId).run();
+  await appendEvent(env, { engagementId: id || 'DEMO-LEADS', actor: session.actorId, action: 'LEAD_CREATED', objectType: 'lead', objectId: leadId, previousRevision: 0, newRevision: 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
+  const lead = await env.DB.prepare('SELECT * FROM auditflow_leads WHERE lead_id = ?1').bind(leadId).first();
+  return json(request, { ok: true, lead, evidenceLevel: 'SIMULATION' }, 201);
+}
+
+async function actionQualifyLead(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['system_admin', 'engagement_partner', 'compliance_reviewer', 'audit_manager'])) {
+    return error(request, 'Only an administrator, engagement partner, compliance reviewer, or audit manager can qualify leads.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const leadId = cleanText(payload.leadId || id, 80);
+  const lead = await env.DB.prepare('SELECT * FROM auditflow_leads WHERE lead_id = ?1').bind(leadId).first();
+  if (!lead) return error(request, 'Lead not found.', 404, 'LEAD_NOT_FOUND');
+  if (lead.status === 'QUALIFIED') return json(request, { ok: true, duplicate: true, lead, evidenceLevel: 'SIMULATION' });
+  if (['CONVERTED', 'CLOSED'].includes(lead.status)) return error(request, `Lead is already ${lead.status.toLowerCase()}.`, 409, 'LEAD_ALREADY_RESOLVED');
+  await env.DB.prepare(`UPDATE auditflow_leads SET status = 'QUALIFIED', updated_at = datetime('now') WHERE lead_id = ?1`).bind(leadId).run();
+  await appendEvent(env, { engagementId: id || 'DEMO-LEADS', actor: session.actorId, action: 'LEAD_QUALIFIED', objectType: 'lead', objectId: leadId, previousRevision: 1, newRevision: 2, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
+  const updated = await env.DB.prepare('SELECT * FROM auditflow_leads WHERE lead_id = ?1').bind(leadId).first();
+  return json(request, { ok: true, lead: updated, evidenceLevel: 'SIMULATION' });
+}
+
+async function actionCreateClientGroup(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['system_admin', 'engagement_partner'])) {
+    return error(request, 'Only an administrator or engagement partner can create client groups.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const name = cleanText(payload.name, 160);
+  if (!name || name.length < 2) return error(request, 'Provide a valid group name (2-160 characters).');
+  const groupId = cleanText(payload.groupId, 80) || `GRP-${crypto.randomUUID().slice(0, 8)}`;
+  await env.DB.prepare(
+    `INSERT INTO auditflow_client_groups (group_id, name) VALUES (?1, ?2)
+     ON CONFLICT (group_id) DO UPDATE SET name = excluded.name, updated_at = datetime('now')`,
+  ).bind(groupId, name).run();
+  await appendEvent(env, { engagementId: id || 'DEMO-GROUPS', actor: session.actorId, action: 'CLIENT_GROUP_CREATED', objectType: 'client_group', objectId: groupId, previousRevision: 0, newRevision: 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
+  const group = await env.DB.prepare('SELECT * FROM auditflow_client_groups WHERE group_id = ?1').bind(groupId).first();
+  return json(request, { ok: true, group, evidenceLevel: 'SIMULATION' }, 201);
+}
+
+async function actionConvertLeadToClient(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['system_admin', 'engagement_partner', 'compliance_reviewer'])) {
+    return error(request, 'Only an administrator, engagement partner, or compliance reviewer can convert leads.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const leadId = cleanText(payload.leadId || id, 80);
+  const lead = await env.DB.prepare('SELECT * FROM auditflow_leads WHERE lead_id = ?1').bind(leadId).first();
+  if (!lead) return error(request, 'Lead not found.', 404, 'LEAD_NOT_FOUND');
+  if (lead.status === 'CONVERTED' && lead.client_id) {
+    return json(request, { ok: true, duplicate: true, clientId: lead.client_id, engagementId: lead.engagement_id, evidenceLevel: 'SIMULATION' });
+  }
+  let groupId = cleanText(payload.groupId, 80, '') || '';
+  const newGroupName = cleanText(payload.newGroupName, 160, '') || '';
+  if (newGroupName) {
+    groupId = `GRP-${crypto.randomUUID().slice(0, 8)}`;
+    await env.DB.prepare(`INSERT INTO auditflow_client_groups (group_id, name) VALUES (?1, ?2)`).bind(groupId, newGroupName).run();
+  }
+  const clientName = cleanText(payload.clientName || lead.company || lead.name, 160);
+  const registration = cleanText(payload.registration, 80, `CR ${Math.floor(10000 + Math.random() * 90000)}`);
+  const service = cleanText(payload.service || lead.service, 80, 'audit');
+  const period = cleanText(payload.period, 40, 'FY2026');
+  const clientId = cleanText(payload.clientId, 80) || `CLI-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+  const engagementId = cleanText(payload.engagementId, 40) || `ENG-${clientId.replace('CLI-', '')}-AUD-2026`;
+
+  await env.DB.prepare(
+    `INSERT INTO auditflow_clients (client_id, group_id, name, registration, contact_name, contact_email, phone, services)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+  ).bind(clientId, groupId, clientName, registration, lead.name, lead.email, lead.phone || '', JSON.stringify([service])).run();
+
+  await env.DB.prepare(
+    `INSERT INTO auditflow_engagement_state (engagement_id, client_id, service, period, revision, current_stage, g_status, generation_id)
+     VALUES (?1, ?2, ?3, ?4, 1, 'STAGE-01', '{}', 'gen-seed-01')
+     ON CONFLICT (engagement_id) DO NOTHING`,
+  ).bind(engagementId, clientId, service, period).run();
+
+  await env.DB.prepare(
+    `INSERT INTO auditflow_client_profiles (engagement_id, legal_name, registration, contact_name, contact_email, phone, service_period, service_requested, context, submitted_by)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'Converted from lead', ?9)
+     ON CONFLICT (engagement_id) DO NOTHING`,
+  ).bind(engagementId, clientName, registration, lead.name, lead.email, lead.phone || '', period, service, session.actorId).run();
+
+  await env.DB.prepare(
+    `INSERT INTO auditflow_assessments (assessment_id, engagement_id, type, template_version, revision)
+     VALUES (?1, ?2, 'acceptance', 'v02', 1)
+     ON CONFLICT (engagement_id, type) DO NOTHING`,
+  ).bind(`ASMT-${engagementId}`, engagementId).run();
+
+  await env.DB.prepare(
+    `INSERT INTO auditflow_commercial (engagement_id, estimate_hours, estimate_cost, approved_fee, fee_state, el_state, advance_required, advance_state)
+     VALUES (?1, '120', '24000.00', '0.00', 'DRAFT', 'DRAFT', '9000.00', 'NOT_REQUIRED')
+     ON CONFLICT (engagement_id) DO NOTHING`,
+  ).bind(engagementId).run();
+
+  await upsertTask(env, {
+    taskId: `acceptance-${engagementId}`,
+    engagementId,
+    assigneeRole: 'engagement_partner',
+    title: `Review acceptance for ${clientName}`,
+    state: 'OPEN',
+    linkedObjectType: 'assessment',
+    linkedObjectId: `ASMT-${engagementId}`,
+  });
+
+  await env.DB.prepare(
+    `UPDATE auditflow_leads SET status = 'CONVERTED', client_id = ?2, engagement_id = ?3, updated_at = datetime('now') WHERE lead_id = ?1`,
+  ).bind(leadId, clientId, engagementId).run();
+
+  await appendEvent(env, {
+    engagementId,
+    actor: session.actorId,
+    action: 'LEAD_CONVERTED',
+    objectType: 'lead',
+    objectId: leadId,
+    previousRevision: 0,
+    newRevision: 1,
+    idempotencyKey: String(payload.idempotencyKey || ''),
+    correlationId,
+  });
+
+  return json(request, {
+    ok: true,
+    leadId,
+    clientId,
+    engagementId,
+    groupId,
+    status: 'CONVERTED',
+    evidenceLevel: 'SIMULATION',
+  }, 201);
+}
+
+async function actionAssignEngagementTeam(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['engagement_partner', 'audit_manager', 'system_admin'])) {
+    return error(request, 'Only an Engagement Partner, Audit Manager, or System Administrator can assign team members.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const assignments = Array.isArray(payload.assignments) ? payload.assignments : [];
+  if (!assignments.length) return error(request, 'Provide at least one team member assignment.');
+  for (const item of assignments) {
+    const role = cleanText(item.role, 60);
+    const actorId = cleanText(item.actorId, 80);
+    const actorName = cleanText(item.actorName, 80) || actorId;
+    const plannedHours = cleanText(item.plannedHours, 20, '0') || '0';
+    const startDate = cleanText(item.startDate, 40, '') || '';
+    const endDate = cleanText(item.endDate, 40, '') || '';
+    const responsibility = cleanText(item.responsibility, 300, '') || '';
+    if (!role || !actorId) continue;
+    await env.DB.prepare(
+      `INSERT INTO auditflow_engagement_team (engagement_id, role, actor_id, actor_name, planned_hours, start_date, end_date, responsibility)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+       ON CONFLICT (engagement_id, role, actor_id) DO UPDATE SET
+         actor_name = excluded.actor_name, planned_hours = excluded.planned_hours,
+         start_date = excluded.start_date, end_date = excluded.end_date,
+         responsibility = excluded.responsibility, updated_at = datetime('now')`,
+    ).bind(id, role, actorId, actorName, plannedHours, startDate, endDate, responsibility).run();
+  }
+  const engagement = await touchEngagement(env, id, null);
+  await appendEvent(env, {
+    engagementId: id,
+    actor: session.actorId,
+    action: 'ENGAGEMENT_TEAM_ASSIGNED',
+    objectType: 'engagement',
+    objectId: id,
+    previousRevision: (engagement?.revision || 1) - 1,
+    newRevision: engagement?.revision || 1,
+    idempotencyKey: String(payload.idempotencyKey || ''),
+    correlationId,
+  });
+  const team = await env.DB.prepare('SELECT * FROM auditflow_engagement_team WHERE engagement_id = ?1').bind(id).all();
+  return json(request, { ok: true, engagementId: id, team: team.results || [], engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
+}
+
+async function actionStartAudit(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['engagement_partner', 'audit_manager', 'audit_senior'])) {
+    return error(request, 'Only an Engagement Partner, Audit Manager, or Audit Senior can commence the audit.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const engagement = await readEngagementRow(env, id);
+  if (!engagement) return error(request, 'Engagement not found.', 404, 'ENGAGEMENT_NOT_FOUND');
+  if (engagement.audit_commenced) {
+    return json(request, { ok: true, duplicate: true, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
+  }
+
+  // Validate prerequisites
+  const acceptance = await latestDecision(env, id, 'ACCEPTANCE');
+  if (!acceptance || acceptance.decision !== 'ACCEPT') {
+    return error(request, 'Partner acceptance must be recorded before commencing the audit.', 409, 'ACCEPTANCE_REQUIRED');
+  }
+  const commercial = await env.DB.prepare('SELECT * FROM auditflow_commercial WHERE engagement_id = ?1').bind(id).first();
+  if (!commercial || commercial.el_state !== 'ACCEPTED') {
+    return error(request, 'Client management must accept the Engagement Letter before commencing the audit.', 409, 'TERMS_REQUIRED');
+  }
+  const advanceRequired = moneyToCents(commercial.advance_required || '0.00');
+  if (advanceRequired > 0 && commercial.advance_state !== 'VERIFIED') {
+    return error(request, 'Required advance payment must be verified before commencing the audit.', 409, 'ADVANCE_REQUIRED');
+  }
+  const teamRows = await env.DB.prepare('SELECT role FROM auditflow_engagement_team WHERE engagement_id = ?1').bind(id).all().catch(() => ({ results: [] }));
+  const roles = (teamRows.results || []).map((r) => r.role);
+  const hasPartner = roles.includes('engagement_partner');
+  const hasLead = roles.includes('audit_manager') || roles.includes('audit_senior');
+  if (!hasPartner || !hasLead) {
+    if (!hasPartner && !roles.length && !hasAnyRole(session, ['engagement_partner'])) {
+      return error(request, 'An Engagement Partner and Lead Auditor must be assigned before commencing the audit.', 409, 'TEAM_ASSIGNMENT_REQUIRED');
+    }
+  }
+
+  await env.DB.prepare(
+    `UPDATE auditflow_engagement_state SET audit_commenced = 1, commenced_at = datetime('now'), commenced_by = ?2, current_stage = CASE WHEN current_stage IN ('STAGE-01', 'STAGE-02', 'STAGE-03') THEN 'STAGE-04' ELSE current_stage END, revision = revision + 1, updated_at = datetime('now') WHERE engagement_id = ?1`,
+  ).bind(id, session.actorId).run();
+
+  const next = await readEngagementRow(env, id);
+
+  await env.DB.prepare(
+    `INSERT INTO auditflow_outbox (message_id, engagement_id, channel, recipient, subject, related_type, related_id, state)
+     VALUES (?1, ?2, 'PORTAL_NOTIFICATION', 'client', 'Audit Commencement Notice', 'announcement', ?2, 'QUEUED_SIMULATION')
+     ON CONFLICT (message_id) DO NOTHING`,
+  ).bind(`ANN-${id}`, id).run();
+
+  await appendEvent(env, {
+    engagementId: id,
+    actor: session.actorId,
+    action: 'AUDIT_STARTED',
+    objectType: 'engagement',
+    objectId: id,
+    previousRevision: engagement.revision,
+    newRevision: next?.revision || engagement.revision + 1,
+    idempotencyKey: String(payload.idempotencyKey || ''),
+    correlationId,
+  });
+
+  return json(request, { ok: true, auditCommenced: true, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
+}
+
+async function actionRecordSeniorReview(request, env, session, id, payload, correlationId) {
+  if (!hasAnyRole(session, ['audit_senior', 'audit_manager'])) {
+    return error(request, 'Only an Audit Senior or Audit Manager can record senior reviews.', 403, 'ROLE_NOT_AUTHORIZED');
+  }
+  const workpaperId = cleanText(payload.workpaperId, 80);
+  if (!workpaperId) return error(request, 'workpaperId is required.');
+  const workpaper = await env.DB.prepare('SELECT * FROM auditflow_workpapers WHERE workpaper_id = ?1 AND engagement_id = ?2').bind(workpaperId, id).first();
+  if (!workpaper) return error(request, 'Workpaper not found on this engagement.', 404, 'WORKPAPER_NOT_FOUND');
+  await env.DB.prepare(
+    `UPDATE auditflow_workpapers SET state = 'SENIOR_REVIEWED', updated_at = datetime('now') WHERE workpaper_id = ?1`,
+  ).bind(workpaperId).run();
+  const engagement = await touchEngagement(env, id, null);
+  await appendEvent(env, {
+    engagementId: id,
+    actor: session.actorId,
+    action: 'WORKPAPER_SENIOR_REVIEWED',
+    objectType: 'workpaper',
+    objectId: workpaperId,
+    previousRevision: (engagement?.revision || 1) - 1,
+    newRevision: engagement?.revision || 1,
+    idempotencyKey: String(payload.idempotencyKey || ''),
+    correlationId,
+  });
+  return json(request, { ok: true, workpaperId, state: 'SENIOR_REVIEWED', engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
+}
+
 async function readCommandReceipt(env, { generationId, engagementId, actorId, idempotencyKey } = {}) {
   if (!generationId || !engagementId || !actorId || !idempotencyKey) return null;
   try {
@@ -3209,6 +3520,13 @@ async function dispatchEngagementAction(request, env, engagementId) {
   else if (action === 'DELIVER_FINAL_REPORT') response = await actionDeliverFinalReport(request, env, session, id, payload, correlationId);
   else if (action === 'CREATE_INVOICE') response = await actionCreateInvoice(request, env, session, id, payload, correlationId);
   else if (action === 'CLOSE_ENGAGEMENT') response = await actionCloseEngagement(request, env, session, id, payload, correlationId);
+  else if (action === 'CREATE_LEAD') response = await actionCreateLead(request, env, session, id, payload, correlationId);
+  else if (action === 'QUALIFY_LEAD') response = await actionQualifyLead(request, env, session, id, payload, correlationId);
+  else if (action === 'CONVERT_LEAD_TO_CLIENT') response = await actionConvertLeadToClient(request, env, session, id, payload, correlationId);
+  else if (action === 'CREATE_CLIENT_GROUP') response = await actionCreateClientGroup(request, env, session, id, payload, correlationId);
+  else if (action === 'ASSIGN_ENGAGEMENT_TEAM') response = await actionAssignEngagementTeam(request, env, session, id, payload, correlationId);
+  else if (action === 'START_AUDIT') response = await actionStartAudit(request, env, session, id, payload, correlationId);
+  else if (action === 'RECORD_SENIOR_REVIEW') response = await actionRecordSeniorReview(request, env, session, id, payload, correlationId);
   else return error(request, `Shared action ${action} is not enabled yet in this demo phase. The decision was not committed.`, 501, 'ACTION_NOT_ENABLED');
   } catch (caught) {
     // A strict command that reaches an unexpected D1/provider failure has an
@@ -4731,6 +5049,9 @@ async function handle(request, env) {
   if (uploadMatch && request.method === 'DELETE') return withdrawDemoEvidence(request, env, uploadMatch[1])
   if (path === '/api/assessments' && request.method === 'GET') return getAssessmentSummary(request, env, url)
   if (path === '/api/accounting-status' && request.method === 'GET') return getAccountingStatus(request, env, url)
+  if (path === '/api/leads' && request.method === 'GET') return listLeads(request, env, url)
+  if (path === '/api/client-groups' && request.method === 'GET') return listClientGroups(request, env, url)
+  if (path === '/api/clients' && request.method === 'GET') return listClients(request, env, url)
   {
     const engagementMatch = path.match(/^\/api\/engagements\/([A-Za-z0-9_-]{1,40})(\/.*)?$/)
     if (engagementMatch) {
@@ -4741,6 +5062,7 @@ async function handle(request, env) {
       if (suffix === '/progress' && request.method === 'GET') return getEngagementProgress(request, env, engagementId)
       if (suffix === '/tasks' && request.method === 'GET') return getEngagementTasks(request, env, engagementId, url)
       if (suffix === '/timeline' && request.method === 'GET') return getEngagementTimeline(request, env, engagementId, url)
+      if (suffix === '/team' && request.method === 'GET') return getEngagementTeam(request, env, engagementId)
       if (suffix === '/actions' && request.method === 'POST') return dispatchEngagementAction(request, env, engagementId)
     }
   }

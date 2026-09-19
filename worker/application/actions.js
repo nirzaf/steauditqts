@@ -44,6 +44,13 @@ export const ACTION_REGISTRY = Object.freeze({
   UPDATE_ACCOUNTING_STATUS: { roles: ['preparer', 'accounting_reviewer', 'system_admin'], targetType: 'accounting_package' },
   EVALUATE_ACCOUNTING_INPUT: { roles: ['audit_senior', 'audit_manager'], targetType: 'accounting_package' },
   RECORD_TB_SOURCE: { roles: ['client_contributor', 'preparer', 'accounting_reviewer', 'system_admin'], targetType: 'tb_source' },
+  CREATE_LEAD: { roles: ['system_admin', 'engagement_partner', 'compliance_reviewer'], targetType: 'lead' },
+  QUALIFY_LEAD: { roles: ['system_admin', 'engagement_partner', 'compliance_reviewer', 'audit_manager'], targetType: 'lead' },
+  CONVERT_LEAD_TO_CLIENT: { roles: ['system_admin', 'engagement_partner', 'compliance_reviewer'], targetType: 'lead' },
+  CREATE_CLIENT_GROUP: { roles: ['system_admin', 'engagement_partner'], targetType: 'client_group' },
+  ASSIGN_ENGAGEMENT_TEAM: { roles: ['engagement_partner', 'audit_manager', 'system_admin'], targetType: 'engagement' },
+  START_AUDIT: { roles: ['engagement_partner', 'audit_manager', 'audit_senior'], targetType: 'engagement' },
+  RECORD_SENIOR_REVIEW: { roles: ['audit_senior', 'audit_manager'], targetType: 'workpaper' },
 })
 
 export function actionDefinition(action) {

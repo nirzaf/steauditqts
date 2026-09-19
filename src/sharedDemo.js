@@ -404,6 +404,50 @@ export function recordFinalDiscussion(engagementId, payload = {}) {
   return runSharedAction(engagementId, 'RECORD_FINAL_DISCUSSION', payload);
 }
 
+export function getSharedLeads() {
+  return toResult(sharedRequest('/leads'));
+}
+
+export function createSharedLead(payload = {}) {
+  return runSharedAction(SHARED_ENGAGEMENT_ID, 'CREATE_LEAD', payload);
+}
+
+export function qualifySharedLead(leadId, payload = {}) {
+  return runSharedAction(SHARED_ENGAGEMENT_ID, 'QUALIFY_LEAD', { ...payload, leadId });
+}
+
+export function convertSharedLeadToClient(leadId, payload = {}) {
+  return runSharedAction(SHARED_ENGAGEMENT_ID, 'CONVERT_LEAD_TO_CLIENT', { ...payload, leadId });
+}
+
+export function getSharedClientGroups() {
+  return toResult(sharedRequest('/client-groups'));
+}
+
+export function createSharedClientGroup(payload = {}) {
+  return runSharedAction(SHARED_ENGAGEMENT_ID, 'CREATE_CLIENT_GROUP', payload);
+}
+
+export function getSharedClients() {
+  return toResult(sharedRequest('/clients'));
+}
+
+export function getSharedEngagementTeam(engagementId = SHARED_ENGAGEMENT_ID) {
+  return toResult(sharedRequest(`/engagements/${encodeURIComponent(engagementId)}/team`));
+}
+
+export function assignSharedEngagementTeam(engagementId, payload = {}) {
+  return runSharedAction(engagementId, 'ASSIGN_ENGAGEMENT_TEAM', payload);
+}
+
+export function startSharedAudit(engagementId, payload = {}) {
+  return runSharedAction(engagementId, 'START_AUDIT', payload);
+}
+
+export function recordSharedSeniorReview(engagementId, payload = {}) {
+  return runSharedAction(engagementId, 'RECORD_SENIOR_REVIEW', payload);
+}
+
 /**
  * Run one versioned workflow action. Resolves { ok:true, ... } on commit or
  * { ok:false, error } on denial/conflict/offline. Never synthesizes success.

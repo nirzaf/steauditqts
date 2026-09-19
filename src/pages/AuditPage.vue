@@ -5,11 +5,11 @@ import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { client, formatMoney, workpapers as templateWorkpapers, workflowGuides } from '../data'
-import { activeActor, actorById, auditChainSummary, auditFindingFor, auditPopulationFor, auditSampleFor, createWorkpaperDraft, recordAlternativeWork, recordFindingDisposition, recordMaterialitySelection, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, submitWorkpaper } from '../domain/scenario.js'
+import { activeActor, actorById, auditChainSummary, auditFindingFor, auditPopulationFor, auditSampleFor, createWorkpaperDraft, recordAlternativeWork, recordFindingDisposition, recordMaterialitySelection, recordSeniorReview, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, submitWorkpaper } from '../domain/scenario.js'
 import { loadDemoSession } from '../auth.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { useDemoContext } from '../demoContext.js'
-import { evaluateAccountingInput, idempotencyKey } from '../sharedDemo.js'
+import { evaluateAccountingInput, idempotencyKey, recordSharedSeniorReview } from '../sharedDemo.js'
 import { recordTargetFor } from '../navigation/recordTargets.js'
 
 const props = defineProps({ navigationTarget: { type: Object, default: () => ({}) } })
@@ -22,6 +22,7 @@ const toast = ref('')
 const workpaperDraftOpen = ref(false)
 const workpaperDraft = ref({ title: '', procedureId: '', reviewerActorId: 'ACT-OMAR', detail: '' })
 const workpaperDraftWorking = ref(false)
+const seniorReviewWorking = ref(false)
 // Phase C — accounting → audit invalidation. When the shared input
 // generation advances, audit evaluates it back before release.
 const {
@@ -37,6 +38,7 @@ const auditGenerations = computed(() => {
   return { input: status.inputGeneration, evaluated: status.auditEvaluatedGeneration, stale: status.inputGeneration !== status.auditEvaluatedGeneration }
 })
 const canEvaluateInput = computed(() => ['audit-senior', 'audit-manager', 'admin'].includes(loadDemoSession()?.role || ''))
+const canSeniorReview = computed(() => Boolean(activeActor()?.roles?.some((r) => ['audit_senior', 'audit_manager', 'engagement_partner', 'system_admin'].includes(r))))
 
 function presentationText(value) {
   return String(value || '').replace(/\bsynthetic\s*/gi, '').replace(/\s{2,}/g, ' ').trim()
@@ -62,12 +64,50 @@ const liveWorkpapers = computed(() => {
     ...item,
     area: item.id.includes('AR') ? 'Receivables' : 'Inventory',
     evidence: item.submittedSnapshotId ? 1 : 0,
-    status: item.reviewState === 'CLEARED' ? 'Reviewed' : item.state === 'SUBMITTED' ? 'In review' : 'Not submitted',
-    tone: item.reviewState === 'CLEARED' ? 'good' : item.state === 'SUBMITTED' ? 'warn' : 'neutral',
-    stage: item.submittedSnapshotId ? `Submitted snapshot ${item.submittedSnapshotId}` : 'Working draft',
+    status: item.reviewState === 'CLEARED' ? 'Reviewed' : item.seniorReviewed ? 'Senior cleared' : item.state === 'SUBMITTED' ? 'In review' : 'Not submitted',
+    tone: item.reviewState === 'CLEARED' ? 'good' : item.seniorReviewed ? 'good' : item.state === 'SUBMITTED' ? 'warn' : 'neutral',
+    stage: item.seniorReviewed ? `Senior reviewed by ${item.seniorReviewedBy || 'Senior'}` : item.submittedSnapshotId ? `Submitted snapshot ${item.submittedSnapshotId}` : 'Working draft',
     reviewer: item.reviewerActorId,
   })) : templateWorkpapers
 })
+
+async function recordSeniorReviewAction(workpaper) {
+  if (seniorReviewWorking.value || !selectedEngagement.value) return
+  seniorReviewWorking.value = true
+  try {
+    if (sharedDemoEnabled) {
+      const result = await recordSharedSeniorReview(selectedEngagement.value.id, {
+        workpaperId: workpaper.id,
+        decision: 'PASSED',
+        notes: 'Senior review completed. Workpaper methodology and sample testing verified.',
+        idempotencyKey: `senior-review-${workpaper.id}-${Date.now()}`,
+      })
+      if (result.ok) {
+        toast.value = `Senior review recorded for ${workpaper.id}. Ready for Manager completion.`
+      } else {
+        toast.value = `Error: ${result.error?.message || 'Failed to record senior review'}`
+      }
+    } else {
+      const result = recordSeniorReview({
+        engagementId: selectedEngagement.value.id,
+        workpaperId: workpaper.id,
+        actorPersonaId: activeActor()?.personaId,
+        expectedRevision: workpaper.revision,
+        decision: 'PASSED',
+        notes: 'Senior review completed. Workpaper methodology and sample testing verified.',
+        idempotencyKey: `senior-review-${workpaper.id}-${Date.now()}`,
+      })
+      if (result.outcome === 'COMMITTED') {
+        toast.value = `Senior review recorded for ${workpaper.id}. Ready for Manager completion.`
+      } else {
+        toast.value = `${result.outcome}: ${result.code} — ${result.message}`
+      }
+    }
+  } finally {
+    seniorReviewWorking.value = false
+    window.setTimeout(() => { toast.value = '' }, 4000)
+  }
+}
 
 const chain = computed(() => auditChainSummary(selectedEngagement.value?.id))
 const risks = computed(() => chain.value.risks.map((risk) => ({
@@ -214,7 +254,7 @@ function recordMateriality() {
     </template>
 
     <template v-else-if="activeTab === 'Fieldwork'">
-      <section class="panel"><div class="panel-heading"><div><span class="eyebrow">Working papers</span><h2>Evidence-to-conclusion workspace</h2></div><span class="muted-label">{{ liveWorkpapers.length }} workpapers · exact snapshots</span></div><div class="workpaper-grid"><article v-for="workpaper in liveWorkpapers" :key="workpaper.id" class="workpaper-card"><div class="workpaper-top"><span class="workpaper-id">{{ workpaper.id }}</span><StatusPill :label="workpaper.status" :tone="workpaper.tone" /></div><h3>{{ workpaper.title }}</h3><p>{{ workpaper.area }} · {{ workpaper.evidence }} evidence snapshots</p><div class="workpaper-stage"><span>{{ workpaper.stage }}</span><i><b :style="{ width: workpaper.status === 'Reviewed' ? '100%' : workpaper.status === 'In review' ? '68%' : workpaper.status === 'Open' ? '48%' : '18%' }"></b></i></div><div class="card-footer"><span>Reviewer · {{ workpaper.reviewer }}</span><button type="button" class="row-button" :disabled="!workpaper.revision" @click="submitSnapshot(workpaper)">{{ workpaper.status === 'Not submitted' ? 'Submit snapshot' : 'New revision' }} <Icon name="arrow-right" :size="15" /></button></div></article></div></section>
+      <section class="panel"><div class="panel-heading"><div><span class="eyebrow">Working papers</span><h2>Evidence-to-conclusion workspace</h2></div><span class="muted-label">{{ liveWorkpapers.length }} workpapers · exact snapshots</span></div><div class="workpaper-grid"><article v-for="workpaper in liveWorkpapers" :key="workpaper.id" class="workpaper-card"><div class="workpaper-top"><span class="workpaper-id">{{ workpaper.id }}</span><StatusPill :label="workpaper.status" :tone="workpaper.tone" /></div><h3>{{ workpaper.title }}</h3><p>{{ workpaper.area }} · {{ workpaper.evidence }} evidence snapshots</p><div class="workpaper-stage"><span>{{ workpaper.stage }}</span><i><b :style="{ width: workpaper.status === 'Reviewed' || workpaper.seniorReviewed ? '100%' : workpaper.status === 'In review' ? '68%' : workpaper.status === 'Open' ? '48%' : '18%' }"></b></i></div><div class="card-footer"><span>Reviewer · {{ workpaper.reviewer }}</span><div class="button-row" style="gap: 6px;"><button v-if="workpaper.state === 'SUBMITTED' && !workpaper.seniorReviewed && canSeniorReview" type="button" class="button small secondary" style="padding: 4px 8px; font-size: 0.72rem;" :disabled="seniorReviewWorking" @click="recordSeniorReviewAction(workpaper)">{{ seniorReviewWorking ? 'Reviewing…' : 'Senior review' }}</button><button type="button" class="row-button" :disabled="!workpaper.revision" @click="submitSnapshot(workpaper)">{{ workpaper.status === 'Not submitted' ? 'Submit snapshot' : 'New revision' }} <Icon name="arrow-right" :size="15" /></button></div></div></article></div></section>
       <section class="fieldwork-chain panel"><div class="panel-heading"><div><span class="eyebrow">Selected evidence path</span><h2>{{ selectedRisk.id }} · {{ selectedSample?.evidenceState || 'no sample selected' }}</h2></div><StatusPill :label="selectedFinding?.state === 'DISPOSED' || selectedSample?.alternativeWork ? 'Disposition recorded' : selectedSample?.evidenceState === 'CONTRADICTORY' ? 'Blocks area conclusion' : 'In progress'" :tone="selectedFinding?.state === 'DISPOSED' || selectedSample?.alternativeWork ? 'good' : selectedSample?.evidenceState === 'CONTRADICTORY' ? 'danger' : 'warn'" /></div><div class="chain"><div><span class="chain-number">1</span><strong>Population</strong><small>{{ selectedRisk.populationId || '—' }} · {{ formatMoney(selectedPopulation?.controlTotal || '0.00') }} {{ selectedPopulation?.reconciliationState === 'RECONCILED' ? 'reconciled' : 'review required' }}</small></div><span class="chain-arrow" aria-hidden="true">→</span><div><span class="chain-number">2</span><strong>Selected item</strong><small>{{ selectedSample?.rowId || 'No item' }} · original selection preserved</small></div><span class="chain-arrow" aria-hidden="true">→</span><div><span class="chain-number">3</span><strong>Evidence state</strong><small>{{ selectedSample?.evidenceState || 'NOT_RECORDED' }} · {{ selectedSample?.evidenceState === 'CONTRADICTORY' ? 'conflict requires disposition' : 'supported sample evidence' }}</small></div><span class="chain-arrow" aria-hidden="true">→</span><div><span class="chain-number">4</span><strong>Next action</strong><small>{{ selectedSample?.alternativeWork ? 'Supported alternative work recorded' : selectedSample?.evidenceState === 'CONTRADICTORY' ? 'Alternative work or supported conclusion' : 'Complete the documented procedure' }}</small></div></div><div class="card-footer"><span>Sample revision {{ selectedSample?.revision || '—' }} · finding {{ selectedFinding?.state || 'NOT_REQUIRED' }}</span><div class="button-row"><button v-if="canPerformIndependentWork && selectedSample && !selectedSample?.alternativeWork" type="button" class="button secondary" @click="recordAlternative">Record alternative work</button><button v-if="selectedFinding && activeActor()?.roles?.includes('engagement_partner') && selectedFinding?.state !== 'DISPOSED'" type="button" class="button primary" :disabled="!selectedSample?.alternativeWork" @click="disposeFinding">Record partner disposition</button></div></div></section>
     </template>
 
