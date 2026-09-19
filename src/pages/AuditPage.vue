@@ -5,8 +5,8 @@ import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import Icon from '../components/Icon.vue'
 import { client, formatMoney, workpapers as templateWorkpapers, workflowGuides } from '../data'
-import { activeActor, actorById, auditChainSummary, auditFindingFor, auditPopulationFor, auditSampleFor, createWorkpaperDraft, recordAlternativeWork, recordFindingDisposition, recordMaterialitySelection, recordSeniorReview, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, submitWorkpaper } from '../domain/scenario.js'
-import { loadDemoSession } from '../auth.js'
+import { activeActor, actorById, auditChainSummary, auditFindingFor, auditPopulationFor, auditSampleFor, createWorkpaperDraft, evaluateAccountingInput as evaluateLocalAccountingInput, recordAlternativeWork, recordFindingDisposition, recordMaterialitySelection, recordSeniorReview, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, submitWorkpaper } from '../domain/scenario.js'
+import { SENIOR_REVIEW_ROLES } from '../../shared/lifecycleRules.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { useDemoContext } from '../demoContext.js'
 import { evaluateAccountingInput, idempotencyKey, recordSharedSeniorReview } from '../sharedDemo.js'
@@ -37,8 +37,8 @@ const auditGenerations = computed(() => {
   if (!sharedDemoEnabled || !status) return null
   return { input: status.inputGeneration, evaluated: status.auditEvaluatedGeneration, stale: status.inputGeneration !== status.auditEvaluatedGeneration }
 })
-const canEvaluateInput = computed(() => ['audit-senior', 'audit-manager', 'admin'].includes(loadDemoSession()?.role || ''))
-const canSeniorReview = computed(() => Boolean(activeActor()?.roles?.some((r) => ['audit_senior', 'audit_manager', 'engagement_partner', 'system_admin'].includes(r))))
+const canEvaluateInput = computed(() => Boolean(activeActor()?.roles?.some((role) => SENIOR_REVIEW_ROLES.includes(role))))
+const canSeniorReview = computed(() => Boolean(activeActor()?.roles?.some((role) => SENIOR_REVIEW_ROLES.includes(role))))
 
 function presentationText(value) {
   return String(value || '').replace(/\bsynthetic\s*/gi, '').replace(/\s{2,}/g, ' ').trim()
@@ -47,6 +47,23 @@ function presentationText(value) {
 async function submitEvaluateInput() {
   if (sharedBusy.value) return
   sharedBusy.value = true
+  // LOCAL_ONLY has no Worker to ask: the same handoff is recorded through the
+  // domain command, so the button cannot silently target a store that is off.
+  if (!sharedDemoEnabled) {
+    const actor = activeActor()
+    const result = evaluateLocalAccountingInput({
+      engagementId: selectedEngagement.value?.id,
+      actorPersonaId: actor?.personaId,
+      expectedSessionEpoch: actor?.sessionEpoch,
+      idempotencyKey: `evaluate-accounting-input-${selectedEngagement.value?.id}-${actor?.sessionEpoch || 1}`,
+    })
+    sharedBusy.value = false
+    toast.value = result.outcome === 'COMMITTED'
+      ? (result.data?.duplicate ? 'Input already current — nothing to re-evaluate.' : `Input g${result.data.inputGeneration} evaluated. Re-confirm impacted work before release.`)
+      : `${result.outcome}: ${result.code} — ${result.message}`
+    window.setTimeout(() => { toast.value = '' }, 6000)
+    return
+  }
   const result = await evaluateAccountingInput(sharedEngagementId.value, { idempotencyKey: idempotencyKey('evaluate-input') })
   sharedBusy.value = false
   sharedNotice.value = result.ok

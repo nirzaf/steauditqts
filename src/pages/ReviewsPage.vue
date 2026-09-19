@@ -4,15 +4,19 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusPill from '../components/StatusPill.vue'
 import WorkflowGuide from '../components/WorkflowGuide.vue'
 import ApprovalChain from '../components/ApprovalChain.vue'
+import EngagementCompletionChecklist from '../components/EngagementCompletionChecklist.vue'
 import Icon from '../components/Icon.vue'
 import ActionOutcome from '../components/ActionOutcome.vue'
 import { approvals, formatMoney, workflowGuides } from '../data'
 import { loadDemoSession } from '../auth.js'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { useDemoContext } from '../demoContext.js'
-import { activeCommandContext, createSharedIntent, getApprovalCenter, getSharedDecisions, idempotencyKey, recordManagerCompletion, recordPartnerReview, runSharedAction } from '../sharedDemo.js'
+import { activeCommandContext, createSharedIntent, evaluateAccountingInput as evaluateSharedAccountingInput, getApprovalCenter, getSharedDecisions, idempotencyKey, recordManagerCompletion, recordPartnerReview, runSharedAction } from '../sharedDemo.js'
 import { useDraftForms } from '../composables/useDraftForms.js'
-import { activeActor, actorById, clearReviewPoint as clearReviewPointCommand, createReviewPoint as createReviewPointCommand, recordCompletionRecommendation, scenario, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
+import { activeActor, actorById, clearReviewPoint as clearReviewPointCommand, completionRecommendationFor, createReviewPoint as createReviewPointCommand, evaluateAccountingInput as evaluateLocalAccountingInput, recordCompletionRecommendation, scenario, selectedEngagement as scenarioEngagement } from '../domain/scenario.js'
+import { deriveAccountingHandoff, deriveEngagementCompletionChecklist } from '../domain/localProjections.js'
+import { sharedAccountingHandoff, sharedCompletionChecklist } from '../domain/sharedProjections.js'
+import { SENIOR_REVIEW_ROLES } from '../../shared/lifecycleRules.js'
 import { recordTargetFor } from '../navigation/recordTargets.js'
 
 const emit = defineEmits(['navigate'])
@@ -43,9 +47,48 @@ const completionDecision = ref('RECOMMEND')
 const completionRationale = ref('')
 const completionWorking = ref(false)
 const scopedReviewers = computed(() => scenario.actors.filter((actor) => actor.active && actor.assignments.includes(selectedEngagement.value?.id) && actor.roles.some((role) => ['independent_reviewer', 'accounting_reviewer', 'engagement_partner'].includes(role))))
-const completionRecommendation = computed(() => selectedEngagement.value?.evidence?.completionRecommendation || null)
+const completionRecommendation = computed(() => completionRecommendationFor(selectedEngagement.value?.id))
 const canRecommendCompletion = computed(() => Boolean(activeActor()?.roles?.includes('audit_manager')))
 const completionBlockers = computed(() => completionRecommendation.value?.blockers || [])
+
+// P5 — one stakeholder-facing completion view per mode: the local scenario in
+// LOCAL_ONLY, the D1 snapshot in SHARED_DEMO, never a blend of the two.
+const completionChecklist = computed(() => sharedDemoEnabled
+  ? sharedCompletionChecklist(sharedProgress.value, sharedEngagementId.value)
+  : deriveEngagementCompletionChecklist(scenario, selectedEngagement.value?.id))
+const accountingHandoff = computed(() => sharedDemoEnabled
+  ? sharedAccountingHandoff(sharedProgress.value)
+  : deriveAccountingHandoff(scenario, selectedEngagement.value?.id))
+const canEvaluateAccountingInput = computed(() => Boolean(activeActor()?.roles?.some((role) => SENIOR_REVIEW_ROLES.includes(role))))
+const handoffBusy = ref(false)
+
+async function evaluateHandoffInput() {
+  if (handoffBusy.value || !accountingHandoff.value?.stale) return
+  handoffBusy.value = true
+  try {
+    if (sharedDemoEnabled) {
+      const result = await evaluateSharedAccountingInput(sharedEngagementId.value, { idempotencyKey: idempotencyKey('evaluate-accounting-input') })
+      sharedMessage.value = result.ok
+        ? (result.duplicate ? 'Accounting input was already current — nothing re-evaluated.' : `Accounting input g${result.inputGeneration} evaluated for the audit file.`)
+        : `Not committed (${result.error?.code || 'ERROR'}): ${result.error?.message || ''}`
+      if (result.ok) refreshSharedContext()
+    } else {
+      const actor = activeActor()
+      const result = evaluateLocalAccountingInput({
+        engagementId: selectedEngagement.value?.id,
+        actorPersonaId: actor?.personaId,
+        expectedSessionEpoch: actor?.sessionEpoch,
+        idempotencyKey: `evaluate-accounting-input-${selectedEngagement.value?.id}-${actor?.sessionEpoch || 1}`,
+      })
+      toast.value = result.outcome === 'COMMITTED'
+        ? (result.data?.duplicate ? 'Accounting input was already current — nothing re-evaluated.' : `Accounting input g${result.data.inputGeneration} evaluated for the audit file.`)
+        : `${result.outcome}: ${result.code} — ${result.message}`
+    }
+  } finally {
+    handoffBusy.value = false
+    window.setTimeout(() => { toast.value = ''; sharedMessage.value = '' }, 6000)
+  }
+}
 
 watch([() => props.navigationTarget?.recordId, () => points.value.map((point) => point.id).join('|')], ([recordId]) => {
   const target = recordTargetFor(props.navigationTarget?.routeKey, recordId)
@@ -505,6 +548,15 @@ function recordCompletion() {
       </div>
       <p class="panel-footnote"><Icon name="info" :size="15" /><span>Each record carries the accounting input generation it evaluated; a later TB visibly stales it.</span></p>
     </section>
+
+    <EngagementCompletionChecklist
+      :checklist="completionChecklist"
+      :handoff="accountingHandoff"
+      :busy="handoffBusy"
+      :can-evaluate="canEvaluateAccountingInput"
+      :source="sharedDemoEnabled ? 'd1' : 'local'"
+      @evaluate="evaluateHandoffInput"
+    />
 
     <section v-if="!sharedDemoEnabled" class="review-layout"><article class="panel review-queue-panel"><div class="panel-heading"><div><span class="eyebrow">Review queue</span><h2>Items needing a response</h2></div><div class="filter-row"><button v-for="filter in filters" :key="filter" type="button" :class="{ active: activeFilter === filter }" @click="activeFilter = filter">{{ filter }}</button></div></div><div class="review-list"><div v-for="point in filteredPoints" :key="point.id" class="review-row"><span class="review-severity" :class="`tone-${point.tone}`"><Icon :name="point.severity === 'Significant' ? 'warning' : 'info'" :size="15" /></span><div><div class="review-title"><strong>{{ point.title }}</strong><span>{{ point.id }}</span></div><p>{{ point.detail }}</p><small>{{ point.area }} · {{ point.assignee }} · due {{ point.due }}</small></div><div class="review-actions"><StatusPill :label="point.status" :tone="point.tone" /><button type="button" class="row-button" :disabled="point.status === 'Cleared'" @click="clearPoint(point)">{{ point.status === 'Cleared' ? 'Cleared' : 'Clear' }}</button></div></div></div></article><aside class="panel applicability-panel"><div class="panel-heading"><div><span class="eyebrow">Applicability check</span><h2>FS v05 impact map</h2></div><StatusPill label="Re-review required" tone="warn" /></div><p class="panel-copy">AJ-002 changes the accounting package. Historical approvals remain preserved, but their applicability to the release candidate is re-evaluated.</p><div class="dependency-graph"><div class="dependency-node good"><span>TB v03</span><small>Validated source</small></div><span class="dependency-line"></span><div class="dependency-node good"><span>FS v05</span><small>New package</small></div><span class="dependency-line"></span><div class="dependency-node warn"><span>Approvals</span><small>3 stale</small></div><span class="dependency-line"></span><div class="dependency-node danger"><span>Release</span><small>Blocked</small></div></div><button type="button" class="button secondary full-width" @click="dependencyLogOpen = !dependencyLogOpen">{{ dependencyLogOpen ? 'Hide dependency log' : 'Open dependency log' }} <Icon name="arrow-right" :size="16" /></button><div v-if="dependencyLogOpen" class="dependency-log"><div><code>TB-REPLACEMENT-001</code><span>Source revision changed</span><StatusPill label="Current" tone="good" /></div><div><code>AJ-002-R1</code><span>Proposed journal is management-authorized</span><StatusPill label="Re-review" tone="warn" /></div><div><code>FS-0018-ACC-2026-V05</code><span>Historical approval kept; current applicability must be recorded</span><StatusPill label="Stale" tone="danger" /></div></div></aside></section>
 

@@ -8,7 +8,7 @@ import Icon from '../components/Icon.vue'
 import SharedTimeline from '../components/SharedTimeline.vue'
 import { sharedDemoEnabled } from '../composables/useSharedEngagement.js'
 import { client, timeline, workflowGuides } from '../data'
-import { activateEngagement, activationBlockers, activationFor, activeActor, assignEngagementTeam, auditCommencementBlockers, createContinuanceShell, gateSummary, renewalCaseFor, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, selectEngagement, startAudit, termsAcceptedFor, termsFor } from '../domain/scenario.js'
+import { activateEngagement, activationBlockers, activationFor, activeActor, assignEngagementTeam, auditCommencementBlockers, auditCommencementWarnings, createContinuanceShell, eligibleActorsFor, gateSummary, renewalCaseFor, scenario, selectedClient as scenarioClient, selectedEngagement as scenarioEngagement, selectEngagement, startAudit, termsAcceptedFor, termsFor } from '../domain/scenario.js'
 import { assignSharedEngagementTeam, startSharedAudit } from '../sharedDemo.js'
 import { recordTargetFor } from '../navigation/recordTargets.js'
 import { useDemoContext } from '../demoContext.js'
@@ -38,15 +38,18 @@ const terms = computed(() => termsFor(selectedEngagement.value?.id))
 const activation = computed(() => activationFor(selectedEngagement.value?.id))
 const blockers = computed(() => activationBlockers(selectedEngagement.value?.id))
 const commencementBlockers = computed(() => auditCommencementBlockers(selectedEngagement.value?.id))
+const commencementWarnings = computed(() => auditCommencementWarnings(selectedEngagement.value?.id))
 const renewal = computed(() => renewalCaseFor(selectedEngagement.value?.id))
 const canActivate = computed(() => Boolean(activeActor()?.roles?.includes('engagement_partner')))
 const canCommenceAudit = computed(() => Boolean(activeActor()?.roles?.some((r) => ['engagement_partner', 'audit_manager', 'audit_senior', 'system_admin'].includes(r))))
 const canManageTeam = computed(() => Boolean(activeActor()?.roles?.some((r) => ['engagement_partner', 'audit_manager', 'system_admin'].includes(r))))
 const isAuditCommenced = computed(() => Boolean(selectedEngagement.value?.auditCommenced))
 
-const availableStaff = computed(() =>
-  scenario.actors.filter((item) => item.active && !item.roles?.some((role) => ['client_finance', 'management_approver'].includes(role)))
-)
+// Who can legitimately fill each staffing slot. The list comes from the same
+// role matrix the assignment command enforces, so the form can no longer offer
+// (or default to) an actor the command would reject.
+const staffOptionsFor = (role) => eligibleActorsFor(role, selectedEngagement.value?.id)
+const defaultActorFor = (role, currentActorId) => currentActorId || staffOptionsFor(role)[0]?.id || ''
 
 const teamMembers = computed(() => {
   const team = selectedEngagement.value?.team
@@ -143,42 +146,42 @@ function openTeamModal() {
   
   teamForm.value = {
     preparer: {
-      actorId: findRole('preparer')?.actorId || 'ACT-ZAINAB',
+      actorId: defaultActorFor('preparer', findRole('preparer')?.actorId),
       plannedHours: findRole('preparer')?.plannedHours || '40',
       startDate: findRole('preparer')?.startDate || '2026-09-01',
       endDate: findRole('preparer')?.endDate || '2026-09-20',
       responsibility: findRole('preparer')?.responsibility || 'Fieldwork workpaper preparation & testing',
     },
     audit_senior: {
-      actorId: findRole('audit_senior')?.actorId || 'ACT-LEILA',
+      actorId: defaultActorFor('audit_senior', findRole('audit_senior')?.actorId),
       plannedHours: findRole('audit_senior')?.plannedHours || '30',
       startDate: findRole('audit_senior')?.startDate || '2026-09-01',
       endDate: findRole('audit_senior')?.endDate || '2026-09-22',
       responsibility: findRole('audit_senior')?.responsibility || 'Detailed workpaper review and senior sign-off',
     },
     audit_manager: {
-      actorId: findRole('audit_manager')?.actorId || 'ACT-OMAR',
+      actorId: defaultActorFor('audit_manager', findRole('audit_manager')?.actorId),
       plannedHours: findRole('audit_manager')?.plannedHours || '20',
       startDate: findRole('audit_manager')?.startDate || '2026-09-05',
       endDate: findRole('audit_manager')?.endDate || '2026-09-24',
       responsibility: findRole('audit_manager')?.responsibility || 'Audit completion, consultation and file readiness',
     },
     engagement_partner: {
-      actorId: findRole('engagement_partner')?.actorId || 'ACT-MAYA',
+      actorId: defaultActorFor('engagement_partner', findRole('engagement_partner')?.actorId),
       plannedHours: findRole('engagement_partner')?.plannedHours || '10',
       startDate: findRole('engagement_partner')?.startDate || '2026-09-10',
       endDate: findRole('engagement_partner')?.endDate || '2026-09-25',
       responsibility: findRole('engagement_partner')?.responsibility || 'Overall engagement leadership and audit opinion sign-off',
     },
     eqr_reviewer: {
-      actorId: findRole('eqr_reviewer')?.actorId || (selectedEngagement.value?.evidence?.eqrRequired ? 'ACT-TARIQ' : ''),
+      actorId: findRole('eqr_reviewer')?.actorId || (selectedEngagement.value?.evidence?.eqrRequired ? defaultActorFor('eqr_reviewer', '') : ''),
       plannedHours: findRole('eqr_reviewer')?.plannedHours || '8',
       startDate: findRole('eqr_reviewer')?.startDate || '2026-09-18',
       endDate: findRole('eqr_reviewer')?.endDate || '2026-09-25',
       responsibility: findRole('eqr_reviewer')?.responsibility || 'Independent engagement quality review (EQR)',
     },
     accounting_reviewer: {
-      actorId: findRole('accounting_reviewer')?.actorId || 'ACT-ZAINAB',
+      actorId: defaultActorFor('accounting_reviewer', findRole('accounting_reviewer')?.actorId),
       plannedHours: findRole('accounting_reviewer')?.plannedHours || '12',
       startDate: findRole('accounting_reviewer')?.startDate || '2026-09-01',
       endDate: findRole('accounting_reviewer')?.endDate || '2026-09-15',
@@ -300,7 +303,7 @@ async function commenceAuditAction() {
           </div>
           <StatusPill :label="isAuditCommenced ? 'Fieldwork commenced' : commencementBlockers.length ? 'Prerequisites pending' : 'Ready to commence'" :tone="isAuditCommenced ? 'good' : commencementBlockers.length ? 'danger' : 'warn'" />
         </div>
-        <p class="panel-copy">Audit fieldwork commencement (START_AUDIT) requires 6 verified prerequisites: partner acceptance, client EL acceptance, advance verification, active engagement shell, team staffing, and planning readiness.</p>
+        <p class="panel-copy">Audit fieldwork commencement (START_AUDIT) is enforced by the shared staffing profile in both demo modes: partner acceptance, client EL acceptance, advance verification, an Engagement Partner, an Audit Senior, an Audit Manager (unless approved small-firm), at least one Preparer, and an Accounting Reviewer where a package is linked.</p>
         
         <div v-if="isAuditCommenced" class="prototype-note" style="background: #f0fdf4; border-color: #bbf7d0;">
           <Icon name="check-circle" :size="16" />
@@ -315,8 +318,14 @@ async function commenceAuditAction() {
         </ul>
         <div v-else class="prototype-note">
           <Icon name="check-circle" :size="16" />
-          <span>All 6 audit commencement prerequisites are satisfied. Ready to transition to AUDIT_IN_PROGRESS.</span>
+          <span>Every commencement prerequisite is satisfied. Ready to transition to AUDIT_IN_PROGRESS.</span>
         </div>
+        <ul v-if="!isAuditCommenced && commencementWarnings.length" class="check-list">
+          <li v-for="warning in commencementWarnings" :key="`${warning.code}-${warning.message}`">
+            <span class="list-icon"><Icon name="info" :size="14" /></span>
+            <span><strong>{{ warning.code }}</strong><small>{{ warning.message }}</small></span>
+          </li>
+        </ul>
 
         <div class="card-footer">
           <span>{{ isAuditCommenced ? 'Fieldwork active · revision ' + selectedEngagement.revision : commencementBlockers.length ? commencementBlockers.length + ' blocker(s) remaining' : 'Ready for commencement' }}</span>
@@ -422,7 +431,7 @@ async function commenceAuditAction() {
             <label>Preparer / Junior
               <select v-model="teamForm.preparer.actorId" name="preparer-actor">
                 <option value="">Unassigned</option>
-                <option v-for="actor in availableStaff" :key="actor.id" :value="actor.id">{{ actor.name }} ({{ actor.roles[0] }})</option>
+                <option v-for="actor in staffOptionsFor('preparer')" :key="actor.id" :value="actor.id">{{ actor.name }} ({{ actor.roles[0] }})</option>
               </select>
             </label>
             <label>Planned hours
@@ -441,7 +450,7 @@ async function commenceAuditAction() {
             <label>Audit Senior
               <select v-model="teamForm.audit_senior.actorId" name="senior-actor" required>
                 <option value="">Select Audit Senior</option>
-                <option v-for="actor in availableStaff" :key="actor.id" :value="actor.id">{{ actor.name }} ({{ actor.roles[0] }})</option>
+                <option v-for="actor in staffOptionsFor('audit_senior')" :key="actor.id" :value="actor.id">{{ actor.name }} ({{ actor.roles[0] }})</option>
               </select>
             </label>
             <label>Planned hours
@@ -460,7 +469,7 @@ async function commenceAuditAction() {
             <label>Audit Manager
               <select v-model="teamForm.audit_manager.actorId" name="manager-actor" required>
                 <option value="">Select Audit Manager</option>
-                <option v-for="actor in availableStaff" :key="actor.id" :value="actor.id">{{ actor.name }} ({{ actor.roles[0] }})</option>
+                <option v-for="actor in staffOptionsFor('audit_manager')" :key="actor.id" :value="actor.id">{{ actor.name }} ({{ actor.roles[0] }})</option>
               </select>
             </label>
             <label>Planned hours
@@ -479,7 +488,7 @@ async function commenceAuditAction() {
             <label>Engagement Partner
               <select v-model="teamForm.engagement_partner.actorId" name="partner-actor" required>
                 <option value="">Select Partner</option>
-                <option v-for="actor in availableStaff.filter((a) => a.roles.includes('engagement_partner'))" :key="actor.id" :value="actor.id">{{ actor.name }}</option>
+                <option v-for="actor in staffOptionsFor('engagement_partner')" :key="actor.id" :value="actor.id">{{ actor.name }}</option>
               </select>
             </label>
             <label>Planned hours
@@ -498,7 +507,7 @@ async function commenceAuditAction() {
             <label>EQR Reviewer (if required)
               <select v-model="teamForm.eqr_reviewer.actorId" name="eqr-actor">
                 <option value="">No EQR required</option>
-                <option v-for="actor in availableStaff" :key="actor.id" :value="actor.id">{{ actor.name }} ({{ actor.roles[0] }})</option>
+                <option v-for="actor in staffOptionsFor('eqr_reviewer')" :key="actor.id" :value="actor.id">{{ actor.name }} ({{ actor.roles[0] }})</option>
               </select>
             </label>
             <label>Planned hours
@@ -517,7 +526,7 @@ async function commenceAuditAction() {
             <label>Accounting Reviewer
               <select v-model="teamForm.accounting_reviewer.actorId" name="accounting-reviewer-actor">
                 <option value="">Unassigned</option>
-                <option v-for="actor in availableStaff" :key="actor.id" :value="actor.id">{{ actor.name }} ({{ actor.roles[0] }})</option>
+                <option v-for="actor in staffOptionsFor('accounting_reviewer')" :key="actor.id" :value="actor.id">{{ actor.name }} ({{ actor.roles[0] }})</option>
               </select>
             </label>
             <label>Planned hours
