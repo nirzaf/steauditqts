@@ -1,15 +1,18 @@
 import {
   assignEngagementTeam,
+  clearReviewPoint,
   createLead,
   createWorkpaperDraft,
   qualifyLead,
   recordAssessmentDecision,
+  recordCompletionRecommendation,
   recordSeniorReview,
   replaceAccountingSource,
   resetScenario,
   scenario,
   selectEngagement,
   setActivePersona,
+  submitWorkpaper,
 } from './scenario.js'
 import { replacementFixture } from './accounting.js'
 
@@ -166,10 +169,13 @@ function applyCommand(command, { allowBlocked = false, label = '' } = {}) {
 
 /**
  * Reset + replay a deterministic, browser-local walkthrough focus.
- * Commands are reused from the domain contract; no status fields are
- * patched directly by the preset layer.
+ *
+ * Every professional state a preset needs is reached through the same domain
+ * commands a user triggers, so a preset can never fabricate a file condition the
+ * application itself would refuse to record. Presets are async because
+ * submitting a workpaper captures a real snapshot.
  */
-export function applyLocalPreset(presetKey, { personaId = scenario.activePersonaId } = {}) {
+export async function applyLocalPreset(presetKey, { personaId = scenario.activePersonaId } = {}) {
   const preset = LOCAL_SCENARIO_PRESETS.find((item) => item.key === presetKey)
   if (!preset) return result('REJECTED', null, 'PRESET_NOT_FOUND', 'Choose one of the supported walkthrough focuses.')
 
@@ -290,20 +296,30 @@ export function applyLocalPreset(presetKey, { personaId = scenario.activePersona
     }
   }
 
-  if (preset.key === 'SENIOR_REVIEW_IN_PROGRESS' || preset.key === 'MANAGER_REVIEW') {
-    // Submit existing workpapers so that senior review is meaningful
+  if (preset.key === 'SENIOR_REVIEW_IN_PROGRESS' || preset.key === 'MANAGER_REVIEW' || preset.key === 'RELEASE_BLOCKED') {
+    // Submit the seeded workpapers through the domain command, so every snapshot
+    // a later review points at really exists.
     const engagementWps = (scenario.workpapers || []).filter((wp) => wp.engagementId === preset.engagementId)
     for (const wp of engagementWps) {
-      if (wp.state === 'DRAFT') {
-        wp.state = 'SUBMITTED'
-        wp.submittedSnapshotId = `SNAP-${wp.id}-PRESET`
-        wp.submittedBy = 'ACT-OMAR-SENIOR'
-        wp.submittedAt = new Date().toISOString()
+      if (wp.state !== 'DRAFT') continue
+      const submitted = await submitWorkpaper({
+        workpaperId: wp.id,
+        actorPersonaId: 'preparer-demo',
+        expectedRevision: wp.revision,
+        expectedSessionEpoch: 1,
+        content: `Preset ${preset.key} evidence for ${wp.title || wp.id}`,
+        idempotencyKey: `preset-submit-${wp.id}-v1`,
+      })
+      const handled = applyCommand(submitted, { label: 'workpaper submission' })
+      if (!handled.ok) {
+        resetScenario(); setActivePersona(preservedPersona)
+        return result('REJECTED', null, handled.code, handled.message)
       }
     }
-    // For MANAGER_REVIEW: senior-clear all; for SENIOR_REVIEW_IN_PROGRESS: clear only first
+    // For MANAGER_REVIEW: senior-clear all; for SENIOR_REVIEW_IN_PROGRESS and
+    // RELEASE_BLOCKED: leave the review outstanding, which is the demo point.
     if (preset.key === 'MANAGER_REVIEW') {
-      for (const wp of engagementWps.filter((wp) => wp.state !== 'DRAFT')) {
+      for (const wp of engagementWps.filter((entry) => entry.state !== 'DRAFT')) {
         recordSeniorReview({
           engagementId: preset.engagementId,
           workpaperId: wp.id,
@@ -317,11 +333,25 @@ export function applyLocalPreset(presetKey, { personaId = scenario.activePersona
   }
 
   if (['READY_FOR_PARTNER', 'PARTNER_EQR_REVIEW'].includes(preset.key)) {
-    // Submit and senior-clear all workpapers, then set manager completion marker
+    // Submit, senior-clear and resolve review points, then record the manager
+    // recommendation with the command that enforces those same prerequisites.
     const engagementWps = (scenario.workpapers || []).filter((wp) => wp.engagementId === preset.engagementId)
     for (const wp of engagementWps) {
-      wp.state = 'SUBMITTED'
-      wp.submittedSnapshotId = `SNAP-${wp.id}-PRESET`
+      if (wp.state === 'DRAFT') {
+        const submitted = await submitWorkpaper({
+          workpaperId: wp.id,
+          actorPersonaId: 'preparer-demo',
+          expectedRevision: wp.revision,
+          expectedSessionEpoch: 1,
+          content: `Preset ${preset.key} evidence for ${wp.title || wp.id}`,
+          idempotencyKey: `preset-submit-${wp.id}-rp-v1`,
+        })
+        const handled = applyCommand(submitted, { label: 'workpaper submission' })
+        if (!handled.ok) {
+          resetScenario(); setActivePersona(preservedPersona)
+          return result('REJECTED', null, handled.code, handled.message)
+        }
+      }
       recordSeniorReview({
         engagementId: preset.engagementId,
         workpaperId: wp.id,
@@ -331,60 +361,76 @@ export function applyLocalPreset(presetKey, { personaId = scenario.activePersona
         idempotencyKey: `preset-sr-${wp.id}-rp-v1`,
       })
     }
-    const eng = scenario.engagements.find((e) => e.id === preset.engagementId)
-    if (eng) {
-      eng.evidence.completionRecommendation = 'RECOMMEND_COMPLETE'
-      eng.revision += 1
+    for (const point of (scenario.reviews || []).filter((entry) => entry.engagementId === preset.engagementId && entry.status !== 'CLEARED')) {
+      const cleared = clearReviewPoint({
+        pointId: point.id,
+        actorPersonaId: 'independent-reviewer-demo',
+        expectedRevision: point.revision,
+        expectedSessionEpoch: 1,
+        response: 'Preset walkthrough: independently re-performed; the supporting evidence is attached to the current snapshot.',
+        idempotencyKey: `preset-clear-${point.id}-v1`,
+      })
+      const handled = applyCommand(cleared, { label: 'review point clearance' })
+      if (!handled.ok) {
+        resetScenario(); setActivePersona(preservedPersona)
+        return result('REJECTED', null, handled.code, handled.message)
+      }
     }
-  }
-
-  if (preset.key === 'PARTNER_EQR_REVIEW') {
-    const eng = scenario.engagements.find((e) => e.id === preset.engagementId)
-    if (eng) {
-      eng.evidence.eqrRequired = true
+    const recommended = recordCompletionRecommendation({
+      engagementId: preset.engagementId,
+      actorPersonaId: 'audit-manager-demo',
+      expectedSessionEpoch: 1,
+      decision: 'RECOMMEND',
+      rationale: 'Preset walkthrough: every submitted workpaper is senior-cleared and all review points are resolved against the current package.',
+      idempotencyKey: `preset-completion-${preset.key}-v1`,
+    })
+    const handled = applyCommand(recommended, { label: 'manager completion recommendation' })
+    if (!handled.ok) {
+      resetScenario(); setActivePersona(preservedPersona)
+      return result('REJECTED', null, handled.code, handled.message)
     }
   }
 
   // ── Acceptance presets ─────────────────────────────────────────────────────
 
   if (preset.key === 'ACCEPTANCE_DECLINED') {
-    // Record a DECLINE decision on the acceptance assessment
+    // Record the decline through the acceptance decision command, so the declining
+    // partner, rationale and revision are the real command's output.
     const assessment = scenario.assessments?.find((a) => a.engagementId === preset.engagementId && a.type === 'acceptance')
     if (assessment) {
-      assessment.decision = {
+      const declined = recordAssessmentDecision({
+        engagementId: preset.engagementId,
+        type: 'acceptance',
+        actorPersonaId: 'partner-demo',
+        expectedRevision: assessment.revision,
+        expectedSessionEpoch: 1,
         decision: 'DECLINE',
         rationale: 'Conflict of interest identified during pre-acceptance review. Engagement declined per independence policy.',
-        actorId: 'ACT-MAYA',
-        recordedAt: new Date().toISOString(),
-        revision: assessment.revision,
+        idempotencyKey: `preset-${preset.key}-decision-v1`,
+      })
+      const handled = applyCommand(declined, { label: 'acceptance decision' })
+      if (!handled.ok) {
+        resetScenario(); setActivePersona(preservedPersona)
+        return result('REJECTED', null, handled.code, handled.message)
       }
-      assessment.revision += 1
     }
   }
 
   // ── Negative path: staffing blocked ────────────────────────────────────────
 
   if (preset.key === 'STAFFING_BLOCKED') {
-    // Only assign a preparer — no partner, no senior, no manager
+    // Replace the roster with only a preparer — no partner, senior or manager.
+    // Merging would silently keep the seeded profile and the demo would show a
+    // team that is not actually blocked.
     assignEngagementTeam({
       engagementId: preset.engagementId,
       actorPersonaId: 'admin-demo',
+      replaceRoster: true,
       idempotencyKey: `preset-${preset.key}-partial-v1`,
       assignments: [
         { role: 'preparer', actorId: 'ACT-JUNIOR', plannedHours: '40', responsibility: 'Incomplete team for demo' },
       ],
     })
-  }
-
-  // ── Negative path: release blocked ────────────────────────────────────────
-
-  if (preset.key === 'RELEASE_BLOCKED') {
-    // Workpapers exist but are NOT senior-reviewed → Senior gate is open → release is blocked
-    const eng = scenario.engagements.find((e) => e.id === preset.engagementId)
-    if (eng) {
-      eng.evidence.completionRecommendation = 'RECOMMEND_COMPLETE'
-      // Do NOT clear senior review → this creates the blocked condition
-    }
   }
 
   setActivePersona(preservedPersona)

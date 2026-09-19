@@ -449,7 +449,7 @@ async function handleScenarioSelect(presetKey) {
   if (!preset || (demoMode.value !== 'local' && activeScenario.value?.key === preset.key)) return
   scenarioBusy.value = true
   const result = demoMode.value === 'local'
-    ? applyLocalPreset(preset.key, { personaId: currentUser.value?.id })
+    ? await applyLocalPreset(preset.key, { personaId: currentUser.value?.id })
     : await applyScenarioPreset(activeEngagementId.value, preset.key, {
       expectedRevision: demoActiveContext.value?.revision,
       idempotencyKey: stableScenarioIntentKey(activeEngagementId.value, preset.key),
