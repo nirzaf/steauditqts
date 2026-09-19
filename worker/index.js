@@ -3,6 +3,7 @@ import { buildPortfolioRows, deriveProcessHealth, rankTasks, resolveScenarioPres
 import { clientEvaluationQuestionIds, clientEvaluationQuestions, QUESTION_BANK_VERSION } from '../src/domain/questionBanks.js';
 import { evaluateAssessment } from '../src/domain/assessments.js';
 import { SHARED_ACTION_SET, validateActionPayload, validateCommandEnvelope } from '../shared/actionContracts.js';
+import { staffingProfileBlockers, validateAssignmentActor, validateDateRange, validatePlannedHours } from '../shared/staffingRules.js';
 import { questionPolicyFor, validateQuestionResponse } from '../shared/questionPolicy.js';
 import { buildWorkspaceProjection, isWorkspaceEventPublic } from './application/workspace.js';
 import { actionAllowed, actionDefinition } from './application/actions.js';
@@ -69,9 +70,11 @@ function json(request, payload, status = 200, correlationId = requestCorrelation
   return Response.json(payload, { status, headers: baseHeaders(request, correlationId) })
 }
 
-function error(request, message, status = 400, code = 'BAD_REQUEST') {
+function error(request, message, status = 400, code = 'BAD_REQUEST', extras = null) {
   const correlationId = requestCorrelationId(request)
-  return json(request, { ok: false, error: { code, message, correlationId }, evidenceLevel: 'SIMULATION' }, status, correlationId)
+  const payload = { ok: false, error: { code, message, correlationId }, evidenceLevel: 'SIMULATION' }
+  if (extras && typeof extras === 'object') Object.assign(payload, extras)
+  return json(request, payload, status, correlationId)
 }
 
 function readEngagementId(value) {
@@ -397,6 +400,54 @@ const DEMO_PERSONAS = {
   'records-demo': { actorId: 'ACT-RECORDS', roles: ['records_custodian'] },
 };
 const DEMO_RESET_ENGAGEMENTS = ['ENG-0018-AUD-2026', 'ENG-0018-ACC-2026', 'ENG-0009-ACC-2026'];
+
+// P8A — server-side actor directory used to validate engagement staffing
+// assignments. The Worker is authoritative in SHARED_DEMO: an assignment is
+// only valid when the actor exists, is active, and actually holds the role
+// required by the staffing position (shared/staffingRules.js).
+const DEMO_ACTORS = Object.freeze(Object.fromEntries(
+  Object.entries(DEMO_PERSONAS).map(([personaId, entry]) => [
+    entry.actorId,
+    {
+      id: entry.actorId,
+      name: entry.actorId.replace(/^ACT-/, '').split('-').map((part) => part.charAt(0) + part.slice(1).toLowerCase()).join(' '),
+      personaId,
+      roles: [...entry.roles],
+      active: true,
+    },
+  ]),
+));
+
+// Workpapers cleared by senior review remain submitted evidence. Every gate
+// that requires "submitted workpapers" must accept both states, otherwise a
+// fully senior-reviewed file would read as having no submitted workpapers.
+const SUBMITTED_WORKPAPER_STATES = ['SUBMITTED', 'SENIOR_REVIEWED'];
+
+function submittedWorkpaperFilter(alias = '') {
+  const prefix = alias ? alias + '.' : '';
+  return `${prefix}state IN (${SUBMITTED_WORKPAPER_STATES.map((state) => `'${state}'`).join(', ')})`;
+}
+
+async function countSubmittedWorkpapers(env, engagementId) {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM auditflow_workpapers WHERE engagement_id = ?1 AND ${submittedWorkpaperFilter()}`,
+  ).bind(engagementId).first();
+  return Number(row?.n || 0);
+}
+
+async function readSeniorReviewGate(env, engagementId) {
+  const rows = await env.DB.prepare(
+    `SELECT workpaper_id, state FROM auditflow_workpapers WHERE engagement_id = ?1 AND state <> 'DRAFT'`,
+  ).bind(engagementId).all().catch(() => ({ results: [] }));
+  const submitted = rows.results || [];
+  const pending = submitted.filter((row) => String(row.state || '').toUpperCase() !== 'SENIOR_REVIEWED');
+  return {
+    complete: submitted.length > 0 && pending.length === 0,
+    total: submitted.length,
+    reviewed: submitted.length - pending.length,
+    pending: pending.map((row) => row.workpaper_id),
+  };
+}
 
 function readSessionId(request) {
   const header = request.headers.get('Cookie') || '';
@@ -1411,6 +1462,10 @@ async function actionAcceptClient(request, env, session, id, payload, correlatio
   ).bind(decisionId, id, `rev-${engagement.revision}`, decision, session.actorId, rationale, engagement.revision + 1).run();
   const next = await touchEngagement(env, id, decision === 'ACCEPT' ? 'STAGE-02' : engagement.current_stage);
   await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`acceptance-${id}`).run();
+  if (decision === 'ACCEPT') {
+    // P4 handoff — client accepted: Finance records the cost estimate next.
+    await upsertTask(env, { taskId: `finance-estimate-${id}`, engagementId: id, assigneeRole: 'finance_team', title: 'Record cost estimate and advance requirement', state: 'OPEN', linkedObjectType: 'decision', linkedObjectId: decisionId });
+  }
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: `CLIENT_${decision === 'ESCALATE' ? 'ESCALATED' : decision === 'ACCEPT' ? 'ACCEPTED' : 'DECLINED'}`, objectType: 'decision', objectId: decisionId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   return json(request, { ok: true, decision: { decisionId, decision, decidedBy: session.actorId, rationale }, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
 }
@@ -1434,6 +1489,7 @@ async function actionVerifyAdvance(request, env, session, id, payload, correlati
      VALUES (?1, '9000.00', 'VERIFIED', ?2, 1)
      ON CONFLICT (engagement_id) DO UPDATE SET advance_state = 'VERIFIED', advance_reference = excluded.advance_reference, revision = auditflow_commercial.revision + 1, updated_at = datetime('now')`,
   ).bind(id, reference).run();
+  await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`advance-verify-${id}`).run();
   const engagement = await touchEngagement(env, id, null);
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'ADVANCE_VERIFIED', objectType: 'commercial', objectId: id, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey, correlationId });
   const commercial = await env.DB.prepare('SELECT * FROM auditflow_commercial WHERE engagement_id = ?1').bind(id).first();
@@ -1580,6 +1636,7 @@ async function actionApproveFee(request, env, session, id, payload, correlationI
   ).bind(id, approvedFee, quotationId).run();
   const engagement = await touchEngagement(env, id, null);
   await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`fee-approval-${id}`).run();
+  await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`finance-estimate-${id}`).run();
   await upsertTask(env, { taskId: `el-response-${id}`, engagementId: id, assigneeRole: 'management_approver', title: 'Respond to Engagement Letter EL-2026-01', state: 'OPEN', linkedObjectType: 'decision', linkedObjectId: 'EL-2026-01' });
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'FEE_APPROVED', objectType: 'commercial', objectId: id, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   const updated = await env.DB.prepare('SELECT * FROM auditflow_commercial WHERE engagement_id = ?1').bind(id).first();
@@ -1609,6 +1666,10 @@ async function actionRespondEl(request, env, session, id, payload, correlationId
   ).bind(decisionId, id, version, decision, session.actorId, rationale, (commercial.revision || 0) + 1).run();
   await env.DB.prepare(`UPDATE auditflow_commercial SET el_state = ?2, revision = revision + 1, updated_at = datetime('now') WHERE engagement_id = ?1`).bind(id, decision === 'ACCEPT' ? 'ACCEPTED' : 'REJECTED').run();
   await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`el-response-${id}`).run();
+  if (decision === 'ACCEPT' && moneyToCents(commercial.advance_required || '0.00') > 0) {
+    // P4 handoff — EL accepted with an advance due: Finance verifies it next.
+    await upsertTask(env, { taskId: `advance-verify-${id}`, engagementId: id, assigneeRole: 'finance_team', title: `Verify advance payment ${commercial.advance_required} before audit commencement`, state: 'OPEN', linkedObjectType: 'commercial', linkedObjectId: id });
+  }
   const engagement = await touchEngagement(env, id, null);
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: decision === 'ACCEPT' ? 'EL_ACCEPTED' : 'EL_REJECTED', objectType: 'decision', objectId: decisionId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   return json(request, { ok: true, decision: { decisionId, decision, version, decidedBy: session.actorId }, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
@@ -1919,6 +1980,8 @@ async function actionSubmitWorkpaper(request, env, session, id, payload, correla
     ).bind(workpaperId, id, procedureTitle, evidenceReference, conclusion, session.actorId).run();
   }
   await upsertTask(env, { taskId: `wp-review-${workpaperId}`, engagementId: id, assigneeRole: 'audit_manager', title: `Review workpaper ${workpaperId}`, state: 'OPEN', linkedObjectType: 'workpaper', linkedObjectId: workpaperId });
+  // P4 handoff — workpaper submitted: the Audit Senior review is the next gate.
+  await upsertTask(env, { taskId: `wp-senior-review-${workpaperId}`, engagementId: id, assigneeRole: 'audit_senior', title: `Senior review workpaper ${workpaperId}`, state: 'OPEN', linkedObjectType: 'workpaper', linkedObjectId: workpaperId });
   const engagement = await touchEngagement(env, id, null);
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'WORKPAPER_SUBMITTED', objectType: 'workpaper', objectId: workpaperId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   return json(request, { ok: true, workpaperId, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
@@ -2016,8 +2079,7 @@ async function actionPublishDraftFs(request, env, session, id, payload, correlat
     }
     const pbc = await env.DB.prepare('SELECT request_id, state FROM auditflow_pbc_requests WHERE engagement_id = ?1').bind(id).all();
     if (!pbc.results?.length || pbc.results.some((row) => String(row.state || '').toUpperCase() !== 'ACCEPTED')) return error(request, 'Every information request must be accepted before Draft FS publication.', 409, 'PBC_NOT_EVALUATED');
-    const submitted = await env.DB.prepare('SELECT COUNT(*) AS n FROM auditflow_workpapers WHERE engagement_id = ?1 AND state = ?2').bind(id, 'SUBMITTED').first();
-    if (!Number(submitted?.n || 0)) return error(request, 'At least one submitted workpaper is required before Draft FS publication.', 409, 'NO_SUBMITTED_WORKPAPERS');
+    if (!(await countSubmittedWorkpapers(env, id))) return error(request, 'At least one submitted workpaper is required before Draft FS publication.', 409, 'NO_SUBMITTED_WORKPAPERS');
   }
   const prior = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM auditflow_artifacts WHERE engagement_id = ?1 AND document_type = 'DRAFT_FS'`,
@@ -2158,10 +2220,8 @@ async function actionRecordAuditOpinion(request, env, session, id, payload, corr
   if (Number(partnerReview.input_generation || 1) < generations.input) {
     return error(request, 'The partner review evaluated an older accounting input. Re-record it against the current generation.', 409, 'PARTNER_REVIEW_STALE');
   }
-  const submittedWorkpapers = await env.DB.prepare(
-    'SELECT COUNT(*) AS n FROM auditflow_workpapers WHERE engagement_id = ?1 AND state = ?2',
-  ).bind(id, 'SUBMITTED').first();
-  if (!Number(submittedWorkpapers?.n || 0)) return error(request, 'At least one submitted workpaper is required before forming the opinion.', 409, 'NO_SUBMITTED_WORKPAPERS');
+  const submittedWorkpapers = await countSubmittedWorkpapers(env, id);
+  if (!submittedWorkpapers) return error(request, 'At least one submitted workpaper is required before forming the opinion.', 409, 'NO_SUBMITTED_WORKPAPERS');
   const openSignificant = await env.DB.prepare(
     'SELECT COUNT(*) AS n FROM auditflow_review_points WHERE engagement_id = ?1 AND state = ?2 AND severity = ?3',
   ).bind(id, 'OPEN', 'SIGNIFICANT').first();
@@ -2202,6 +2262,15 @@ async function actionRecordAuditOpinion(request, env, session, id, payload, corr
      VALUES (?1, ?2, 'AUDIT_OPINION', ?3, ?4, ?5, ?6, 1, ?7)`,
   ).bind(decisionId, id, candidateVersion, opinionType, session.actorId, rationale, generations.input).run();
   const engagement = await touchEngagement(env, id, 'STAGE-07');
+  if (hasAnyRole(session, ['engagement_partner'])) {
+    // P4 handoff — opinion recorded: EQR reviews next when required, otherwise
+    // the partner proceeds to release authorization.
+    const eqrDecision = await latestDecision(env, id, 'EQR');
+    if (!eqrDecision || eqrDecision.decision !== 'APPROVE') {
+      await upsertTask(env, { taskId: `eqr-${id}`, engagementId: id, assigneeRole: 'eqr_reviewer', title: 'Complete engagement quality review', state: 'OPEN', linkedObjectType: 'decision', linkedObjectId: decisionId });
+    }
+    await upsertTask(env, { taskId: `release-authorize-${id}`, engagementId: id, assigneeRole: 'engagement_partner', title: 'Authorize release of the final report', state: 'OPEN', linkedObjectType: 'decision', linkedObjectId: decisionId });
+  }
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'AUDIT_OPINION_RECORDED', objectType: 'decision', objectId: decisionId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   return json(request, { ok: true, decision: { decisionId, opinionType, candidateVersion, inputGeneration: generations.input }, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
 }
@@ -2234,14 +2303,17 @@ async function actionRecordManagerCompletion(request, env, session, id, payload,
   if (!rationale) return error(request, 'Record the basis for the completion decision (maximum 1,200 characters).');
   const generations = await readAccountingGenerations(env, id);
   if (decision === 'RECOMMEND_COMPLETE') {
-    const submitted = await env.DB.prepare(
-      'SELECT COUNT(*) AS n FROM auditflow_workpapers WHERE engagement_id = ?1 AND state = ?2',
-    ).bind(id, 'SUBMITTED').first();
-    if (!Number(submitted?.n || 0)) return error(request, 'Recommend completion only after at least one workpaper is submitted.', 409, 'NO_SUBMITTED_WORKPAPERS');
+    if (!(await countSubmittedWorkpapers(env, id))) return error(request, 'Recommend completion only after at least one workpaper is submitted.', 409, 'NO_SUBMITTED_WORKPAPERS');
     const openPoints = await env.DB.prepare(
       'SELECT COUNT(*) AS n FROM auditflow_review_points WHERE engagement_id = ?1 AND state = ?2',
     ).bind(id, 'OPEN').first();
     if (Number(openPoints?.n || 0)) return error(request, 'Unresolved review points block a completion recommendation. Clear or return each open point first.', 409, 'REVIEW_POINTS_OPEN');
+    // P8A — Senior Review is a hard prerequisite for manager completion:
+    // every submitted (non-draft) workpaper must be SENIOR_REVIEWED.
+    const seniorGate = await readSeniorReviewGate(env, id);
+    if (!seniorGate.complete) {
+      return error(request, `Senior review must clear all ${seniorGate.total} submitted workpaper(s) before manager completion (${seniorGate.reviewed}/${seniorGate.total} cleared).`, 409, 'SENIOR_REVIEW_REQUIRED', { seniorReview: seniorGate });
+    }
   }
   const engagement = await readEngagementRow(env, id);
   if (!engagement) return error(request, 'Engagement not found in the shared demo.', 404, 'ENGAGEMENT_NOT_FOUND');
@@ -2290,6 +2362,8 @@ async function actionRecordManagerCompletion(request, env, session, id, payload,
   ).bind(decisionId, id, 'MANAGER_COMPLETION', 'rev-' + engagement.revision, decision, session.actorId, rationale, engagement.revision + 1, generations.input).run();
   await upsertTask(env, partnerTask);
   if (correctionTask) await upsertTask(env, correctionTask);
+  // P4 handoff — the manager completion step itself is done either way.
+  await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`manager-completion-${id}`).run();
   const next = await touchEngagement(env, id, null);
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'MANAGER_COMPLETION_RECORDED', objectType: 'decision', objectId: decisionId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId: correlationId });
   return json(request, { ok: true, decision: { decisionId: decisionId, decision: decision, inputGeneration: generations.input }, correctionTaskId: correctionTaskId || null, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
@@ -2608,6 +2682,8 @@ async function actionDeliverFinalReport(request, env, session, id, payload, corr
     `INSERT INTO auditflow_outbox (message_id, engagement_id, channel, recipient, subject, related_type, related_id, state)
       VALUES (?1, ?2, 'PORTAL_NOTIFICATION', 'client', ?3, 'delivery', ?4, 'SENT_SIMULATION')`,
   ).bind(crypto.randomUUID(), id, `Final report ${release.object_version} is available`, deliveryId).run();
+  // P4 handoff — delivery recorded: Finance issues the final invoice.
+  await upsertTask(env, { taskId: `invoice-${id}`, engagementId: id, assigneeRole: 'finance_team', title: 'Generate final invoice after delivery', state: 'OPEN', linkedObjectType: 'decision', linkedObjectId: deliveryId });
   const next = await touchEngagement(env, id, 'STAGE-08');
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'FINAL_REPORT_DELIVERED', objectType: 'delivery', objectId: deliveryId, previousRevision: engagement.revision, newRevision: next?.revision || engagement.revision + 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   return json(request, { ok: true, duplicate: false, deliveryId, releaseId: release.decision_id, reportId: report.document_id, fsId: fs.document_id, targetVersion: release.object_version, engagement: serializeEngagementState(next), evidenceLevel: 'SIMULATION' }, 201);
@@ -2696,8 +2772,8 @@ async function actionReleaseFinalReport(request, env, session, id, payload, corr
     ];
     const failedStrict = strictChecks.find((check) => !check.ok);
     if (failedStrict) return error(request, `Release blocked: ${failedStrict.message}`, 409, failedStrict.code);
-    const submitted = await env.DB.prepare('SELECT COUNT(*) AS n FROM auditflow_workpapers WHERE engagement_id = ?1 AND state = ?2').bind(id, 'SUBMITTED').first();
-    if (!Number(submitted?.n || 0)) return error(request, 'At least one submitted workpaper is required before release.', 409, 'NO_SUBMITTED_WORKPAPERS');
+    const submitted = await countSubmittedWorkpapers(env, id);
+    if (!submitted) return error(request, 'At least one submitted workpaper is required before release.', 409, 'NO_SUBMITTED_WORKPAPERS');
   }
   const failedCheck = releaseChecks.find((check) => !check.pass);
   if (failedCheck) {
@@ -2794,6 +2870,10 @@ async function actionReleaseFinalReport(request, env, session, id, payload, corr
     ).bind(releaseId, releaseEngagement.generation_id, id, fsId, releaseRevision, `${reportId}:${fsId}:${candidateVersion}`, generations.input, 'M7-RELEASE-2026-09').run();
   }
   await upsertTask(env, { taskId: `invoice-${id}`, engagementId: id, assigneeRole: 'finance_team', title: 'Generate final invoice', state: 'OPEN', linkedObjectType: 'decision', linkedObjectId: releaseId });
+  // P4 handoff — release authorized: Records assembles the archive; the
+  // partner's release-authorization task is done.
+  await upsertTask(env, { taskId: `archive-${id}`, engagementId: id, assigneeRole: 'records_custodian', title: 'Assemble and verify the engagement archive', state: 'OPEN', linkedObjectType: 'decision', linkedObjectId: releaseId });
+  await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`release-authorize-${id}`).run();
   const engagement = await touchEngagement(env, id, 'STAGE-08');
   await appendEvent(env, { engagementId: id, actor: session.actorId, action: 'FINAL_RELEASED', objectType: 'decision', objectId: releaseId, previousRevision: (engagement?.revision || 1) - 1, newRevision: engagement?.revision || 1, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   return json(request, { ok: true, duplicate: false, releaseId, reportId, fsId, candidateVersion, checks: releaseChecks, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' }, 201);
@@ -2994,6 +3074,8 @@ async function actionQualifyLead(request, env, session, id, payload, correlation
   if (lead.status === 'QUALIFIED') return json(request, { ok: true, duplicate: true, lead, evidenceLevel: 'SIMULATION' });
   if (['CONVERTED', 'CLOSED'].includes(lead.status)) return error(request, `Lead is already ${lead.status.toLowerCase()}.`, 409, 'LEAD_ALREADY_RESOLVED');
   await env.DB.prepare(`UPDATE auditflow_leads SET status = 'QUALIFIED', updated_at = datetime('now') WHERE lead_id = ?1`).bind(leadId).run();
+  // P4 handoff — lead qualified: open the conversion task for the next owner.
+  await upsertTask(env, { taskId: `lead-convert-${leadId}`, engagementId: id || 'DEMO-LEADS', assigneeRole: 'engagement_partner', title: `Convert qualified lead ${leadId} (${lead.company || lead.name})`, state: 'OPEN', linkedObjectType: 'lead', linkedObjectId: leadId });
   await appendEvent(env, { engagementId: id || 'DEMO-LEADS', actor: session.actorId, action: 'LEAD_QUALIFIED', objectType: 'lead', objectId: leadId, previousRevision: 1, newRevision: 2, idempotencyKey: String(payload.idempotencyKey || ''), correlationId });
   const updated = await env.DB.prepare('SELECT * FROM auditflow_leads WHERE lead_id = ?1').bind(leadId).first();
   return json(request, { ok: true, lead: updated, evidenceLevel: 'SIMULATION' });
@@ -3081,6 +3163,10 @@ async function actionConvertLeadToClient(request, env, session, id, payload, cor
     `UPDATE auditflow_leads SET status = 'CONVERTED', client_id = ?2, engagement_id = ?3, updated_at = datetime('now') WHERE lead_id = ?1`,
   ).bind(leadId, clientId, engagementId).run();
 
+  // P4 handoff — lead converted: the acceptance task exists; close the
+  // conversion task opened at qualification time.
+  await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`lead-convert-${leadId}`).run();
+
   await appendEvent(env, {
     engagementId,
     actor: session.actorId,
@@ -3110,6 +3196,11 @@ async function actionAssignEngagementTeam(request, env, session, id, payload, co
   }
   const assignments = Array.isArray(payload.assignments) ? payload.assignments : [];
   if (!assignments.length) return error(request, 'Provide at least one team member assignment.');
+  // P8A — strict staffing validation at the Worker command boundary. The
+  // Worker is authoritative in SHARED_DEMO: every assignment must reference a
+  // known, active actor who actually holds the required role, with valid
+  // hours and a coherent date range. Nothing is written unless ALL rows pass.
+  const validated = [];
   for (const item of assignments) {
     const role = cleanText(item.role, 60);
     const actorId = cleanText(item.actorId, 80);
@@ -3118,7 +3209,19 @@ async function actionAssignEngagementTeam(request, env, session, id, payload, co
     const startDate = cleanText(item.startDate, 40, '') || '';
     const endDate = cleanText(item.endDate, 40, '') || '';
     const responsibility = cleanText(item.responsibility, 300, '') || '';
-    if (!role || !actorId) continue;
+    if (!role || !actorId) return error(request, 'Every assignment needs a role and an actorId.', 400, 'ASSIGNMENT_INCOMPLETE');
+    const actorError = validateAssignmentActor({ role, actor: DEMO_ACTORS[actorId] || null });
+    if (actorError) {
+      const message = actorError.code === 'ACTOR_NOT_FOUND' ? `Actor ${actorId} was not found.` : actorError.message;
+      return error(request, message, 409, actorError.code);
+    }
+    const hours = validatePlannedHours(plannedHours);
+    if (hours.code) return error(request, hours.message, 409, hours.code);
+    const rangeError = validateDateRange(startDate, endDate);
+    if (rangeError) return error(request, rangeError.message, 409, rangeError.code);
+    validated.push({ role, actorId, actorName, plannedHours: hours.hours, startDate, endDate, responsibility });
+  }
+  for (const item of validated) {
     await env.DB.prepare(
       `INSERT INTO auditflow_engagement_team (engagement_id, role, actor_id, actor_name, planned_hours, start_date, end_date, responsibility)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -3126,7 +3229,7 @@ async function actionAssignEngagementTeam(request, env, session, id, payload, co
          actor_name = excluded.actor_name, planned_hours = excluded.planned_hours,
          start_date = excluded.start_date, end_date = excluded.end_date,
          responsibility = excluded.responsibility, updated_at = datetime('now')`,
-    ).bind(id, role, actorId, actorName, plannedHours, startDate, endDate, responsibility).run();
+    ).bind(id, item.role, item.actorId, item.actorName, item.plannedHours, item.startDate, item.endDate, item.responsibility).run();
   }
   const engagement = await touchEngagement(env, id, null);
   await appendEvent(env, {
@@ -3168,13 +3271,17 @@ async function actionStartAudit(request, env, session, id, payload, correlationI
     return error(request, 'Required advance payment must be verified before commencing the audit.', 409, 'ADVANCE_REQUIRED');
   }
   const teamRows = await env.DB.prepare('SELECT role FROM auditflow_engagement_team WHERE engagement_id = ?1').bind(id).all().catch(() => ({ results: [] }));
-  const roles = (teamRows.results || []).map((r) => r.role);
-  const hasPartner = roles.includes('engagement_partner');
-  const hasLead = roles.includes('audit_manager') || roles.includes('audit_senior');
-  if (!hasPartner || !hasLead) {
-    if (!hasPartner && !roles.length && !hasAnyRole(session, ['engagement_partner'])) {
-      return error(request, 'An Engagement Partner and Lead Auditor must be assigned before commencing the audit.', 409, 'TEAM_ASSIGNMENT_REQUIRED');
-    }
+  // P8A — the Worker enforces the same commencement staffing profile as the
+  // local domain (shared/staffingRules.js). A team of only preparers no
+  // longer slips through: every missing required role is reported.
+  const accountingStatus = await readAccountingStatus(env, id);
+  const staffingBlockers = staffingProfileBlockers(teamRows.results || [], {
+    smallFirmMode: false,
+    requiresAccountingReviewer: accountingStatus.exists,
+    eqrRequired: false,
+  });
+  if (staffingBlockers.length) {
+    return error(request, `Audit commencement staffing incomplete: ${staffingBlockers.map((b) => b.message).join(' ')}`, 409, staffingBlockers[0].code, { blockers: staffingBlockers });
   }
 
   await env.DB.prepare(
@@ -3188,6 +3295,9 @@ async function actionStartAudit(request, env, session, id, payload, correlationI
      VALUES (?1, ?2, 'PORTAL_NOTIFICATION', 'client', 'Audit Commencement Notice', 'announcement', ?2, 'QUEUED_SIMULATION')
      ON CONFLICT (message_id) DO NOTHING`,
   ).bind(`ANN-${id}`, id).run();
+
+  // P4 handoff — audit commenced: the Audit Senior owns fieldwork next.
+  await upsertTask(env, { taskId: `audit-fieldwork-${id}`, engagementId: id, assigneeRole: 'audit_senior', title: 'Commence fieldwork: plan procedures and open PBC requests', state: 'OPEN', linkedObjectType: 'engagement', linkedObjectId: id });
 
   await appendEvent(env, {
     engagementId: id,
@@ -3215,6 +3325,7 @@ async function actionRecordSeniorReview(request, env, session, id, payload, corr
   await env.DB.prepare(
     `UPDATE auditflow_workpapers SET state = 'SENIOR_REVIEWED', updated_at = datetime('now') WHERE workpaper_id = ?1`,
   ).bind(workpaperId).run();
+  await env.DB.prepare(`UPDATE auditflow_tasks SET state = 'COMPLETE', completed_at = datetime('now') WHERE task_id = ?1`).bind(`wp-senior-review-${workpaperId}`).run();
   const engagement = await touchEngagement(env, id, null);
   await appendEvent(env, {
     engagementId: id,
@@ -3227,7 +3338,21 @@ async function actionRecordSeniorReview(request, env, session, id, payload, corr
     idempotencyKey: String(payload.idempotencyKey || ''),
     correlationId,
   });
-  return json(request, { ok: true, workpaperId, state: 'SENIOR_REVIEWED', engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
+  // P4 handoff — when this review clears the last pending workpaper, the next
+  // owner is the Audit Manager: open a deterministic manager completion task.
+  const seniorGate = await readSeniorReviewGate(env, id);
+  if (seniorGate.complete) {
+    await upsertTask(env, {
+      taskId: `manager-completion-${id}`,
+      engagementId: id,
+      assigneeRole: 'audit_manager',
+      title: `Complete engagement file (senior review cleared ${seniorGate.total} workpaper(s))`,
+      state: 'OPEN',
+      linkedObjectType: 'engagement',
+      linkedObjectId: id,
+    });
+  }
+  return json(request, { ok: true, workpaperId, state: 'SENIOR_REVIEWED', seniorReview: seniorGate, engagement: serializeEngagementState(engagement), evidenceLevel: 'SIMULATION' });
 }
 
 async function readCommandReceipt(env, { generationId, engagementId, actorId, idempotencyKey } = {}) {

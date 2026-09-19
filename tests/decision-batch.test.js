@@ -87,7 +87,7 @@ function makeStrictFakeDb() {
   }
   function one(sql, p) {
     if (sql.includes('COUNT(*)')) {
-      if (sql.includes('FROM auditflow_workpapers')) return { n: [...state.workpapers.values()].filter((w) => w.engagement_id === p[0] && w.state === p[1]).length };
+      if (sql.includes('FROM auditflow_workpapers')) return { n: [...state.workpapers.values()].filter((w) => w.engagement_id === p[0] && (sql.includes('SENIOR_REVIEWED') ? ['SUBMITTED', 'SENIOR_REVIEWED'].includes(w.state) : w.state === p[1])).length };
       if (sql.includes('FROM auditflow_review_points')) return { n: [...state.reviews.values()].filter((r) => r.engagement_id === p[0] && r.state === p[1]).length };
       return { n: 0 };
     }
@@ -109,7 +109,10 @@ function makeStrictFakeDb() {
     if (sql.includes('FROM auditflow_review_points')) return state.reviews.get(p[0]) || null;
     return null;
   }
-  function all() { return { results: [] }; }
+  function all(sql, p) {
+    if (sql.includes('FROM auditflow_workpapers')) return { results: [...state.workpapers.values()].filter((w) => w.engagement_id === p[0]).map((w) => ({ workpaper_id: w.workpaper_id, state: w.state })) };
+    return { results: [] };
+  }
   function cloneState() {
     const cloneMap = (map) => {
       const next = new Map();
@@ -167,7 +170,7 @@ function seedStrictScenario(fake) {
     generation_id: GEN, context_version: 1, state: 'ACTIVE',
     created_at: '2026-09-14 00:00:00', updated_at: '2026-09-14 00:00:00', expires_at: '2099-01-01 00:00:00',
   });
-  fake.state.workpapers.set('wp-batch-seed-01', { workpaper_id: 'wp-batch-seed-01', engagement_id: ENG, submitted_by: 'ACT-JUNIOR', state: 'SUBMITTED', revision: 1 });
+  fake.state.workpapers.set('wp-batch-seed-01', { workpaper_id: 'wp-batch-seed-01', engagement_id: ENG, submitted_by: 'ACT-JUNIOR', state: 'SENIOR_REVIEWED', revision: 1 });
 }
 
 function strictAct(fake, envelope) {

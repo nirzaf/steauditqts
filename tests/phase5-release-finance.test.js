@@ -50,6 +50,7 @@ function makeFakeDb() {
       state.decisions.push({ decision_id: p[0], decision_id_alias: p[0], type: kind, object_version: p[2], version: p[2], decision: kind === 'RELEASE' ? 'RELEASED' : p[3], decided_by: p[4], decided_at: '2026-09-14 00:00:00', input_generation: kind === 'AUDIT_OPINION' ? p[6] : kind === 'RELEASE' ? p[5] : 1 });
     }
     else if (sql.includes('INSERT INTO auditflow_workpapers')) state.workpapers.push({ workpaper_id: p[0], engagement_id: p[1], state: 'SUBMITTED' });
+    else if (sql.includes("UPDATE auditflow_workpapers SET state = 'SENIOR_REVIEWED'")) { const w = state.workpapers.find((x) => x.workpaper_id === p[0]); if (w) w.state = 'SENIOR_REVIEWED'; }
     else if (sql.includes('INSERT INTO auditflow_pbc_requests')) state.pbcRequests.set(p[0], { request_id: p[0], engagement_id: p[1], title: p[2], state: 'OPEN', due_date: p[6] });
     else if (sql.includes('INSERT INTO auditflow_pbc_receipts')) state.pbcReceipts.set(p[0], { receipt_id: p[0], request_id: p[1], engagement_id: p[2], state: 'RECEIVED' });
     else if (sql.includes('UPDATE auditflow_pbc_requests SET state')) { const req = state.pbcRequests.get(p[0]); if (req) req.state = p[1] || 'RECEIVED'; }
@@ -69,8 +70,9 @@ function makeFakeDb() {
     if (sql.includes('FROM auditflow_pbc_requests WHERE request_id')) return state.pbcRequests.get(p[0]) || null;
     if (sql.includes('FROM auditflow_pbc_receipts WHERE receipt_id')) return state.pbcReceipts.get(p[0]) || null;
     if (sql.includes('FROM auditflow_pbc_receipts')) return { n: [...state.pbcReceipts.values()].filter((r) => r.request_id === p[0]).length };
-    if (sql.includes('FROM auditflow_workpapers') && sql.includes('COUNT(*)')) return { n: state.workpapers.filter((w) => w.engagement_id === p[0] && w.state === 'SUBMITTED').length };
-    if (sql.includes('FROM auditflow_review_points')) return { n: state.reviews.filter((r) => r.state === 'OPEN').length };
+    if (sql.includes('FROM auditflow_workpapers') && sql.includes('COUNT(*)')) return { n: state.workpapers.filter((w) => w.engagement_id === p[0] && ['SUBMITTED', 'SENIOR_REVIEWED'].includes(w.state)).length };
+    if (sql.includes('FROM auditflow_workpapers')) return state.workpapers.find((w) => w.workpaper_id === p[0]) || null;
+    if (sql.includes('FROM auditflow_review_points')) return { n: state.reviews.filter((r) => r.state === 'OPEN' && (r.engagement_id == null || r.engagement_id === p[0])).length };
     if (sql.includes('COUNT(*)') && sql.includes("document_type = 'DRAFT_FS'")) return { n: state.artifacts.filter((a) => a.document_type === 'DRAFT_FS').length };
     if (sql.includes('FROM auditflow_events WHERE engagement_id')) return state.events.find((e) => e.engagement_id === p[0] && e.idempotency_key === p[1]) || null;
     return null;
@@ -81,6 +83,7 @@ function makeFakeDb() {
         async run() { apply(sql, params); return { success: true }; },
         async first() { return one(sql, params); },
         async all() {
+          if (sql.includes('FROM auditflow_workpapers')) return { results: state.workpapers.filter((w) => w.engagement_id === params[0]) };
           if (sql.includes("document_type = 'DRAFT_FS'")) return { results: state.artifacts.filter((a) => a.engagement_id === params[0] && a.document_type === 'DRAFT_FS' && a.state === 'PUBLISHED') };
           if (sql.includes('FROM auditflow_pbc_requests')) return { results: [...state.pbcRequests.values()].filter((r) => r.engagement_id === params[0]) };
           return { results: [] };
@@ -113,11 +116,14 @@ async function driveToOpinionReady(fake) {
   await worker.fetch(act(partner, { action: 'APPROVE_FEE', approvedFee: '36000.00' }), env);
   await worker.fetch(act(senior, { action: 'PUBLISH_DRAFT_FS', summary: 'Final cut.' }), env);
   await worker.fetch(act(mgmt, { action: 'RESPOND_DRAFT_FS', decision: 'ACCEPT', version: 'v01', explanation: 'Agreed.' }), env);
-  await worker.fetch(act(prep, { action: 'SUBMIT_WORKPAPER', procedureTitle: 'Revenue cut-off', evidenceReference: 'INV-1042', conclusion: 'No exception.' }), env);
+  const wpSubmit = await worker.fetch(act(prep, { action: 'SUBMIT_WORKPAPER', procedureTitle: 'Revenue cut-off', evidenceReference: 'INV-1042', conclusion: 'No exception.' }), env);
+  const submittedWpId = (await wpSubmit.json()).workpaperId;
   const created = await worker.fetch(act(senior, { action: 'CREATE_PBC_REQUEST', title: 'Bank confirmations', period: 'FY2026', dueDate: '2026-10-10', clientOwner: 'Nadia Faris', reviewer: 'Audit Senior', acceptanceCriteria: 'Complete pack.' }), env);
   const requestId = (await created.json()).requestId;
   const receipt = await worker.fetch(act(client, { action: 'SUBMIT_PBC_RECEIPT', requestId, fileName: 'bank-pack.xlsx', fileSize: 24800, comment: 'Uploaded.' }), env);
   await worker.fetch(act(senior, { action: 'RESPOND_PBC_RECEIPT', receiptId: (await receipt.json()).receiptId, decision: 'ACCEPT', note: 'Meets criteria.' }), env);
+  // P8A — manager completion requires senior review to clear every submitted workpaper first.
+  await worker.fetch(act(senior, { action: 'RECORD_SENIOR_REVIEW', workpaperId: submittedWpId }), env);
   await worker.fetch(act(mgr, { action: 'RECORD_MANAGER_COMPLETION', decision: 'RECOMMEND_COMPLETE', rationale: 'Workpapers submitted, points clear, draft accepted.' }), env);
   await worker.fetch(act(partner, { action: 'RECORD_PARTNER_REVIEW', decision: 'APPROVE_FOR_OPINION', rationale: 'Completion reviewed against current input.' }), env);
   return { fin, partner, senior, eqr, mgmt, prep, mgr, client };
@@ -126,8 +132,9 @@ async function driveToOpinionReady(fake) {
 async function driveToOpinion(fake) {
   const sids = await driveToOpinionReady(fake);
   const env = envFor(fake);
+  const opinionRes = await worker.fetch(act(sids.partner, { action: 'RECORD_AUDIT_OPINION', opinionType: 'UNMODIFIED', candidateVersion: 'v01', rationale: 'Completion evidence reviewed.' }), env);
+  if (opinionRes.status !== 201) throw new Error('driveToOpinion opinion failed: ' + JSON.stringify(await opinionRes.json()));
   await worker.fetch(act(sids.eqr, { action: 'COMPLETE_EQR', decision: 'APPROVE', candidateId: 'RC-READY-001', note: 'File complete.' }), env);
-  await worker.fetch(act(sids.partner, { action: 'RECORD_AUDIT_OPINION', opinionType: 'UNMODIFIED', candidateVersion: 'v01', rationale: 'Completion evidence reviewed.' }), env);
   await worker.fetch(act(sids.partner, { action: 'RECORD_FINAL_DISCUSSION', date: '2026-09-20', attendees: 'Maya Rahman, Nadia Faris', topics: 'Opinion and subsequent events', outcome: 'No outstanding matters.' }), env);
   return sids;
 }

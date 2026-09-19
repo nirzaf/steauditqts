@@ -71,6 +71,7 @@ function makeFakeDb() {
       state.decisions.push({ decision_id: p[0], type: kind, object_version: p[2], version: p[2], decision: kind === 'RELEASE' ? 'RELEASED' : p[3], decided_by: p[4], rationale: p[5], decided_at: '2026-09-14 00:00:00', input_generation: kind === 'AUDIT_OPINION' ? p[6] : kind === 'DRAFT_FS' ? p[7] : 1 });
     }
     else if (sql.includes('INSERT INTO auditflow_workpapers')) state.workpapers.set(p[0], { workpaper_id: p[0], engagement_id: p[1], submitted_by: p[5], state: 'SUBMITTED', revision: 1 });
+    else if (sql.includes("UPDATE auditflow_workpapers SET state = 'SENIOR_REVIEWED'")) { const w = state.workpapers.get(p[0]); if (w) w.state = 'SENIOR_REVIEWED'; }
     else if (sql.includes('INSERT INTO auditflow_review_points')) state.reviews.set(p[0], { review_id: p[0], engagement_id: p[1], workpaper_id: p[2], severity: p[3], owner: p[4], author: p[5], state: 'OPEN', cleared_generation: 1 });
     else if (sql.includes('UPDATE auditflow_review_points SET response')) { const r = state.reviews.get(p[0]); if (r) { r.response = p[1]; r.state = 'CLEARED'; r.cleared_generation = p[2]; } }
     else if (sql.includes('INSERT INTO auditflow_pbc_requests')) state.pbcRequests.set(p[0], { request_id: p[0], engagement_id: p[1], title: p[2], state: 'OPEN', due_date: p[6] });
@@ -87,7 +88,7 @@ function makeFakeDb() {
   function one(sql, p) {
     if (sql.includes('COUNT(*)')) {
       if (sql.includes("document_type = 'DRAFT_FS'")) return { n: state.artifacts.filter((a) => a.document_type === 'DRAFT_FS').length };
-      if (sql.includes('FROM auditflow_workpapers')) return { n: [...state.workpapers.values()].filter((w) => w.engagement_id === p[0] && w.state === 'SUBMITTED').length };
+      if (sql.includes('FROM auditflow_workpapers')) return { n: [...state.workpapers.values()].filter((w) => w.engagement_id === p[0] && ['SUBMITTED', 'SENIOR_REVIEWED'].includes(w.state)).length };
       if (sql.includes('FROM auditflow_review_points')) return { n: [...state.reviews.values()].filter((r) => r.engagement_id === p[0] && r.state === 'OPEN' && (p.length < 3 || r.severity === p[2])).length };
       if (sql.includes('FROM auditflow_pbc_receipts')) return { n: [...state.pbcReceipts.values()].filter((r) => r.request_id === p[0]).length };
       return { n: 0 };
@@ -353,12 +354,16 @@ async function driveReadyChain(fake) {
   };
   const env = envFor(fake);
   await worker.fetch(act(sids.senior, { action: 'PUBLISH_DRAFT_FS', summary: 'Final cut.' }), env);
-  await worker.fetch(act(sids.prep, { action: 'SUBMIT_WORKPAPER', procedureTitle: 'Revenue cut-off', evidenceReference: 'INV-1042', conclusion: 'No exception.' }), env);
+  const wpSubmit = await worker.fetch(act(sids.prep, { action: 'SUBMIT_WORKPAPER', procedureTitle: 'Revenue cut-off', evidenceReference: 'INV-1042', conclusion: 'No exception.' }), env);
+  const workpaperId = (await wpSubmit.json()).workpaperId;
   const created = await worker.fetch(act(sids.senior, { action: 'CREATE_PBC_REQUEST', title: 'Bank confirmations', period: 'FY2026', dueDate: '2026-10-10', clientOwner: 'Nadia Faris', reviewer: 'Audit Senior', acceptanceCriteria: 'Complete pack.' }), env);
   const requestId = (await created.json()).requestId;
   const receipt = await worker.fetch(act(sids.client, { action: 'SUBMIT_PBC_RECEIPT', requestId, fileName: 'bank-pack.xlsx', fileSize: 24800, comment: 'Uploaded.' }), env);
   await worker.fetch(act(sids.senior, { action: 'RESPOND_PBC_RECEIPT', receiptId: (await receipt.json()).receiptId, decision: 'ACCEPT', note: 'Meets criteria.' }), env);
-  return { sids, env };
+  // P8A — manager completion now requires senior review to clear every
+  // submitted workpaper first.
+  await worker.fetch(act(sids.senior, { action: 'RECORD_SENIOR_REVIEW', workpaperId }), env);
+  return { sids, env, workpaperId };
 }
 
 test('manager completion needs submitted work and clear points', async () => {
@@ -432,11 +437,14 @@ test('opinion stays blocked on unevaluated PBC and blocking holds', async () => 
   const env = envFor(fake);
   await worker.fetch(act(senior, { action: 'PUBLISH_DRAFT_FS', summary: 'Cut.' }), env);
   await worker.fetch(act(mgmt, { action: 'RESPOND_DRAFT_FS', decision: 'ACCEPT', version: 'v01', explanation: 'Agreed.' }), env);
-  await worker.fetch(act(prep, { action: 'SUBMIT_WORKPAPER', procedureTitle: 'T', evidenceReference: 'E', conclusion: 'C' }), env);
+  const wpSubmit = await worker.fetch(act(prep, { action: 'SUBMIT_WORKPAPER', procedureTitle: 'T', evidenceReference: 'E', conclusion: 'C' }), env);
+  const submittedWpId = (await wpSubmit.json()).workpaperId;
   const created = await worker.fetch(act(senior, { action: 'CREATE_PBC_REQUEST', title: 'Confirmations', period: 'FY2026', dueDate: '2026-10-10', clientOwner: 'Nadia', reviewer: 'Senior', acceptanceCriteria: 'Pack.' }), env);
   const requestId = (await created.json()).requestId;
   const submitted = await worker.fetch(act(client, { action: 'SUBMIT_PBC_RECEIPT', requestId, fileName: 'pack.xlsx', fileSize: 100, comment: 'Up.' }), env);
   const pendingReceiptId = (await submitted.json()).receiptId;
+  // P8A — manager completion requires senior review to clear the workpaper.
+  await worker.fetch(act(senior, { action: 'RECORD_SENIOR_REVIEW', workpaperId: submittedWpId }), env);
   await worker.fetch(act(mgr, { action: 'RECORD_MANAGER_COMPLETION', decision: 'RECOMMEND_COMPLETE', rationale: 'Clear.' }), env);
   await worker.fetch(act(partner, { action: 'RECORD_PARTNER_REVIEW', decision: 'APPROVE_FOR_OPINION', rationale: 'Clear.' }), env);
   const unevaluated = await worker.fetch(act(partner, { action: 'RECORD_AUDIT_OPINION', opinionType: 'UNMODIFIED', candidateVersion: 'v01', rationale: 'Reviewed with care.' }), env);

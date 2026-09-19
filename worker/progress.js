@@ -163,7 +163,10 @@ function evaluateProgressGatesHead(rawSnapshot) {
   const announced = Boolean(snap.announcement);
   const validatedTb = snap.tbSources.filter((row) => String(row.validationState || '').toUpperCase() === 'VALIDATED' && Number(row.mappingComplete) === 1);
   const tbApproved = validatedTb.length > 0;
-  const submittedWorkpapers = snap.workpapers.filter((row) => String(row.state || '').toUpperCase() === 'SUBMITTED');
+  // Senior-reviewed workpapers remain submitted evidence: after senior review
+  // clears a workpaper its state becomes SENIOR_REVIEWED, and gates that
+  // require submission must still count it.
+  const submittedWorkpapers = snap.workpapers.filter((row) => ['SUBMITTED', 'SENIOR_REVIEWED'].includes(String(row.state || '').toUpperCase()));
   const openReviews = snap.reviewPoints.filter((row) => String(row.state || '').toUpperCase() === 'OPEN');
   const openSignificant = openReviews.filter((row) => String(row.severity || '').toUpperCase() === 'SIGNIFICANT');
   const latestDraft = snap.draftVersions.length ? snap.draftVersions[snap.draftVersions.length - 1] : null;
