@@ -28,8 +28,12 @@ const {
 } = useDemoContext()
 const sharedEngagementId = computed(() => demoActiveEngagementId.value || SHARED_ENGAGEMENT_ID)
 
-// Derive live stage states from local scenario domain data
-const { stageStates } = useLifecyclePipeline()
+// Derive live stage states from the mode-aware projection: the shared
+// engagement's stage strip is authoritative in D1, never in the local scenario.
+const { stageStates } = useLifecyclePipeline(
+  null,
+  computed(() => (sharedDemoEnabled ? demoProgress.value : null)),
+)
 const stageStateMap = computed(() => {
   const map = {}
   for (const s of stageStates.value) map[s.stageId] = s
